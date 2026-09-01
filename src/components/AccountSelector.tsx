@@ -459,6 +459,8 @@ export function AccountSelector({
         existingVendors={vendors}
         title="Nueva cuenta bancaria / Proveedor"
         subtitle="Se guardará en proveedores y se asignará al comprobante"
+        suggestedName={vendorName}
+        suggestedCuit={cuit}
         initialData={{
           id: '',
           name: search.trim() ? search.trim() : '',

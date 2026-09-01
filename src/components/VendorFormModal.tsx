@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Building2,
@@ -15,6 +16,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { Vendor, UserBankDetails } from '../types';
+import { formatCuit } from '../utils/helpers';
 
 interface VendorFormModalProps {
   isOpen: boolean;
@@ -24,6 +26,8 @@ interface VendorFormModalProps {
   existingVendors?: Vendor[];
   title?: string;
   subtitle?: string;
+  suggestedName?: string;
+  suggestedCuit?: string;
 }
 
 export function VendorFormModal({
@@ -34,9 +38,10 @@ export function VendorFormModal({
   existingVendors = [],
   title,
   subtitle,
+  suggestedName,
+  suggestedCuit,
 }: VendorFormModalProps) {
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('');
   const [cuit, setCuit] = useState('');
   const [notes, setNotes] = useState('');
   const [bankDetails, setBankDetails] = useState<UserBankDetails>({
@@ -70,7 +75,6 @@ export function VendorFormModal({
     if (isOpen && !prevIsOpenRef.current) {
       if (initialData) {
         setName(initialData.name || '');
-        setCategory(initialData.category || '');
         setCuit(initialData.cuit || '');
         setNotes(initialData.notes || '');
         setBankDetails({
@@ -83,7 +87,6 @@ export function VendorFormModal({
         });
       } else {
         setName('');
-        setCategory('');
         setCuit('');
         setNotes('');
         setBankDetails({
@@ -190,14 +193,12 @@ export function VendorFormModal({
             // Save prev values to allow revert
             setPrevValuesBeforeOcr({
               name,
-              category,
               cuit,
               notes,
               bankDetails: { ...bankDetails },
             });
 
             if (data.name && (!name || name === 'Nuevo Proveedor')) setName(data.name);
-            if (data.category && !category) setCategory(data.category);
             if (data.cuit) {
               setCuit(data.cuit);
               setBankDetails((prev) => ({ ...prev, cuitCuil: data.cuit }));
@@ -214,7 +215,7 @@ export function VendorFormModal({
                 cbuCvu: data.bankDetails.cbuCvu || prev.cbuCvu,
                 alias: data.bankDetails.alias || prev.alias,
                 cuitCuil: data.bankDetails.cuitCuil || data.cuit || prev.cuitCuil,
-                accountHolder: data.bankDetails.accountHolder || data.name || prev.accountHolder || name,
+                accountHolder: data.name || data.bankDetails.accountHolder || name || prev.accountHolder,
               }));
             }
 
@@ -303,6 +304,7 @@ export function VendorFormModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!name.trim()) {
       alert('Por favor ingrese el Nombre o Razón Social del proveedor.');
       return;
@@ -334,7 +336,7 @@ export function VendorFormModal({
   const modalSubtitle =
     subtitle || (initialData ? 'Actualiza los datos del catálogo y cuentas de pago' : 'Registra un proveedor en el catálogo oficial');
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
       <div
         className={`bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[94vh] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200 relative ${
@@ -558,6 +560,27 @@ export function VendorFormModal({
                   placeholder="Ej: Distribuidora Norte S.A. o Juan Pérez"
                   className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
                 />
+                {suggestedName && suggestedName.trim() && name.trim().toLowerCase() !== suggestedName.trim().toLowerCase() && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 animate-in fade-in">
+                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia del comprobante:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = suggestedName.trim();
+                        setName(val);
+                        if (!bankDetails.accountHolder) {
+                          setBankDetails((prev) => ({ ...prev, accountHolder: val }));
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 border border-indigo-200 text-[11px] font-semibold transition cursor-pointer active:scale-95"
+                      title="Clic para aplicar este nombre o razón social"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-500 shrink-0" />
+                      <span className="truncate max-w-[280px]">{suggestedName.trim()}</span>
+                      <span className="text-[10px] text-indigo-500 font-normal ml-0.5">(aplicar)</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -574,6 +597,26 @@ export function VendorFormModal({
                   placeholder="Ej: 30-12345678-9"
                   className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
                 />
+                {suggestedCuit && suggestedCuit.trim() && cuit.replace(/[^0-9]/g, '') !== suggestedCuit.replace(/[^0-9]/g, '') && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 animate-in fade-in">
+                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia del comprobante:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const val = suggestedCuit.trim();
+                        setCuit(val);
+                        setBankDetails((prev) => ({ ...prev, cuitCuil: val }));
+                        setIsCuitApproved(false);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 border border-indigo-200 text-[11px] font-semibold font-mono transition cursor-pointer active:scale-95"
+                      title="Clic para aplicar este CUIT"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-500 shrink-0" />
+                      <span>{formatCuit(suggestedCuit.trim())}</span>
+                      <span className="text-[10px] text-indigo-500 font-normal font-sans ml-0.5">(aplicar)</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -770,4 +813,6 @@ export function VendorFormModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

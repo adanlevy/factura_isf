@@ -534,14 +534,14 @@ export function PaymentTypeSelector({
             </label>
             <AccountSelector
               bankDetails={bankDetails}
-              vendorName={bankDetails?.accountHolder || ''}
-              cuit={bankDetails?.cuitCuil || ''}
+              vendorName={bankDetails?.accountHolder || vendorName || ''}
+              cuit={bankDetails?.cuitCuil || cuit || ''}
               paymentType="PAGO_PROVEEDOR"
               vendors={vendors}
               currentUser={currentUser}
               onAddVendor={onAddVendor}
               onUpdateVendor={onUpdateVendor}
-              placeholder="+ Seleccionar cuenta..."
+              placeholder="Seleccionar cuenta..."
               onSelectAccount={({ bankDetails: newBank, notes: newNotes }) => {
                 onChangeBankDetails(newBank);
                 if (newNotes !== undefined && onChangeVendorNotes) {
@@ -566,6 +566,17 @@ export function PaymentTypeSelector({
 
           {/* Account Detail Fields - Read Only taking data from selected account */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+            <div className="sm:col-span-2">
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">Nombre o Razón Social</label>
+              <input
+                type="text"
+                readOnly
+                disabled
+                placeholder="—"
+                value={bankDetails.accountHolder || ''}
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-100/80 text-slate-800 outline-hidden select-none cursor-default font-semibold"
+              />
+            </div>
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Banco del Proveedor</label>
               <input
@@ -617,7 +628,7 @@ export function PaymentTypeSelector({
                 readOnly
                 disabled
                 placeholder="—"
-                value={bankDetails.cuitCuil || cuit || ''}
+                value={bankDetails.cuitCuil || ''}
                 className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-mono bg-slate-100/80 text-slate-700 outline-hidden select-none cursor-default"
               />
             </div>

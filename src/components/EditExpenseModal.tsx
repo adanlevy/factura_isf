@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Check,
@@ -448,7 +449,7 @@ export function EditExpenseModal({
     onClose();
   };
 
-  return (
+  const modalContent = (
     <div
       id="edit-expense-backdrop"
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
@@ -792,6 +793,8 @@ export function EditExpenseModal({
       <VendorFormModal
         isOpen={isVendorModalOpen}
         initialData={vendorModalInitialData}
+        suggestedName={!vendorModalInitialData?.id ? formData.vendor : undefined}
+        suggestedCuit={!vendorModalInitialData?.id ? formData.cuit : undefined}
         existingVendors={vendors}
         onClose={() => {
           setIsVendorModalOpen(false);
@@ -831,4 +834,6 @@ export function EditExpenseModal({
       />
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

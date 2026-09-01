@@ -670,26 +670,30 @@ function mergeById<T extends { id?: string }>(existingList: T[], incomingList: T
       } else {
         const existingTime = new Date((existing as any).updatedAt || (existing as any).paymentConfirmedAt || (existing as any).reimbursedAt || 0).getTime();
         const incomingTime = new Date((item as any).updatedAt || (item as any).paymentConfirmedAt || (item as any).reimbursedAt || 0).getTime();
+        
+        let merged: any;
         if (existingTime > incomingTime) {
-          map.set(item.id, { ...item, ...existing });
+          merged = { ...item, ...existing };
         } else {
-          const merged: any = { ...existing, ...item };
-          if ((item as any).bankDetails === null || (item as any).bankDetails === undefined) {
-            const b = (item as any).bankDetails;
-            const hasBank = Boolean(
-              b &&
-                (b.cbuCvu?.trim() ||
-                  b.alias?.trim() ||
-                  b.bankName?.trim() ||
-                  b.accountHolder?.trim() ||
-                  b.cuitCuil?.trim())
-            );
-            if (!hasBank) {
-              delete merged.bankDetails;
-            }
-          }
-          map.set(item.id, merged);
+          merged = { ...existing, ...item };
         }
+
+        const b = (item as any).bankDetails;
+        const hasValidIncomingBank = Boolean(
+          b &&
+            (b.cbuCvu?.trim() ||
+              b.alias?.trim() ||
+              b.bankName?.trim() ||
+              b.accountHolder?.trim() ||
+              b.cuitCuil?.trim())
+        );
+
+        // If the incoming update specifically has no valid bank details (null, undefined, or empty), ensure bankDetails is deleted
+        if (!hasValidIncomingBank && (b === null || b === undefined || Object.keys(b || {}).length === 0)) {
+          delete merged.bankDetails;
+        }
+
+        map.set(item.id, merged);
       }
     }
   }
