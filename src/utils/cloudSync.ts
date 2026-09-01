@@ -129,6 +129,19 @@ export function prepareExpenseForFirestore(expense: Expense): any {
     }
   }
 
+  // Explicitly set bankDetails to null if missing or without valid account fields so Firestore merge clears it
+  const b = item.bankDetails;
+  if (
+    !b ||
+    (!b.cbuCvu?.trim() &&
+      !b.alias?.trim() &&
+      !b.bankName?.trim() &&
+      !b.accountHolder?.trim() &&
+      !b.cuitCuil?.trim())
+  ) {
+    item.bankDetails = null;
+  }
+
   return sanitizeForFirestore(item);
 }
 
@@ -164,7 +177,16 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
   if (Array.isArray(local)) {
     for (const exp of local) {
       if (exp && exp.id && !sessionDeletedExpenseIds.has(exp.id)) {
-        map.set(exp.id, exp);
+        const b = exp.bankDetails;
+        const hasBank = Boolean(
+          b &&
+            (b.cbuCvu?.trim() ||
+              b.alias?.trim() ||
+              b.bankName?.trim() ||
+              b.accountHolder?.trim() ||
+              b.cuitCuil?.trim())
+        );
+        map.set(exp.id, hasBank ? exp : { ...exp, bankDetails: undefined });
       }
     }
   }
@@ -173,18 +195,42 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
   if (Array.isArray(incoming)) {
     for (const cloudExp of incoming) {
       if (cloudExp && cloudExp.id && !sessionDeletedExpenseIds.has(cloudExp.id)) {
+        const cloudB = cloudExp.bankDetails;
+        const hasCloudBank = Boolean(
+          cloudB &&
+            (cloudB.cbuCvu?.trim() ||
+              cloudB.alias?.trim() ||
+              cloudB.bankName?.trim() ||
+              cloudB.accountHolder?.trim() ||
+              cloudB.cuitCuil?.trim())
+        );
+        const sanitizedCloudExp = hasCloudBank
+          ? cloudExp
+          : { ...cloudExp, bankDetails: undefined };
+
         const localExp = map.get(cloudExp.id);
         if (!localExp) {
-          map.set(cloudExp.id, cloudExp);
+          map.set(cloudExp.id, sanitizedCloudExp);
         } else {
           const localTime = getTimestamp(localExp);
           const cloudTime = getTimestamp(cloudExp);
 
+          const localB = localExp.bankDetails;
+          const hasLocalBank = Boolean(
+            localB &&
+              (localB.cbuCvu?.trim() ||
+                localB.alias?.trim() ||
+                localB.bankName?.trim() ||
+                localB.accountHolder?.trim() ||
+                localB.cuitCuil?.trim())
+          );
+
           if (localTime > cloudTime) {
             // Local state is more recent: preserve local changes (like new payment status, notes, etc.)
             map.set(cloudExp.id, {
-              ...cloudExp,
+              ...sanitizedCloudExp,
               ...localExp,
+              bankDetails: hasLocalBank ? localExp.bankDetails : undefined,
               driveUploadedUrl: localExp.driveUploadedUrl || cloudExp.driveUploadedUrl,
               driveUploadedFileName: localExp.driveUploadedFileName || cloudExp.driveUploadedFileName,
               paymentProofDriveUrl: localExp.paymentProofDriveUrl || cloudExp.paymentProofDriveUrl,
@@ -198,7 +244,8 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
             // Cloud is newer or equal
             map.set(cloudExp.id, {
               ...localExp,
-              ...cloudExp,
+              ...sanitizedCloudExp,
+              bankDetails: hasCloudBank ? cloudExp.bankDetails : undefined,
               receiptImage: localExp.receiptImage || cloudExp.receiptImage,
               paymentProofImage: localExp.paymentProofImage || cloudExp.paymentProofImage,
               withholdingCertificateImage: localExp.withholdingCertificateImage || cloudExp.withholdingCertificateImage,

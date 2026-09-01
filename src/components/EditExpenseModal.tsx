@@ -219,7 +219,7 @@ export function EditExpenseModal({
       );
       setVendorNotes(matchedVendor?.notes || '');
 
-      if (expense.bankDetails) {
+      if (expense.bankDetails && (expense.bankDetails.cbuCvu || expense.bankDetails.alias || expense.bankDetails.bankName || expense.bankDetails.accountHolder)) {
         setBankData(expense.bankDetails);
       } else {
         setBankData({
@@ -228,7 +228,7 @@ export function EditExpenseModal({
           cbuCvu: '',
           alias: '',
           cuitCuil: '',
-          accountHolder: expense.submittedByName || currentUser?.name || '',
+          accountHolder: '',
         });
       }
     } else {
@@ -312,7 +312,7 @@ export function EditExpenseModal({
       const isPendingType = paymentType === 'REINTEGRO' || paymentType === 'PAGO_PROVEEDOR';
       const hasBank = Boolean(
         isPendingType &&
-        (bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim() || bankData.accountHolder?.trim())
+        (bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim() || bankData.accountHolder?.trim() || bankData.cuitCuil?.trim())
       );
 
       const updatedExpense: Expense = {
@@ -332,6 +332,7 @@ export function EditExpenseModal({
             : 'Tarjeta Débito Galicia',
         bankDetails: hasBank ? bankData : undefined,
         reimbursedAt: formData.reimbursedAt || new Date().toISOString().slice(0, 10),
+        updatedAt: new Date().toISOString(),
       };
 
       onUpdate(updatedExpense);
@@ -364,7 +365,7 @@ export function EditExpenseModal({
 
     const hasBank = Boolean(
       (paymentType === 'REINTEGRO' || paymentType === 'PAGO_PROVEEDOR') &&
-      (bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim() || bankData.accountHolder?.trim())
+      (bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim() || bankData.accountHolder?.trim() || bankData.cuitCuil?.trim())
     );
 
     if (hasBank && (bankData.cbuCvu || bankData.alias || bankData.bankName)) {
@@ -382,7 +383,7 @@ export function EditExpenseModal({
         (formData.cuit && v.cuit && v.cuit === formData.cuit)
     );
 
-    if (existingVendor && onUpdateVendor) {
+    if (hasBank && existingVendor && onUpdateVendor) {
       const nameDiff = existingVendor.name.trim() !== (formData.vendor || '').trim();
       const cuitDiff = (existingVendor.cuit || '').trim() !== (formData.cuit || '').trim();
       const notesDiff = (existingVendor.notes || '').trim() !== vendorNotes.trim();
@@ -403,13 +404,11 @@ export function EditExpenseModal({
           name: (formData.vendor || '').trim(),
           cuit: (formData.cuit || '').trim() || existingVendor.cuit,
           notes: vendorNotes.trim(),
-          bankDetails: hasBank
-            ? {
-                ...existingVendor.bankDetails,
-                ...bankData,
-                accountHolder: bankData.accountHolder || (formData.vendor || '').trim(),
-              }
-            : existingVendor.bankDetails,
+          bankDetails: {
+            ...existingVendor.bankDetails,
+            ...bankData,
+            accountHolder: bankData.accountHolder || (formData.vendor || '').trim(),
+          },
         });
       }
     }
@@ -537,8 +536,22 @@ export function EditExpenseModal({
             </div>
           </div>
 
-          {/* Invoice Number, Amount, Currency & Date */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          {/* Invoice Number, Vendor, Amount, Currency & Date */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Nombre / Factura <span className="text-rose-500 font-bold">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.vendor || ''}
+                onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
+                placeholder="Ej: Coto, Fibertel, Juan Pérez..."
+                className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
+                required
+              />
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 N° Comprobante / Factura
@@ -551,7 +564,9 @@ export function EditExpenseModal({
                 className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
               />
             </div>
+          </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">Monto Total *</label>
               <input
@@ -693,6 +708,10 @@ export function EditExpenseModal({
             onChangeBankDetails={setBankData}
             currentUser={currentUser as any}
             vendors={vendors}
+            onAddVendor={onAddVendor}
+            onUpdateVendor={onUpdateVendor}
+            vendorName={formData.vendor}
+            cuit={formData.cuit}
             existingExpenses={existingExpenses}
             reimbursementStatus={formData.reimbursementStatus}
             onChangeReimbursementStatus={allowStatusChange ? handleReimbursementStatusChange : undefined}
@@ -700,26 +719,6 @@ export function EditExpenseModal({
             onOpenVendorEditModal={() => {
               setVendorModalInitialData(matchedCatalogVendor || undefined);
               setIsVendorModalOpen(true);
-            }}
-            onSelectVendorName={(vName) => {
-              setFormData((prev) => (prev ? { ...prev, vendor: vName } : prev));
-              const matched = vendors.find(
-                (v) => (v.name || '').trim().toLowerCase() === vName.trim().toLowerCase()
-              );
-              if (matched) {
-                if (matched.notes !== undefined) {
-                  setVendorNotes(matched.notes);
-                }
-                if (matched.cuit && !formData.cuit) {
-                  setFormData((prev) => (prev ? { ...prev, vendor: vName, cuit: matched.cuit } : prev));
-                }
-                if (matched.bankDetails && (matched.bankDetails.cbuCvu || matched.bankDetails.alias)) {
-                  setBankData((prev) => ({
-                    ...prev,
-                    ...matched.bankDetails,
-                  }));
-                }
-              }
             }}
             vendorNotes={vendorNotes}
             onChangeVendorNotes={setVendorNotes}

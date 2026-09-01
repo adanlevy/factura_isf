@@ -312,40 +312,35 @@ export default function App() {
 
     if (vendorToDelete) {
       const vName = (vendorToDelete.name || '').trim().toLowerCase();
-      const vCuit = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+      const vCuitRaw = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+      const vCuitDigits = vCuitRaw.replace(/[^0-9]/g, '');
       const vCbu = (vendorToDelete.bankDetails?.cbuCvu || '').trim();
       const vAlias = (vendorToDelete.bankDetails?.alias || '').trim().toLowerCase();
       const vHolder = (vendorToDelete.bankDetails?.accountHolder || '').trim().toLowerCase();
 
       const updatedExpensesList: Expense[] = [];
       const updatedExpenses = expenses.map((e) => {
-        if (!e.bankDetails) return e;
-
-        const expCuit = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
+        const expVendor = (e.vendor || '').trim().toLowerCase();
+        const expCuitRaw = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
+        const expCuitDigits = expCuitRaw.replace(/[^0-9]/g, '');
         const expCbu = (e.bankDetails?.cbuCvu || '').trim();
         const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
         const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
 
         const isMatch = Boolean(
+          (vName && expVendor === vName) ||
+          (vName && expHolder && expHolder === vName) ||
+          (vCuitDigits && expCuitDigits && vCuitDigits === expCuitDigits) ||
           (vCbu && expCbu && vCbu === expCbu) ||
           (vAlias && expAlias && vAlias === expAlias) ||
-          (vCuit && expCuit && vCuit === expCuit) ||
-          (vHolder && expHolder && vHolder === expHolder) ||
-          (vName && expHolder === vName)
+          (vHolder && expHolder && vHolder === expHolder)
         );
 
-        if (isMatch) {
-          const currentBank = e.bankDetails || vendorToDelete.bankDetails;
-          const transferSnapshot =
-            e.transferDetails ||
-            (currentBank ? formatTransferDetails(currentBank) : '') ||
-            (vName ? `Proveedor: ${vendorToDelete.name}` : '');
-
+        if (isMatch && e.bankDetails) {
           const updated: Expense = {
             ...e,
-            // vendor (Nombre / Factura) stays intact!
+            // Keep invoice vendor name intact, but orphan the bank account details
             bankDetails: undefined,
-            transferDetails: transferSnapshot || e.transferDetails,
             updatedAt: new Date().toISOString(),
           };
           updatedExpensesList.push(updated);

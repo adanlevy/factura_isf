@@ -673,7 +673,22 @@ function mergeById<T extends { id?: string }>(existingList: T[], incomingList: T
         if (existingTime > incomingTime) {
           map.set(item.id, { ...item, ...existing });
         } else {
-          map.set(item.id, { ...existing, ...item });
+          const merged: any = { ...existing, ...item };
+          if ((item as any).bankDetails === null || (item as any).bankDetails === undefined) {
+            const b = (item as any).bankDetails;
+            const hasBank = Boolean(
+              b &&
+                (b.cbuCvu?.trim() ||
+                  b.alias?.trim() ||
+                  b.bankName?.trim() ||
+                  b.accountHolder?.trim() ||
+                  b.cuitCuil?.trim())
+            );
+            if (!hasBank) {
+              delete merged.bankDetails;
+            }
+          }
+          map.set(item.id, merged);
         }
       }
     }

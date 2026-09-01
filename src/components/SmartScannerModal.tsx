@@ -465,10 +465,8 @@ export function SmartScannerModal({
               const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
 
               const extractedCuit = data.cuit ? String(data.cuit).trim() : undefined;
-              const matchedVendor = findVendorByCuitOrName(vendors, extractedCuit, data.vendor);
-
-              const proposedVendor = matchedVendor?.name || data.vendor || 'Comercio';
-              const proposedCuit = matchedVendor?.cuit || extractedCuit;
+              const proposedVendor = data.vendor || 'Comercio';
+              const proposedCuit = extractedCuit;
 
               const smartCostCenters = getSmartSortedCostCenters(
                 availableProjects,
@@ -482,9 +480,7 @@ export function SmartScannerModal({
               const finalBankDetails = item.bankDetails;
               const isPendingPaymentType = finalPaymentType === 'REINTEGRO' || finalPaymentType === 'PAGO_PROVEEDOR';
 
-              const vendorDisplayNote = matchedVendor
-                ? `${proposedVendor}${proposedCuit ? ` (CUIT ${formatCuit(proposedCuit)})` : ''} • Proveedor vinculado`
-                : `${proposedVendor}${proposedCuit ? ` (CUIT ${formatCuit(proposedCuit)})` : ''}`;
+              const vendorDisplayNote = `${proposedVendor}${proposedCuit ? ` (CUIT ${formatCuit(proposedCuit)})` : ''}`;
 
               return {
                 ...item,
@@ -1262,8 +1258,8 @@ export function SmartScannerModal({
                                     cuitCuil: '',
                                   } : undefined);
                                 } else if (val === 'PAGO_PROVEEDOR') {
-                                  const matched = findVendorByCuitOrName(vendors, item.cuit, item.vendor);
-                                  newBank = matched?.bankDetails ? matched.bankDetails : undefined;
+                                  // Do not auto-fill bank details from OCR / auto-matching
+                                  newBank = item.bankDetails;
                                 }
 
                                 updateQueueItem(item.id, {
@@ -1312,15 +1308,9 @@ export function SmartScannerModal({
                                   prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                                 );
                               }}
-                              onSelectAccount={({ bankDetails, vendorName, cuit }) => {
+                              onSelectAccount={({ bankDetails }) => {
                                 setQueue((prev) =>
-                                  prev.map((q) => {
-                                    if (q.id !== item.id) return q;
-                                    const updated: Partial<QueueItem> = { bankDetails };
-                                    if (vendorName) updated.vendor = vendorName;
-                                    if (cuit) updated.cuit = cuit;
-                                    return { ...q, ...updated };
-                                  })
+                                  prev.map((q) => (q.id === item.id ? { ...q, bankDetails } : q))
                                 );
                               }}
                             />
@@ -1604,8 +1594,8 @@ export function SmartScannerModal({
                                   cuitCuil: '',
                                 } : undefined);
                               } else if (val === 'PAGO_PROVEEDOR') {
-                                const matched = findVendorByCuitOrName(vendors, item.cuit, item.vendor);
-                                newBank = matched?.bankDetails ? matched.bankDetails : undefined;
+                                // Do not auto-fill bank details from OCR / auto-matching
+                                newBank = item.bankDetails;
                               }
                               updateQueueItem(item.id, {
                                 paymentType: val,
@@ -1655,15 +1645,9 @@ export function SmartScannerModal({
                                 prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                               );
                             }}
-                            onSelectAccount={({ bankDetails, vendorName, cuit }) => {
+                            onSelectAccount={({ bankDetails }) => {
                               setQueue((prev) =>
-                                prev.map((q) => {
-                                  if (q.id !== item.id) return q;
-                                  const updated: Partial<QueueItem> = { bankDetails };
-                                  if (vendorName) updated.vendor = vendorName;
-                                  if (cuit) updated.cuit = cuit;
-                                  return { ...q, ...updated };
-                                })
+                                prev.map((q) => (q.id === item.id ? { ...q, bankDetails } : q))
                               );
                             }}
                           />

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
+import { AccountSelector } from './AccountSelector';
 
 interface PaymentTypeSelectorProps {
   paymentType: ExpensePaymentType;
@@ -31,6 +32,10 @@ interface PaymentTypeSelectorProps {
   onChangeVendorNotes?: (notes: string) => void;
   isVendorLocked?: boolean;
   onOpenVendorEditModal?: () => void;
+  vendorName?: string;
+  cuit?: string;
+  onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
+  onUpdateVendor?: (vendor: Vendor) => void;
 }
 
 export function PaymentTypeSelector({
@@ -49,6 +54,10 @@ export function PaymentTypeSelector({
   onChangeVendorNotes,
   isVendorLocked = false,
   onOpenVendorEditModal,
+  vendorName,
+  cuit,
+  onAddVendor,
+  onUpdateVendor,
 }: PaymentTypeSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -166,10 +175,6 @@ export function PaymentTypeSelector({
 
     if (acc.notes !== undefined && onChangeVendorNotes) {
       onChangeVendorNotes(acc.notes);
-    }
-
-    if (onSelectVendorName && paymentType === 'PAGO_PROVEEDOR') {
-      onSelectVendorName(acc.name);
     }
   };
 
@@ -522,185 +527,111 @@ export function PaymentTypeSelector({
             </div>
           )}
 
-          {/* Search/Name input with Autocomplete for Vendors */}
-          <div className="relative" ref={dropdownRef}>
-            <label className="block text-[11px] font-bold text-indigo-950 mb-1">
-              Nombre o Razón Social del Proveedor *
+          {/* Selector de cuenta (Mismo formato y modal que en Carga de Comprobantes) */}
+          <div>
+            <label className="block text-[11px] font-bold text-indigo-950 mb-1.5">
+              Datos de cuenta
             </label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-indigo-600 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={bankDetails.accountHolder || searchQuery}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setSearchQuery(val);
-                  onChangeBankDetails({ ...bankDetails, accountHolder: val });
-                  if (onSelectVendorName) onSelectVendorName(val);
-                  setShowSuggestions(true);
-                }}
-                onFocus={() => setShowSuggestions(true)}
-                placeholder="Escribe el nombre del proveedor para autocompletar..."
-                className="w-full pl-8.5 pr-4 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            {/* Suggestions Dropdown */}
-            {showSuggestions && filteredSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-2xl shadow-xl border border-slate-200 z-30 overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto animate-in fade-in">
-                <div className="px-3 py-1.5 bg-slate-50 text-[10px] font-bold uppercase text-slate-500 flex justify-between">
-                  <span>Proveedores precargados</span>
-                  <span>Click para autocompletar</span>
-                </div>
-                {filteredSuggestions.map((acc, idx) => (
-                  <button
-                    key={`prov-sugg-${idx}`}
-                    type="button"
-                    onClick={() => handleApplySuggestion(acc)}
-                    className="w-full text-left px-3.5 py-2 hover:bg-indigo-50/80 transition flex items-center justify-between text-xs cursor-pointer"
-                  >
-                    <div>
-                      <div className="font-bold text-slate-900 flex items-center">
-                        <span>{acc.name}</span>
-                        {acc.cuit && (
-                          <span className="ml-2 text-[10px] text-slate-500 font-mono">
-                            CUIT: {acc.cuit}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono">
-                        {acc.bankName && <span className="font-semibold text-slate-700">{acc.bankName} • </span>}
-                        {acc.alias && <span className="text-indigo-600 font-bold">Alias: {acc.alias}</span>}
-                        {acc.cbuCvu && <span className="text-slate-400 ml-2 text-[10px]">CBU: {acc.cbuCvu}</span>}
-                      </div>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-semibold shrink-0">
-                      Cargar Proveedor
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <AccountSelector
+              bankDetails={bankDetails}
+              vendorName={bankDetails?.accountHolder || ''}
+              cuit={bankDetails?.cuitCuil || ''}
+              paymentType="PAGO_PROVEEDOR"
+              vendors={vendors}
+              currentUser={currentUser}
+              onAddVendor={onAddVendor}
+              onUpdateVendor={onUpdateVendor}
+              placeholder="+ Seleccionar cuenta..."
+              onSelectAccount={({ bankDetails: newBank, notes: newNotes }) => {
+                onChangeBankDetails(newBank);
+                if (newNotes !== undefined && onChangeVendorNotes) {
+                  onChangeVendorNotes(newNotes);
+                }
+              }}
+              onClearAccount={() => {
+                onChangeBankDetails({
+                  accountHolder: '',
+                  bankName: '',
+                  accountType: 'Indefinido',
+                  alias: '',
+                  cbuCvu: '',
+                  cuitCuil: '',
+                });
+                if (onChangeVendorNotes) {
+                  onChangeVendorNotes('');
+                }
+              }}
+            />
           </div>
 
-          {/* Account Detail Fields */}
-          {isVendorLocked && (
-            <div className="p-2.5 bg-indigo-100/60 border border-indigo-200 rounded-xl flex items-center justify-between gap-2 text-xs">
-              <span className="text-indigo-900 font-medium flex items-center gap-1.5">
-                <span>🔒</span>
-                <span>Datos bancarios vinculados al catálogo oficial.</span>
-              </span>
-              {onOpenVendorEditModal && (
-                <button
-                  type="button"
-                  onClick={onOpenVendorEditModal}
-                  className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 font-bold rounded-lg border border-indigo-200 shadow-2xs transition cursor-pointer text-[11px] shrink-0"
-                >
-                  Editar Proveedor
-                </button>
-              )}
-            </div>
-          )}
-
+          {/* Account Detail Fields - Read Only taking data from selected account */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Banco del Proveedor</label>
               <input
                 type="text"
-                placeholder="Ej: Banco Galicia / Santander / BBVA"
-                disabled={isVendorLocked}
+                readOnly
+                disabled
+                placeholder="—"
                 value={bankDetails.bankName || ''}
-                onChange={(e) => onChangeBankDetails({ ...bankDetails, bankName: e.target.value })}
-                className={`w-full px-3 py-1.5 border rounded-xl text-xs outline-hidden ${
-                  isVendorLocked
-                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
-                    : 'bg-white border-slate-200 focus:border-indigo-500'
-                }`}
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-100/80 text-slate-700 outline-hidden select-none cursor-default font-medium"
               />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Tipo de Cuenta</label>
-              <select
+              <input
+                type="text"
+                readOnly
+                disabled
+                placeholder="Indefinido"
                 value={bankDetails.accountType || 'Indefinido'}
-                disabled={isVendorLocked}
-                onChange={(e) => onChangeBankDetails({ ...bankDetails, accountType: e.target.value })}
-                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-semibold outline-hidden ${
-                  isVendorLocked
-                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
-                    : 'bg-white border-slate-200 text-slate-800 focus:border-indigo-500 cursor-pointer'
-                }`}
-              >
-                <option value="Cuenta Corriente">Cuenta Corriente</option>
-                <option value="Caja de Ahorro">Caja de Ahorro</option>
-                <option value="Indefinido">Indefinido / No especificado</option>
-              </select>
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs bg-slate-100/80 text-slate-700 outline-hidden select-none cursor-default font-medium"
+              />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Alias del Proveedor</label>
               <input
                 type="text"
-                placeholder="Ej: proveedor.galicia"
-                disabled={isVendorLocked}
+                readOnly
+                disabled
+                placeholder="—"
                 value={bankDetails.alias || ''}
-                onChange={(e) => onChangeBankDetails({ ...bankDetails, alias: e.target.value })}
-                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-bold font-mono outline-hidden ${
-                  isVendorLocked
-                    ? 'bg-slate-100/80 border-slate-200 text-indigo-900/80 cursor-not-allowed'
-                    : 'bg-white border-slate-200 text-indigo-900 focus:border-indigo-500'
-                }`}
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-bold font-mono bg-slate-100/80 text-indigo-900/90 outline-hidden select-none cursor-default"
               />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">CBU / CVU Proveedor (22 dígitos)</label>
               <input
                 type="text"
-                placeholder="0720198220000034509123"
-                disabled={isVendorLocked}
+                readOnly
+                disabled
+                placeholder="—"
                 value={bankDetails.cbuCvu || ''}
-                onChange={(e) => onChangeBankDetails({ ...bankDetails, cbuCvu: e.target.value })}
-                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-mono outline-hidden ${
-                  isVendorLocked
-                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
-                    : 'bg-white border-slate-200 focus:border-indigo-500'
-                }`}
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-mono bg-slate-100/80 text-slate-700 outline-hidden select-none cursor-default"
               />
             </div>
             <div className="sm:col-span-2">
               <label className="text-[10px] font-bold text-slate-600 block mb-1">CUIT Proveedor</label>
               <input
                 type="text"
-                placeholder="Ej: 30-71089945-8"
-                disabled={isVendorLocked}
-                value={bankDetails.cuitCuil || ''}
-                onChange={(e) => onChangeBankDetails({ ...bankDetails, cuitCuil: e.target.value })}
-                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-mono outline-hidden ${
-                  isVendorLocked
-                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
-                    : 'bg-white border-slate-200 focus:border-indigo-500'
-                }`}
+                readOnly
+                disabled
+                placeholder="—"
+                value={bankDetails.cuitCuil || cuit || ''}
+                className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-mono bg-slate-100/80 text-slate-700 outline-hidden select-none cursor-default"
               />
             </div>
           </div>
 
           {/* Notas / Observaciones del Proveedor */}
-          {(onChangeVendorNotes || vendorNotes || matchedVendor?.notes) && (
+          {(vendorNotes || matchedVendor?.notes) && (
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Notas / Observaciones del Proveedor {matchedVendor?.name ? `(${matchedVendor.name})` : ''}
               </label>
-              {onChangeVendorNotes ? (
-                <textarea
-                  rows={2}
-                  value={vendorNotes !== undefined ? vendorNotes : (matchedVendor?.notes || '')}
-                  onChange={(e) => onChangeVendorNotes(e.target.value)}
-                  placeholder="Observaciones sobre el proveedor..."
-                  className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition leading-relaxed"
-                />
-              ) : (
-                <div className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs text-slate-700 bg-slate-50/50 whitespace-pre-wrap leading-relaxed">
-                  {vendorNotes !== undefined ? vendorNotes : matchedVendor?.notes}
-                </div>
-              )}
+              <div className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs text-slate-700 bg-slate-100/80 whitespace-pre-wrap leading-relaxed">
+                {vendorNotes !== undefined ? vendorNotes : matchedVendor?.notes}
+              </div>
             </div>
           )}
         </div>

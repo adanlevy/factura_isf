@@ -43,6 +43,7 @@ interface AccountSelectorProps {
   storedBank?: UserBankDetails;
   paymentType?: ExpensePaymentType;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
+  onUpdateVendor?: (vendor: Vendor) => void;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -60,6 +61,7 @@ export function AccountSelector({
   storedBank,
   paymentType = 'PAGO_PROVEEDOR',
   onAddVendor,
+  onUpdateVendor,
   placeholder = 'Seleccionar cuenta...',
   disabled = false,
   className = '',
@@ -231,13 +233,13 @@ export function AccountSelector({
     bankDetails &&
       (bankDetails.alias?.trim() ||
         bankDetails.cbuCvu?.trim() ||
-        bankDetails.accountHolder?.trim() ||
-        bankDetails.cuitCuil?.trim())
+        bankDetails.bankName?.trim() ||
+        (bankDetails.accountHolder?.trim() && (bankDetails.alias?.trim() || bankDetails.cbuCvu?.trim() || bankDetails.cuitCuil?.trim())))
   );
 
   const matchedVendor = useMemo(() => {
-    if (!vendorName && !cuit) return null;
-    const vNameClean = vendorName.trim().toLowerCase();
+    if (!vendorName && !cuit && !bankDetails?.accountHolder) return null;
+    const vNameClean = (vendorName || bankDetails?.accountHolder || '').trim().toLowerCase();
     const cuitClean = (cuit || bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
 
     return (
@@ -459,16 +461,16 @@ export function AccountSelector({
         subtitle="Se guardará en proveedores y se asignará al comprobante"
         initialData={{
           id: '',
-          name: search || vendorName || '',
-          cuit: cuit || bankDetails?.cuitCuil || '',
+          name: search.trim() ? search.trim() : '',
+          cuit: '',
           category: 'Varios',
           bankDetails: {
-            accountHolder: search || vendorName || '',
+            accountHolder: search.trim() ? search.trim() : '',
             bankName: '',
             accountType: 'Indefinido',
             cbuCvu: '',
             alias: '',
-            cuitCuil: cuit || bankDetails?.cuitCuil || '',
+            cuitCuil: '',
           },
         }}
         onClose={() => setIsNewVendorModalOpen(false)}
@@ -510,6 +512,13 @@ export function AccountSelector({
         }}
         onClose={() => setIsEditVendorModalOpen(false)}
         onSave={(savedVendor) => {
+          if (onUpdateVendor && matchedVendor) {
+            onUpdateVendor({
+              ...matchedVendor,
+              ...savedVendor,
+              id: matchedVendor.id,
+            });
+          }
           onSelectAccount({
             bankDetails: savedVendor.bankDetails || {
               accountHolder: savedVendor.name,
