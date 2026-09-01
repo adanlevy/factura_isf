@@ -1,0 +1,11 @@
+{
+  "name": "Remix Gestor de Gastos y Facturas IA",
+  "description": "Escaneo inteligente de facturas y notas de voz para extracción automática de montos, fechas, proyectos, categorías y control de reintegros.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

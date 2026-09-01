@@ -1,0 +1,123 @@
+{
+  "entities": {
+    "Expense": {
+      "title": "Expense",
+      "description": "Comprobante de gasto o factura cargada en el sistema",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "vendor": { "type": "string" },
+        "cuit": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "category": { "type": "string" },
+        "costCenter": { "type": "string" },
+        "project": { "type": "string" },
+        "paymentType": { "type": "string" },
+        "status": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "receiptUrl": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "driveWebViewLink": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "vendor", "amount"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Proveedor registrado en el catálogo maestro",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cuit": { "type": "string" },
+        "defaultCategory": { "type": "string" },
+        "bankInfo": { "type": "object" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "CostCenter": {
+      "title": "CostCenter",
+      "description": "Centro de costo o proyecto contable",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Categoría de gasto",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "UserPreference": {
+      "title": "UserPreference",
+      "description": "Preferencias de interfaz y patrones de usuario",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "lastSelectedCostCenter": { "type": "string" },
+        "favoriteCostCenters": { "type": "array" }
+      },
+      "required": ["email"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "Usuario registrado con rol asignado en la plataforma",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "picture": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "addedBy": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Colección de comprobantes y facturas"
+    },
+    "/vendors/{vendorId}": {
+      "schema": { "$ref": "#/entities/Vendor" },
+      "description": "Catálogo de proveedores"
+    },
+    "/cost_centers/{costCenterId}": {
+      "schema": { "$ref": "#/entities/CostCenter" },
+      "description": "Catálogo de centros de costo y proyectos"
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Categorías de gastos disponibles"
+    },
+    "/user_preferences/{email}": {
+      "schema": { "$ref": "#/entities/UserPreference" },
+      "description": "Preferencias y configuración por usuario"
+    },
+    "/app_users/{userEmail}": {
+      "schema": { "$ref": "#/entities/AppUser" },
+      "description": "Gestión de roles y permisos de usuarios y administradores"
+    },
+    "/system_health/{docId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Pings de conexión y diagnóstico del sistema"
+    }
+  }
+}
