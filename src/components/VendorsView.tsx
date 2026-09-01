@@ -1,36 +1,25 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Building2,
   Plus,
   Search,
   CreditCard,
-  Mail,
-  Phone,
-  MapPin,
   FileSpreadsheet,
   Edit2,
   Trash2,
   ExternalLink,
-  Tag,
   CheckCircle2,
+  AlertTriangle,
   AlertCircle,
   X,
-  Sparkles,
-  FileUp,
-  RefreshCw,
-  RotateCcw,
   ArrowUpDown,
-  ArrowDownAZ,
-  ArrowUpAZ,
-  Calendar,
   Clock,
-  FileText,
+  Receipt,
 } from 'lucide-react';
-import { Vendor, Expense, UserBankDetails } from '../types';
-import { formatCurrency, formatDate } from '../utils/helpers';
-import { getSmartSortedOptions } from '../utils/sorting';
-import { notifyBankDetailsChange } from '../utils/googleWorkspace';
+import { Vendor, Expense } from '../types';
+import { formatCurrency, formatDate, formatTransferDetails } from '../utils/helpers';
 import { normalizeVendorBankDetails } from '../utils/cloudSync';
+import { VendorFormModal } from './VendorFormModal';
 
 export type VendorSortOption =
   | 'name-asc'
@@ -99,103 +88,93 @@ export function VendorsView({
           return false;
         }
       }
-
       return true;
     });
   }, [vendors, searchTerm]);
 
-  // Sorted and filtered vendors
+  // Sorted vendors
   const sortedVendors = useMemo(() => {
     const list = [...filteredVendors];
     return list.sort((a, b) => {
-      switch (sortOption) {
-        case 'name-asc':
-          return (a.name || '').localeCompare(b.name || '', 'es', { sensitivity: 'base' });
-        case 'name-desc':
-          return (b.name || '').localeCompare(a.name || '', 'es', { sensitivity: 'base' });
-        case 'createdAt-desc': {
-          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return timeB - timeA;
-        }
-        case 'createdAt-asc': {
-          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return timeA - timeB;
-        }
-        case 'totalAmount-desc': {
-          const amountA = vendorStats.get(a.name.trim().toLowerCase())?.totalAmount || 0;
-          const amountB = vendorStats.get(b.name.trim().toLowerCase())?.totalAmount || 0;
-          return amountB - amountA;
-        }
-        case 'count-desc': {
-          const countA = vendorStats.get(a.name.trim().toLowerCase())?.count || 0;
-          const countB = vendorStats.get(b.name.trim().toLowerCase())?.count || 0;
-          return countB - countA;
-        }
-        default:
-          return 0;
+      if (sortOption === 'name-asc') {
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
       }
+      if (sortOption === 'name-desc') {
+        return b.name.localeCompare(a.name, 'es', { sensitivity: 'base' });
+      }
+      if (sortOption === 'createdAt-desc') {
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      }
+      if (sortOption === 'createdAt-asc') {
+        return (a.createdAt || '').localeCompare(b.createdAt || '');
+      }
+      if (sortOption === 'totalAmount-desc') {
+        const amountA = vendorStats.get(a.name.trim().toLowerCase())?.totalAmount || 0;
+        const amountB = vendorStats.get(b.name.trim().toLowerCase())?.totalAmount || 0;
+        return amountB - amountA;
+      }
+      if (sortOption === 'count-desc') {
+        const countA = vendorStats.get(a.name.trim().toLowerCase())?.count || 0;
+        const countB = vendorStats.get(b.name.trim().toLowerCase())?.count || 0;
+        return countB - countA;
+      }
+      return 0;
     });
   }, [filteredVendors, sortOption, vendorStats]);
 
-  // Global metrics
+  // Total summary calculation
   const totalBilled = useMemo(() => {
-    return expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    return expenses.reduce((acc, exp) => acc + (exp.amount || 0), 0);
   }, [expenses]);
 
-  const vendorsWithBank = useMemo(() => {
-    return vendors.filter((v) => v.bankDetails?.cbuCvu || v.bankDetails?.alias).length;
-  }, [vendors]);
+  // Check matching expenses for the vendor to delete
+  const matchingExpensesForDelete = useMemo(() => {
+    if (!vendorToDelete) return [];
+    const vName = (vendorToDelete.name || '').trim().toLowerCase();
+    const vCuit = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+    return expenses.filter((e) => {
+      const expVendor = (e.vendor || '').trim().toLowerCase();
+      const expCuit = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
+      return (vName && expVendor === vName) || (vCuit && expCuit && vCuit === expCuit);
+    });
+  }, [vendorToDelete, expenses]);
 
   return (
-    <div className="space-y-4">
-      {/* Top Banner KPI Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase tracking-wider">
-            <span>Directorio de Proveedores</span>
-            <Building2 className="w-4 h-4 text-indigo-600" />
+    <div className="space-y-6">
+      {/* Header Banner */}
+      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="space-y-2 max-w-xl">
+          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-semibold backdrop-blur-md border border-indigo-400/20">
+            <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Catálogo Oficial de Proveedores</span>
           </div>
-          <div className="my-2">
-            <div className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              {vendors.length}
-            </div>
-            <p className="text-xs text-slate-500">{filteredVendors.length} visible(s) con los filtros</p>
-          </div>
+          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+            Proveedores y Cuentas Bancarias
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            Administra los datos fiscales, CUIT, CBU y Alias bancarios para liquidaciones directas y rendición de comprobantes.
+          </p>
         </div>
 
-        <div className="bg-white border border-indigo-200/90 rounded-3xl p-5 shadow-xs flex flex-col justify-between bg-gradient-to-br from-indigo-50/40 via-white to-white">
-          <div className="flex items-center justify-between text-xs font-bold text-indigo-900 uppercase tracking-wider">
-            <span>Cuentas para Pago Directo</span>
-            <CreditCard className="w-4 h-4 text-indigo-600" />
+        {/* Global Stats */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/10 text-left">
+            <span className="text-[11px] font-semibold text-slate-300 block mb-1">Proveedores en Catálogo</span>
+            <div className="text-xl sm:text-2xl font-black text-white">{vendors.length}</div>
+            <p className="text-xs text-slate-300">{filteredVendors.length} visibles</p>
           </div>
-          <div className="my-2">
-            <div className="text-2xl font-extrabold text-indigo-950 tracking-tight">
-              {vendorsWithBank} / {vendors.length}
-            </div>
-            <p className="text-xs text-indigo-700 font-medium">
-              Proveedores con CBU/Alias precargados
-            </p>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-5 text-white shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between text-xs font-bold text-indigo-300 uppercase tracking-wider">
-            <span>Facturación Histórica</span>
-            <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
-          </div>
-          <div className="my-2">
-            <div className="text-2xl font-extrabold text-white tracking-tight">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/10 text-left">
+            <span className="text-[11px] font-semibold text-slate-300 block mb-1">Facturación Total Registrada</span>
+            <div className="text-xl sm:text-2xl font-black text-emerald-400 font-mono">
               {formatCurrency(totalBilled)}
             </div>
-            <p className="text-xs text-slate-300">Total acumulado en comprobantes vinculados</p>
+            <p className="text-xs text-slate-300">Total en comprobantes</p>
           </div>
         </div>
       </div>
 
       {/* Control Bar: Search, Sorting and Actions */}
-      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs space-y-3">
+      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs">
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -251,75 +230,6 @@ export function VendorsView({
               <span>Nuevo Proveedor</span>
             </button>
           </div>
-        </div>
-
-        {/* Quick Sort Filter Chips */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100 text-xs">
-          <span className="text-[11px] font-bold text-slate-400 mr-1">Orden rápido:</span>
-          <button
-            type="button"
-            id="vendor-sort-name-asc"
-            onClick={() => setSortOption('name-asc')}
-            className={`px-2.5 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 ${
-              sortOption === 'name-asc'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <ArrowDownAZ className="w-3 h-3" />
-            <span>A → Z</span>
-          </button>
-          <button
-            type="button"
-            id="vendor-sort-name-desc"
-            onClick={() => setSortOption('name-desc')}
-            className={`px-2.5 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 ${
-              sortOption === 'name-desc'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <ArrowUpAZ className="w-3 h-3" />
-            <span>Z → A</span>
-          </button>
-          <button
-            type="button"
-            id="vendor-sort-created-desc"
-            onClick={() => setSortOption('createdAt-desc')}
-            className={`px-2.5 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 ${
-              sortOption === 'createdAt-desc'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <Clock className="w-3 h-3" />
-            <span>Más recientes</span>
-          </button>
-          <button
-            type="button"
-            id="vendor-sort-created-asc"
-            onClick={() => setSortOption('createdAt-asc')}
-            className={`px-2.5 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 ${
-              sortOption === 'createdAt-asc'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <Calendar className="w-3 h-3" />
-            <span>Más antiguos</span>
-          </button>
-          <button
-            type="button"
-            id="vendor-sort-amount-desc"
-            onClick={() => setSortOption('totalAmount-desc')}
-            className={`px-2.5 py-1 rounded-xl font-bold text-[11px] transition cursor-pointer flex items-center gap-1 ${
-              sortOption === 'totalAmount-desc'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <span>Mayor Facturación</span>
-          </button>
         </div>
       </div>
 
@@ -385,7 +295,9 @@ export function VendorsView({
                     </div>
                     <div className="col-span-2 truncate">
                       <span className="text-slate-400 font-medium">Alias:</span>{' '}
-                      <span className="font-mono font-bold text-indigo-950 bg-white px-1.5 py-0.5 rounded border border-slate-200">{bank?.alias || '-'}</span>
+                      <span className="font-mono font-bold text-indigo-950 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                        {bank?.alias || '-'}
+                      </span>
                     </div>
                     <div className="col-span-2 truncate">
                       <span className="text-slate-400 font-medium">CBU:</span>{' '}
@@ -456,12 +368,13 @@ export function VendorsView({
         />
       )}
 
-      {/* Modal: Create Vendor */}
+      {/* Modal: Create Vendor (Unified VendorFormModal) */}
       {isCreateModalOpen && (
         <VendorFormModal
           isOpen={isCreateModalOpen}
           title="Registrar Nuevo Proveedor"
-          subtitle="Carga los datos del proveedor (nombre o datos completos para transferencias directas)"
+          subtitle="Carga los datos del proveedor y datos de transferencia bancaria"
+          existingVendors={vendors}
           onClose={() => setIsCreateModalOpen(false)}
           onSave={(data) => {
             onAddVendor(data);
@@ -470,13 +383,14 @@ export function VendorsView({
         />
       )}
 
-      {/* Modal: Edit Vendor */}
+      {/* Modal: Edit Vendor (Unified VendorFormModal) */}
       {editingVendor && (
         <VendorFormModal
           isOpen={Boolean(editingVendor)}
           initialData={editingVendor}
+          existingVendors={vendors}
           title="Editar Datos de Proveedor"
-          subtitle="Modifica cualquier dato contable, de contacto o bancario del proveedor"
+          subtitle="Modifica datos contables o cuentas bancarias del proveedor"
           onClose={() => setEditingVendor(null)}
           onSave={(data) => {
             onUpdateVendor({ ...editingVendor, ...data });
@@ -485,26 +399,75 @@ export function VendorsView({
         />
       )}
 
-      {/* Delete Vendor Confirmation Modal */}
+      {/* Enhanced Delete Vendor Confirmation Modal */}
       {vendorToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-              <Trash2 className="w-6 h-6" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in duration-150 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto ${
+              matchingExpensesForDelete.length > 0 ? 'bg-amber-100 text-amber-600' : 'bg-rose-100 text-rose-600'
+            }`}>
+              {matchingExpensesForDelete.length > 0 ? (
+                <AlertTriangle className="w-6 h-6" />
+              ) : (
+                <Trash2 className="w-6 h-6" />
+              )}
             </div>
 
-            <div className="text-center space-y-1">
-              <h3 className="text-base font-bold text-slate-900">¿Eliminar proveedor?</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Estás por eliminar de forma permanente a <strong className="text-slate-800">{vendorToDelete.name}</strong> del catálogo de proveedores.
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900">
+                {matchingExpensesForDelete.length > 0
+                  ? '¿Eliminar proveedor vinculado a pagos?'
+                  : '¿Eliminar proveedor del catálogo?'}
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Estás por eliminar a <strong className="text-slate-900 font-bold">&quot;{vendorToDelete.name}&quot;</strong> del catálogo oficial de proveedores.
               </p>
             </div>
+
+            {/* Warning if vendor is used in payments */}
+            {matchingExpensesForDelete.length > 0 && (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs space-y-2">
+                <div className="flex items-start space-x-2 text-amber-900 font-semibold">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    Este proveedor está asociado a <strong>{matchingExpensesForDelete.length} pago(s) / comprobante(s)</strong> registrados:
+                  </span>
+                </div>
+
+                {/* List of affected expenses */}
+                <div className="max-h-36 overflow-y-auto border border-amber-200/80 rounded-xl bg-white p-2 divide-y divide-slate-100 text-[11px]">
+                  {matchingExpensesForDelete.slice(0, 10).map((exp) => (
+                    <div key={exp.id} className="py-1.5 flex items-center justify-between gap-2">
+                      <div className="truncate min-w-0">
+                        <span className="font-bold text-slate-800">{exp.invoiceNumber || 'Sin N°'}</span>
+                        <span className="text-slate-400 mx-1.5">•</span>
+                        <span className="text-slate-600">{exp.project || 'General'}</span>
+                        <span className="text-slate-400 mx-1.5">•</span>
+                        <span className="text-slate-500">{formatDate(exp.date)}</span>
+                      </div>
+                      <span className="font-mono font-bold text-slate-900 shrink-0">
+                        {formatCurrency(exp.amount, exp.currency)}
+                      </span>
+                    </div>
+                  ))}
+                  {matchingExpensesForDelete.length > 10 && (
+                    <p className="text-[10px] text-slate-400 pt-1 text-center italic">
+                      + {matchingExpensesForDelete.length - 10} comprobantes más
+                    </p>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Si continúas, <strong>el proveedor se eliminará y se desvinculará de estos {matchingExpensesForDelete.length} comprobantes</strong> para que no vuelva a auto-generarse. Los datos de transferencias ya liquidadas se conservarán respaldados en el registro del pago.
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center space-x-3 pt-2">
               <button
                 type="button"
                 onClick={() => setVendorToDelete(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition cursor-pointer"
               >
                 Cancelar
               </button>
@@ -516,623 +479,20 @@ export function VendorsView({
                     setVendorToDelete(null);
                   }
                 }}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+                className={`flex-1 py-2.5 text-white text-xs font-bold rounded-2xl transition cursor-pointer shadow-md active:scale-95 ${
+                  matchingExpensesForDelete.length > 0
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
               >
-                Sí, Eliminar
+                {matchingExpensesForDelete.length > 0
+                  ? `Sí, Eliminar y Desvincular (${matchingExpensesForDelete.length})`
+                  : 'Sí, Eliminar Proveedor'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-interface VendorFormModalProps {
-  isOpen: boolean;
-  initialData?: Vendor;
-  title: string;
-  subtitle: string;
-  onClose: () => void;
-  onSave: (data: Omit<Vendor, 'id' | 'createdAt'>) => void;
-}
-
-function VendorFormModal({
-  isOpen,
-  initialData,
-  title,
-  subtitle,
-  onClose,
-  onSave,
-}: VendorFormModalProps) {
-  const [name, setName] = useState(initialData?.name || '');
-  const [cuit, setCuit] = useState(initialData?.cuit || '');
-  const [contactEmail, setContactEmail] = useState(initialData?.contactEmail || '');
-  const [phone, setPhone] = useState(initialData?.phone || '');
-  const [notes, setNotes] = useState(initialData?.notes || '');
-  const [bankData, setBankData] = useState<UserBankDetails>(
-    initialData?.bankDetails || {
-      bankName: '',
-      accountType: 'Indefinido',
-      cbuCvu: '',
-      alias: '',
-      cuitCuil: initialData?.cuit || '',
-      accountHolder: initialData?.name || '',
-    }
-  );
-
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
-  const [scanErrorMsg, setScanErrorMsg] = useState<string | null>(null);
-  const [previousValues, setPreviousValues] = useState<Record<string, string>>({});
-
-  const prevOpenRef = useRef(false);
-
-  useEffect(() => {
-    if (isOpen && !prevOpenRef.current) {
-      setName(initialData?.name || '');
-      setCuit(initialData?.cuit || '');
-      setContactEmail(initialData?.contactEmail || '');
-      setPhone(initialData?.phone || '');
-      setNotes(initialData?.notes || '');
-      setBankData(
-        initialData?.bankDetails || {
-          bankName: '',
-          accountType: 'Indefinido',
-          cbuCvu: '',
-          alias: '',
-          cuitCuil: initialData?.cuit || '',
-          accountHolder: initialData?.name || '',
-        }
-      );
-      setPreviousValues({});
-      setScanSuccessMsg(null);
-      setScanErrorMsg(null);
-      setIsScanning(false);
-    }
-    prevOpenRef.current = isOpen;
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  const handleRevertField = (fieldKey: string) => {
-    const prevVal = previousValues[fieldKey];
-    if (prevVal === undefined) return;
-
-    if (fieldKey === 'name') setName(prevVal);
-    else if (fieldKey === 'cuit') setCuit(prevVal);
-    else if (fieldKey === 'contactEmail') setContactEmail(prevVal);
-    else if (fieldKey === 'phone') setPhone(prevVal);
-    else if (fieldKey === 'notes') setNotes(prevVal);
-    else if (fieldKey === 'bankName') setBankData((prev) => ({ ...prev, bankName: prevVal }));
-    else if (fieldKey === 'accountType') setBankData((prev) => ({ ...prev, accountType: prevVal as any }));
-    else if (fieldKey === 'alias') setBankData((prev) => ({ ...prev, alias: prevVal }));
-    else if (fieldKey === 'cbuCvu') setBankData((prev) => ({ ...prev, cbuCvu: prevVal }));
-    else if (fieldKey === 'accountHolder') setBankData((prev) => ({ ...prev, accountHolder: prevVal }));
-
-    const updated = { ...previousValues };
-    delete updated[fieldKey];
-    setPreviousValues(updated);
-  };
-
-  const getCurrentFieldValue = (fieldKey: string): string => {
-    if (fieldKey === 'name') return name;
-    if (fieldKey === 'cuit') return cuit;
-    if (fieldKey === 'contactEmail') return contactEmail;
-    if (fieldKey === 'phone') return phone;
-    if (fieldKey === 'notes') return notes;
-    if (fieldKey === 'bankName') return bankData.bankName;
-    if (fieldKey === 'accountType') return bankData.accountType || 'Indefinido';
-    if (fieldKey === 'alias') return bankData.alias;
-    if (fieldKey === 'cbuCvu') return bankData.cbuCvu;
-    if (fieldKey === 'accountHolder') return bankData.accountHolder || '';
-    return '';
-  };
-
-  const renderPreviousValueNotice = (fieldKey: string) => {
-    const prevVal = previousValues[fieldKey];
-    if (prevVal === undefined || prevVal === null) return null;
-    const currentVal = getCurrentFieldValue(fieldKey);
-    if (!prevVal.trim() || prevVal.trim().toLowerCase() === currentVal.trim().toLowerCase()) {
-      return null;
-    }
-
-    return (
-      <div className="flex items-center justify-between text-[11px] text-amber-900 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80 mt-1">
-        <span className="truncate">valor anterior: <strong className="font-semibold">{prevVal}</strong></span>
-        <button
-          type="button"
-          onClick={() => handleRevertField(fieldKey)}
-          className="text-amber-800 hover:text-indigo-600 font-bold text-[10px] underline cursor-pointer shrink-0 ml-2 flex items-center gap-1"
-          title="Restaurar valor anterior"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Revertir</span>
-        </button>
-      </div>
-    );
-  };
-
-  const handleFileScan = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsScanning(true);
-    setScanErrorMsg(null);
-    setScanSuccessMsg(null);
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64 = reader.result as string;
-        const res = await fetch('/api/process-vendor-doc', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileBase64: base64,
-            mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-          }),
-        });
-
-        const json = await res.json();
-        if (!json.success || !json.data) {
-          throw new Error(json.error || 'No se pudieron extraer los datos del documento');
-        }
-
-        const ext = json.data;
-        const newPreviousValues: Record<string, string> = { ...previousValues };
-        let changedCount = 0;
-
-        // Name
-        if (ext.name && ext.name.trim()) {
-          const val = ext.name.trim();
-          if (name && name.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['name'] = name.trim();
-            setName(val);
-            changedCount++;
-          } else if (!name) {
-            setName(val);
-            changedCount++;
-          }
-        }
-
-        // CUIT
-        if (ext.cuit && ext.cuit.trim()) {
-          const val = ext.cuit.trim();
-          if (cuit && cuit.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['cuit'] = cuit.trim();
-            setCuit(val);
-            changedCount++;
-          } else if (!cuit) {
-            setCuit(val);
-            changedCount++;
-          }
-        }
-
-        // Contact Email
-        if (ext.contactEmail && ext.contactEmail.trim()) {
-          const val = ext.contactEmail.trim();
-          if (contactEmail && contactEmail.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['contactEmail'] = contactEmail.trim();
-            setContactEmail(val);
-            changedCount++;
-          } else if (!contactEmail) {
-            setContactEmail(val);
-            changedCount++;
-          }
-        }
-
-        // Phone
-        if (ext.phone && ext.phone.trim()) {
-          const val = ext.phone.trim();
-          if (phone && phone.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['phone'] = phone.trim();
-            setPhone(val);
-            changedCount++;
-          } else if (!phone) {
-            setPhone(val);
-            changedCount++;
-          }
-        }
-
-        // Notes
-        if (ext.notes && ext.notes.trim()) {
-          const val = ext.notes.trim();
-          if (notes && notes.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['notes'] = notes.trim();
-            setNotes(val);
-            changedCount++;
-          } else if (!notes) {
-            setNotes(val);
-            changedCount++;
-          }
-        }
-
-        const invalidPlaceholders = /^(no_alias|no alias|no_tiene|no tiene|n\/a|na|null|none|sin alias|undefined|sin_alias|no posee|s\/d|sd|-|—)$/i;
-
-        // Bank data
-        let nextBankData = { ...bankData };
-        if (ext.bankName && ext.bankName.trim() && !invalidPlaceholders.test(ext.bankName.trim())) {
-          const val = ext.bankName.trim();
-          if (bankData.bankName && bankData.bankName.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['bankName'] = bankData.bankName.trim();
-            nextBankData.bankName = val;
-            changedCount++;
-          } else if (!bankData.bankName) {
-            nextBankData.bankName = val;
-            changedCount++;
-          }
-        }
-
-        if (ext.accountType && ['Caja de Ahorro', 'Cuenta Corriente', 'Indefinido'].includes(ext.accountType)) {
-          const val = ext.accountType as any;
-          const currentAcc = bankData.accountType || 'Indefinido';
-          if (currentAcc.trim().toLowerCase() !== val.trim().toLowerCase()) {
-            if (currentAcc && currentAcc !== 'Indefinido') {
-              newPreviousValues['accountType'] = currentAcc;
-            }
-            nextBankData.accountType = val;
-            changedCount++;
-          }
-        }
-
-        if (ext.alias && ext.alias.trim() && !invalidPlaceholders.test(ext.alias.trim())) {
-          const val = ext.alias.trim();
-          if (bankData.alias && bankData.alias.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['alias'] = bankData.alias.trim();
-            nextBankData.alias = val;
-            changedCount++;
-          } else if (!bankData.alias) {
-            nextBankData.alias = val;
-            changedCount++;
-          }
-        }
-
-        if (ext.cbuCvu && ext.cbuCvu.trim() && !invalidPlaceholders.test(ext.cbuCvu.trim())) {
-          const digits = ext.cbuCvu.trim().replace(/\D/g, '');
-          const val = digits.length === 22 ? digits : ext.cbuCvu.trim();
-          if (bankData.cbuCvu && bankData.cbuCvu.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['cbuCvu'] = bankData.cbuCvu.trim();
-            nextBankData.cbuCvu = val;
-            changedCount++;
-          } else if (!bankData.cbuCvu) {
-            nextBankData.cbuCvu = val;
-            changedCount++;
-          }
-        }
-
-        if (ext.accountHolder && ext.accountHolder.trim() && !invalidPlaceholders.test(ext.accountHolder.trim())) {
-          const val = ext.accountHolder.trim();
-          if (bankData.accountHolder && bankData.accountHolder.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['accountHolder'] = bankData.accountHolder.trim();
-            nextBankData.accountHolder = val;
-            changedCount++;
-          } else if (!bankData.accountHolder) {
-            nextBankData.accountHolder = val;
-            changedCount++;
-          }
-        }
-
-        setBankData(nextBankData);
-        setPreviousValues(newPreviousValues);
-
-        if (changedCount > 0) {
-          setScanSuccessMsg(`¡Escaneo de archivo completado! Se completaron o actualizaron ${changedCount} campos.`);
-        } else {
-          setScanSuccessMsg('Archivo procesado. No se detectaron datos nuevos.');
-        }
-      } catch (err: any) {
-        setScanErrorMsg(err.message || 'Error al escanear archivo con IA');
-      } finally {
-        setIsScanning(false);
-        e.target.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      alert('Ingresa el nombre o razón social del proveedor.');
-      return;
-    }
-
-    // Clear previous values notices on save
-    setPreviousValues({});
-
-    const rawVendor: Vendor = {
-      id: initialData?.id || 'temp',
-      name: name.trim(),
-      cuit: cuit.trim() || undefined,
-      category: initialData?.category || undefined,
-      contactEmail: contactEmail.trim() || undefined,
-      phone: phone.trim() || undefined,
-      address: initialData?.address || undefined,
-      notes: notes.trim() || undefined,
-      createdAt: initialData?.createdAt || new Date().toISOString(),
-      bankDetails: {
-        bankName: bankData.bankName?.trim() || '',
-        accountType: bankData.accountType || 'Indefinido',
-        cbuCvu: bankData.cbuCvu?.trim() || '',
-        alias: bankData.alias?.trim() || '',
-        cuitCuil: bankData.cuitCuil || cuit.trim() || '',
-        accountHolder: bankData.accountHolder?.trim() || name.trim(),
-      },
-    };
-
-    const normalized = normalizeVendorBankDetails(rawVendor);
-
-    if (normalized.bankDetails) {
-      notifyBankDetailsChange({
-        updatedBy: { email: 'admin@isf-argentina.org', name: 'Administrador' },
-        targetType: 'vendor',
-        targetName: `Proveedor: ${name.trim()}`,
-        bankDetails: normalized.bankDetails,
-      }).catch((err) => console.warn('Notification error:', err));
-    }
-
-    onSave({
-      name: normalized.name,
-      cuit: normalized.cuit,
-      category: normalized.category,
-      contactEmail: normalized.contactEmail,
-      phone: normalized.phone,
-      address: normalized.address,
-      notes: normalized.notes,
-      bankDetails: normalized.bankDetails,
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
-        {/* Modal Header */}
-        <div className="px-6 py-5 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-xs">
-              <Building2 className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="font-bold text-base text-white">{title}</h3>
-              <p className="text-xs text-indigo-300">{subtitle}</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
-          {/* File Upload / OCR Scan Box */}
-          <div className="p-4 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/30 space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center space-x-2.5">
-                <div className="p-2 rounded-xl bg-indigo-600 text-white shadow-xs shrink-0">
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900">Escanear Documento / Comprobante con IA</h4>
-                  <p className="text-[11px] text-slate-500">
-                    Cargá una imagen (JPG, PNG) o PDF con datos del proveedor, CBU, Alias o constancia fiscal.
-                  </p>
-                </div>
-              </div>
-
-              <label
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer transition flex items-center justify-center space-x-1.5 shrink-0 ${
-                  isScanning
-                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs active:scale-95'
-                }`}
-              >
-                {isScanning ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Escaneando...</span>
-                  </>
-                ) : (
-                  <>
-                    <FileUp className="w-3.5 h-3.5" />
-                    <span>Cargar Imagen / PDF</span>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  onChange={handleFileScan}
-                  disabled={isScanning}
-                  className="hidden"
-                />
-              </label>
-            </div>
-
-            {scanSuccessMsg && (
-              <div className="text-[11px] text-emerald-800 bg-emerald-50 p-2 rounded-xl border border-emerald-200 flex items-center space-x-1.5 animate-in fade-in duration-200">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>{scanSuccessMsg}</span>
-              </div>
-            )}
-
-            {scanErrorMsg && (
-              <div className="text-[11px] text-rose-800 bg-rose-50 p-2 rounded-xl border border-rose-200 flex items-center space-x-1.5 animate-in fade-in duration-200">
-                <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                <span>{scanErrorMsg}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Main info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Nombre / Razón Social *
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ej: Ferretería Industrial del Norte"
-                className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-semibold focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
-                required
-              />
-              {renderPreviousValueNotice('name')}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                CUIT / Identificación Fiscal
-              </label>
-              <input
-                type="text"
-                value={cuit}
-                onChange={(e) => setCuit(e.target.value)}
-                placeholder="30-71089945-8"
-                className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
-              />
-              {renderPreviousValueNotice('cuit')}
-            </div>
-          </div>
-
-          {/* Contact Email & Phone */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Email de Facturación / Contacto
-              </label>
-              <input
-                type="email"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                placeholder="facturacion@proveedor.com.ar"
-                className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
-              />
-              {renderPreviousValueNotice('contactEmail')}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Teléfono de Contacto
-              </label>
-              <input
-                type="text"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+54 11 4832-5754"
-                className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
-              />
-              {renderPreviousValueNotice('phone')}
-            </div>
-          </div>
-
-          {/* Bank Details */}
-          <div className="p-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 space-y-2.5">
-            <span className="text-xs font-bold text-indigo-950 flex items-center">
-              <CreditCard className="w-3.5 h-3.5 mr-1 text-indigo-600" />
-              Datos Bancarios
-            </span>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">Banco</label>
-                <input
-                  type="text"
-                  value={bankData.bankName || ''}
-                  onChange={(e) => setBankData({ ...bankData, bankName: e.target.value })}
-                  placeholder="Ej: BBVA"
-                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs outline-hidden bg-white"
-                />
-                {renderPreviousValueNotice('bankName')}
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">Tipo de Cuenta</label>
-                <select
-                  value={bankData.accountType || 'Indefinido'}
-                  onChange={(e) => setBankData({ ...bankData, accountType: e.target.value as any })}
-                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs outline-hidden bg-white font-medium cursor-pointer"
-                >
-                  <option value="Indefinido">Indefinido</option>
-                  <option value="Caja de Ahorro">Caja de Ahorro</option>
-                  <option value="Cuenta Corriente">Cuenta Corriente</option>
-                </select>
-                {renderPreviousValueNotice('accountType')}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">Alias</label>
-                <input
-                  type="text"
-                  value={bankData.alias || ''}
-                  onChange={(e) => setBankData({ ...bankData, alias: e.target.value })}
-                  placeholder="Ej: proveedor.santander"
-                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs font-bold text-indigo-900 outline-hidden bg-white"
-                />
-                {renderPreviousValueNotice('alias')}
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">CBU / CVU (22 dígitos)</label>
-                <input
-                  type="text"
-                  value={bankData.cbuCvu || ''}
-                  onChange={(e) => setBankData({ ...bankData, cbuCvu: e.target.value })}
-                  placeholder="0720198220000034509123"
-                  className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs font-mono outline-hidden bg-white"
-                />
-                {renderPreviousValueNotice('cbuCvu')}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-semibold text-slate-600 block mb-0.5">Titular de la Cuenta</label>
-              <input
-                type="text"
-                value={bankData.accountHolder || ''}
-                onChange={(e) => setBankData({ ...bankData, accountHolder: e.target.value })}
-                placeholder="Razón Social / Nombre del Titular"
-                className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs outline-hidden bg-white"
-              />
-              {renderPreviousValueNotice('accountHolder')}
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Notas / Observaciones del Proveedor
-            </label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Descuentos conveniados, plazos de pago, contacto de urgencia..."
-              className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
-            />
-            {renderPreviousValueNotice('notes')}
-          </div>
-
-          {/* Buttons */}
-          <div className="flex justify-end space-x-2 pt-3 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95"
-            >
-              Guardar Proveedor
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }

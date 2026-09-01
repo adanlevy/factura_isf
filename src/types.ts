@@ -123,6 +123,7 @@ export interface Expense {
   // Method & Notes
   paymentType?: ExpensePaymentType;
   paymentMethod: PaymentMethod | string;
+  transferDetails?: string; // Datos transferencia para conservar adónde se transfirió
   notes?: string;
   accountingNotes?: string; // Notas contables
   items?: ExpenseItem[];

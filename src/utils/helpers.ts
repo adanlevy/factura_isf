@@ -572,3 +572,62 @@ export function formatWithholdingEmailSubject(vendor?: string, amount: number = 
   return `[Pagos-Retención]-${vendorShort}-${formattedAmt} / Certificado de Retención`;
 }
 
+/**
+ * Genera un texto plano estandarizado con los datos de transferencia/bancarios del proveedor o solicitante
+ * para persistirlos en el comprobante una vez pagado o liquidado.
+ */
+export function formatTransferDetails(expense?: Partial<Expense> | null, vendorObj?: Vendor | null): string {
+  if (!expense && !vendorObj) return '';
+  const bank = expense?.bankDetails || vendorObj?.bankDetails;
+  const vendorName = (expense?.vendor || vendorObj?.name || '').trim();
+  const cuit = (expense?.cuit || bank?.cuitCuil || vendorObj?.cuit || '').trim();
+
+  const parts: string[] = [];
+  if (vendorName) parts.push(`Destinatario: ${vendorName}`);
+  if (cuit) parts.push(`CUIT/CUIL: ${cuit}`);
+  if (bank?.bankName) {
+    const accType = bank.accountType && bank.accountType !== 'Indefinido' ? ` (${bank.accountType})` : '';
+    parts.push(`Banco: ${bank.bankName}${accType}`);
+  }
+  if (bank?.alias) parts.push(`Alias: ${bank.alias}`);
+  if (bank?.cbuCvu) parts.push(`CBU/CVU: ${bank.cbuCvu}`);
+  if (bank?.accountHolder && (!vendorName || bank.accountHolder.trim().toLowerCase() !== vendorName.toLowerCase())) {
+    parts.push(`Titular: ${bank.accountHolder}`);
+  }
+
+  return parts.join(' | ');
+}
+
+/**
+ * Extrae el ID de archivo de Google Drive a partir de URLs con /file/d/, id=, open?id=, uc?id=
+ */
+export function extractGoogleDriveFileId(url?: string | null): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const clean = url.trim();
+  if (!clean || clean.startsWith('data:') || clean.startsWith('blob:')) return null;
+
+  // Pattern /file/d/{FILE_ID}
+  const matchFileD = clean.match(/\/file\/d\/([a-zA-Z0-9_-]{15,})/);
+  if (matchFileD && matchFileD[1]) return matchFileD[1];
+
+  // Pattern [?&]id={FILE_ID}
+  const matchId = clean.match(/[?&]id=([a-zA-Z0-9_-]{15,})/);
+  if (matchId && matchId[1]) return matchId[1];
+
+  // Pattern /d/{FILE_ID}
+  const matchD = clean.match(/\/d\/([a-zA-Z0-9_-]{15,})/);
+  if (matchD && matchD[1]) return matchD[1];
+
+  return null;
+}
+
+/**
+ * Genera la URL de incrustación de vista previa de Google Drive (/preview)
+ * compatible tanto para imágenes (PNG, JPG, SVG) como para archivos PDF o documentos.
+ */
+export function getGoogleDrivePreviewUrl(url?: string | null): string | null {
+  const fileId = extractGoogleDriveFileId(url);
+  if (!fileId) return null;
+  return `https://drive.google.com/file/d/${fileId}/preview`;
+}
+

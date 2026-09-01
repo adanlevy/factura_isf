@@ -18,7 +18,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { Expense, CostCenter } from '../types';
-import { formatCurrency, formatDate, generateDriveFileName } from '../utils/helpers';
+import { formatCurrency, formatDate, generateDriveFileName, formatTransferDetails, getGoogleDrivePreviewUrl } from '../utils/helpers';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import {
@@ -108,6 +108,10 @@ export function ReceiptViewerModal({
   else if (expense.receiptFileName?.toLowerCase().endsWith('.jpg') || expense.receiptFileName?.toLowerCase().endsWith('.jpeg')) fileExt = 'jpg';
 
   const fullDownloadFileName = `${standardizedFileName}.${fileExt}`;
+
+  const driveReceiptPreviewUrl = getGoogleDrivePreviewUrl(expense.driveUploadedUrl || (displayReceiptUrl?.includes('drive.google.com') ? displayReceiptUrl : null));
+  const drivePaymentProofPreviewUrl = getGoogleDrivePreviewUrl(expense.paymentProofDriveUrl || (displayPaymentProofUrl?.includes('drive.google.com') ? displayPaymentProofUrl : null));
+  const driveWithholdingPreviewUrl = getGoogleDrivePreviewUrl(expense.withholdingCertificateDriveUrl || (displayWithholdingUrl?.includes('drive.google.com') ? displayWithholdingUrl : null));
 
   const directFileUrl = expense.driveUploadedUrl || (displayReceiptUrl && displayReceiptUrl.startsWith('data:') ? displayReceiptUrl : null);
   const driveFolderUrl = expense.driveFolderUrl || matchedCc?.driveUrl || (matchedCc?.driveFolder
@@ -319,7 +323,46 @@ export function ReceiptViewerModal({
           {/* Left: Image / SVG / PDF receipt preview */}
           <div className="flex flex-col items-center justify-center bg-slate-50 rounded-2xl p-4 border border-slate-200 min-h-[300px] relative">
             {activeTab === 'WITHHOLDING_CERTIFICATE' ? (
-              displayWithholdingUrl ? (
+              driveWithholdingPreviewUrl ? (
+                <div className="w-full">
+                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
+                    <iframe
+                      src={driveWithholdingPreviewUrl}
+                      title={`Certificado de Retenciones: ${expense.vendor}`}
+                      className="w-full h-full border-0"
+                      allow="autoplay"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={handleDownload}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Descargar</span>
+                    </button>
+                    <a
+                      href={expense.withholdingCertificateDriveUrl || displayWithholdingUrl || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                    {onOpenWithholdingModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWithholdingModal(expense)}
+                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                        <span>Reemplazar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : displayWithholdingUrl ? (
                 <>
                   {displayWithholdingUrl.startsWith('data:application/pdf') ||
                   expense.withholdingCertificateFileName?.toLowerCase().endsWith('.pdf') ? (
@@ -369,39 +412,6 @@ export function ReceiptViewerModal({
                     )}
                   </div>
                 </>
-              ) : expense.withholdingCertificateDriveUrl ? (
-                <div className="text-center p-6 space-y-3 flex flex-col items-center justify-center">
-                  <div className="w-14 h-14 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center text-amber-600 shadow-xs">
-                    <FileCheck className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-sm">Certificado en Google Drive</h4>
-                    <p className="text-xs text-slate-500 max-w-xs mt-1 leading-relaxed">
-                      El certificado de retención está guardado de forma segura en Google Drive.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <a
-                      href={expense.withholdingCertificateDriveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Abrir Certificado en Drive</span>
-                    </a>
-                    {onOpenWithholdingModal && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenWithholdingModal(expense)}
-                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                        <span>Reemplazar</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
               ) : (
                 <div className="text-center text-slate-500 space-y-3 p-6 flex flex-col items-center justify-center">
                   <div className="w-14 h-14 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center text-amber-600 shadow-xs">
@@ -426,7 +436,46 @@ export function ReceiptViewerModal({
                 </div>
               )
             ) : activeTab === 'PAYMENT_PROOF' ? (
-              displayPaymentProofUrl ? (
+              drivePaymentProofPreviewUrl ? (
+                <div className="w-full">
+                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
+                    <iframe
+                      src={drivePaymentProofPreviewUrl}
+                      title={`Comprobante de Pago: ${expense.vendor}`}
+                      className="w-full h-full border-0"
+                      allow="autoplay"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={handleDownload}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Descargar</span>
+                    </button>
+                    <a
+                      href={expense.paymentProofDriveUrl || displayPaymentProofUrl || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                    {onProcessPayment && (
+                      <button
+                        type="button"
+                        onClick={() => onProcessPayment(expense)}
+                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                        <span>Reemplazar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : displayPaymentProofUrl ? (
                 <>
                   {displayPaymentProofUrl.startsWith('data:application/pdf') ||
                   expense.paymentProofFileName?.toLowerCase().endsWith('.pdf') ? (
@@ -476,39 +525,6 @@ export function ReceiptViewerModal({
                     )}
                   </div>
                 </>
-              ) : expense.paymentProofDriveUrl ? (
-                <div className="text-center p-6 space-y-3 flex flex-col items-center justify-center">
-                  <div className="w-14 h-14 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-center text-emerald-600 shadow-xs">
-                    <CreditCard className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-sm">Comprobante de Transferencia en Drive</h4>
-                    <p className="text-xs text-slate-500 max-w-xs mt-1 leading-relaxed">
-                      El comprobante de pago está guardado de forma segura en Google Drive.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <a
-                      href={expense.paymentProofDriveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Abrir Comprobante en Drive</span>
-                    </a>
-                    {onProcessPayment && (
-                      <button
-                        type="button"
-                        onClick={() => onProcessPayment(expense)}
-                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                        <span>Reemplazar</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
               ) : (
                 <div className="text-center text-slate-400 space-y-3 p-6 flex flex-col items-center justify-center">
                   <CreditCard className="w-12 h-12 mx-auto" />
@@ -525,6 +541,45 @@ export function ReceiptViewerModal({
                   )}
                 </div>
               )
+            ) : driveReceiptPreviewUrl ? (
+              <div className="w-full">
+                <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
+                  <iframe
+                    src={driveReceiptPreviewUrl}
+                    title={`Comprobante / Factura: ${expense.vendor}`}
+                    className="w-full h-full border-0"
+                    allow="autoplay"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    onClick={handleDownload}
+                    className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    <span>Descargar</span>
+                  </button>
+                  <a
+                    href={expense.driveUploadedUrl || expense.driveFolderUrl || driveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                    <span>Ver en Drive</span>
+                  </a>
+                  {onReplaceReceipt && (
+                    <button
+                      type="button"
+                      onClick={() => onReplaceReceipt(expense)}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Reemplazar</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : displayReceiptUrl ? (
               <>
                 {displayReceiptUrl.startsWith('data:application/pdf') ||
@@ -684,6 +739,33 @@ export function ReceiptViewerModal({
                   )}
                 </div>
               </div>
+
+              {/* Datos transferencia */}
+              {(expense.transferDetails || expense.bankDetails) && (
+                <div className="py-2 border-b border-slate-100 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 font-semibold text-xs flex items-center gap-1">
+                      <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Datos transferencia:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const txt = expense.transferDetails || formatTransferDetails(expense);
+                        navigator.clipboard.writeText(txt);
+                        alert('Datos de transferencia copiados al portapapeles.');
+                      }}
+                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 transition cursor-pointer flex items-center gap-1"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copiar</span>
+                    </button>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-mono text-[11px] text-slate-800 break-words leading-relaxed">
+                    {expense.transferDetails || formatTransferDetails(expense)}
+                  </div>
+                </div>
+              )}
             </div>
 
             {expense.notes && (

@@ -29,6 +29,8 @@ interface PaymentTypeSelectorProps {
   isCompact?: boolean;
   vendorNotes?: string;
   onChangeVendorNotes?: (notes: string) => void;
+  isVendorLocked?: boolean;
+  onOpenVendorEditModal?: () => void;
 }
 
 export function PaymentTypeSelector({
@@ -45,6 +47,8 @@ export function PaymentTypeSelector({
   isCompact = false,
   vendorNotes,
   onChangeVendorNotes,
+  isVendorLocked = false,
+  onOpenVendorEditModal,
 }: PaymentTypeSelectorProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -580,23 +584,51 @@ export function PaymentTypeSelector({
           </div>
 
           {/* Account Detail Fields */}
+          {isVendorLocked && (
+            <div className="p-2.5 bg-indigo-100/60 border border-indigo-200 rounded-xl flex items-center justify-between gap-2 text-xs">
+              <span className="text-indigo-900 font-medium flex items-center gap-1.5">
+                <span>🔒</span>
+                <span>Datos bancarios vinculados al catálogo oficial.</span>
+              </span>
+              {onOpenVendorEditModal && (
+                <button
+                  type="button"
+                  onClick={onOpenVendorEditModal}
+                  className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 font-bold rounded-lg border border-indigo-200 shadow-2xs transition cursor-pointer text-[11px] shrink-0"
+                >
+                  Editar Proveedor
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Banco del Proveedor</label>
               <input
                 type="text"
                 placeholder="Ej: Banco Galicia / Santander / BBVA"
+                disabled={isVendorLocked}
                 value={bankDetails.bankName || ''}
                 onChange={(e) => onChangeBankDetails({ ...bankDetails, bankName: e.target.value })}
-                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs outline-hidden focus:border-indigo-500"
+                className={`w-full px-3 py-1.5 border rounded-xl text-xs outline-hidden ${
+                  isVendorLocked
+                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
+                    : 'bg-white border-slate-200 focus:border-indigo-500'
+                }`}
               />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-600 block mb-1">Tipo de Cuenta</label>
               <select
                 value={bankDetails.accountType || 'Indefinido'}
+                disabled={isVendorLocked}
                 onChange={(e) => onChangeBankDetails({ ...bankDetails, accountType: e.target.value })}
-                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 outline-hidden focus:border-indigo-500 cursor-pointer"
+                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-semibold outline-hidden ${
+                  isVendorLocked
+                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
+                    : 'bg-white border-slate-200 text-slate-800 focus:border-indigo-500 cursor-pointer'
+                }`}
               >
                 <option value="Cuenta Corriente">Cuenta Corriente</option>
                 <option value="Caja de Ahorro">Caja de Ahorro</option>
@@ -608,9 +640,14 @@ export function PaymentTypeSelector({
               <input
                 type="text"
                 placeholder="Ej: proveedor.galicia"
+                disabled={isVendorLocked}
                 value={bankDetails.alias || ''}
                 onChange={(e) => onChangeBankDetails({ ...bankDetails, alias: e.target.value })}
-                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-indigo-900 outline-hidden focus:border-indigo-500 font-mono"
+                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-bold font-mono outline-hidden ${
+                  isVendorLocked
+                    ? 'bg-slate-100/80 border-slate-200 text-indigo-900/80 cursor-not-allowed'
+                    : 'bg-white border-slate-200 text-indigo-900 focus:border-indigo-500'
+                }`}
               />
             </div>
             <div>
@@ -618,9 +655,14 @@ export function PaymentTypeSelector({
               <input
                 type="text"
                 placeholder="0720198220000034509123"
+                disabled={isVendorLocked}
                 value={bankDetails.cbuCvu || ''}
                 onChange={(e) => onChangeBankDetails({ ...bankDetails, cbuCvu: e.target.value })}
-                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-hidden focus:border-indigo-500"
+                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-mono outline-hidden ${
+                  isVendorLocked
+                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
+                    : 'bg-white border-slate-200 focus:border-indigo-500'
+                }`}
               />
             </div>
             <div className="sm:col-span-2">
@@ -628,9 +670,14 @@ export function PaymentTypeSelector({
               <input
                 type="text"
                 placeholder="Ej: 30-71089945-8"
+                disabled={isVendorLocked}
                 value={bankDetails.cuitCuil || ''}
                 onChange={(e) => onChangeBankDetails({ ...bankDetails, cuitCuil: e.target.value })}
-                className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-mono outline-hidden focus:border-indigo-500"
+                className={`w-full px-3 py-1.5 border rounded-xl text-xs font-mono outline-hidden ${
+                  isVendorLocked
+                    ? 'bg-slate-100/80 border-slate-200 text-slate-700 cursor-not-allowed'
+                    : 'bg-white border-slate-200 focus:border-indigo-500'
+                }`}
               />
             </div>
           </div>

@@ -14,7 +14,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { Expense, CostCenter, UserProfile, AppUserRecord } from '../types';
-import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject } from '../utils/helpers';
+import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject, formatTransferDetails } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   uploadReceiptToGoogleDrive,
@@ -269,12 +269,18 @@ export function PaymentProcessModal({
     }
 
     // 3. Update expense model
+    const currentTransferSnapshot =
+      expense.transferDetails ||
+      formatTransferDetails(expense) ||
+      (expense.bankDetails ? formatTransferDetails({ bankDetails: expense.bankDetails, vendor: expense.vendor, cuit: expense.cuit }) : '');
+
     const updatedExpense: Expense = {
       ...expense,
       reimbursementStatus: 'REIMBURSED',
       reimbursedAt: timestamp.slice(0, 10),
       paymentConfirmedAt: timestamp,
       updatedAt: timestamp,
+      transferDetails: currentTransferSnapshot || expense.transferDetails,
       appliesWithholdings: appliesWithholdings,
       paymentProofImage: paymentProofBase64 || expense.paymentProofImage,
       paymentProofFileName: paymentProofFileName || expense.paymentProofFileName,

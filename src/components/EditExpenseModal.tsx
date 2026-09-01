@@ -18,6 +18,8 @@ import {
   Copy,
   Building2,
   BookmarkCheck,
+  Edit2,
+  Plus,
 } from 'lucide-react';
 import { Expense, ReimbursementStatus, PaymentMethod, UserBankDetails, UserProfile, Vendor, ExpensePaymentType, CostCenter } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
@@ -29,6 +31,7 @@ import { generateDriveFileName } from '../utils/helpers';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { PaymentTypeSelector } from './PaymentTypeSelector';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
+import { VendorFormModal } from './VendorFormModal';
 
 interface EditExpenseModalProps {
   expense: Expense | null;
@@ -86,6 +89,22 @@ export function EditExpenseModal({
   });
   const [vendorSavedToast, setVendorSavedToast] = useState<string | null>(null);
   const [vendorNotes, setVendorNotes] = useState<string>('');
+  const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
+  const [vendorModalInitialData, setVendorModalInitialData] = useState<Vendor | undefined>(undefined);
+
+  const matchedCatalogVendor = useMemo(() => {
+    if (!formData?.vendor?.trim()) return null;
+    const vName = formData.vendor.trim().toLowerCase();
+    const vCuit = (formData.cuit || '').trim();
+    return (
+      vendors.find((v) => {
+        const nameMatch = (v.name || '').trim().toLowerCase() === vName;
+        const cuitMatch = Boolean(vCuit && v.cuit && v.cuit.trim() === vCuit);
+        return nameMatch || cuitMatch;
+      }) || null
+    );
+  }, [vendors, formData?.vendor, formData?.cuit]);
+
   const [paymentType, setPaymentType] = useState<ExpensePaymentType>(() => {
     if (expense?.paymentType) return expense.paymentType;
     if (expense?.reimbursable || expense?.paymentMethod === 'Reintegro') return 'REINTEGRO';
@@ -528,147 +547,142 @@ export function EditExpenseModal({
           {/* Vendor & Invoice Number */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Proveedor / Comercio *
-                </label>
-                {(() => {
-                  const vNameTrim = (formData.vendor || '').trim();
-                  if (!vNameTrim || !onAddVendor) return null;
-
-                  const existingVendor = vendors.find(
-                    (v) =>
-                      (v.name || '').trim().toLowerCase() === vNameTrim.toLowerCase() ||
-                      (formData.cuit && v.cuit && v.cuit.trim() === formData.cuit.trim())
-                  );
-
-                  // Caso 1: Proveedor NO está cargado en el catálogo -> Opción de GUARDAR
-                  if (!existingVendor) {
-                    return (
-                      <button
-                        id="save-new-vendor-btn"
-                        type="button"
-                        onClick={() => {
-                          const hasAnyBank = Boolean(
-                            bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim()
-                          );
-                          onAddVendor({
-                            name: vNameTrim,
-                            cuit: (formData.cuit || '').trim(),
-                            notes: vendorNotes.trim(),
-                            bankDetails: hasAnyBank
-                              ? {
-                                  ...bankData,
-                                  accountHolder: bankData.accountHolder || vNameTrim,
-                                }
-                              : undefined,
-                          });
-                          setVendorSavedToast(`Proveedor "${vNameTrim}" guardado en el catálogo.`);
-                          setTimeout(() => setVendorSavedToast(null), 3500);
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 transition cursor-pointer"
-                        title="Guardar como nuevo proveedor en el catálogo"
-                      >
-                        <Building2 className="w-3 h-3 text-indigo-600" />
-                        Guardar Proveedor
-                      </button>
-                    );
-                  }
-
-                  // Caso 2: Proveedor YA está cargado -> Verificar si fue editado
-                  const nameDiff = existingVendor.name.trim() !== vNameTrim;
-                  const cuitDiff = (existingVendor.cuit || '').trim() !== (formData.cuit || '').trim();
-                  const notesDiff = (existingVendor.notes || '').trim() !== vendorNotes.trim();
-
-                  const curBank = bankData || { bankName: '', accountType: 'Indefinido', cbuCvu: '', alias: '', accountHolder: '' };
-                  const prevBank = existingVendor.bankDetails || { bankName: '', accountType: 'Indefinido', cbuCvu: '', alias: '', accountHolder: '' };
-
-                  const bankDiff =
-                    (curBank.bankName || '').trim() !== (prevBank.bankName || '').trim() ||
-                    (curBank.accountType || '') !== (prevBank.accountType || '') ||
-                    (curBank.cbuCvu || '').trim() !== (prevBank.cbuCvu || '').trim() ||
-                    (curBank.alias || '').trim() !== (prevBank.alias || '').trim() ||
-                    (curBank.accountHolder || '').trim() !== (prevBank.accountHolder || '').trim();
-
-                  const isModified = nameDiff || cuitDiff || notesDiff || bankDiff;
-
-                  // Si fue modificado -> Opción de ACTUALIZAR
-                  if (isModified && onUpdateVendor) {
-                    return (
-                      <button
-                        id="update-existing-vendor-btn"
-                        type="button"
-                        onClick={() => {
-                          onUpdateVendor({
-                            ...existingVendor,
-                            name: vNameTrim,
-                            cuit: (formData.cuit || '').trim() || existingVendor.cuit,
-                            notes: vendorNotes.trim(),
-                            bankDetails: {
-                              ...existingVendor.bankDetails,
-                              ...bankData,
-                              alias: bankData.alias || existingVendor.bankDetails?.alias,
-                              cbuCvu: bankData.cbuCvu || existingVendor.bankDetails?.cbuCvu,
-                              accountHolder: bankData.accountHolder || existingVendor.bankDetails?.accountHolder || vNameTrim,
-                            },
-                          });
-                          setVendorSavedToast(`Proveedor "${vNameTrim}" actualizado en el catálogo.`);
-                          setTimeout(() => setVendorSavedToast(null), 3500);
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-lg border border-amber-300 transition cursor-pointer"
-                        title="Actualizar datos del proveedor en el catálogo"
-                      >
-                        <Building2 className="w-3 h-3 text-amber-700" />
-                        Actualizar Proveedor
-                      </button>
-                    );
-                  }
-
-                  // Caso 3: Proveedor cargado y sin modificaciones -> NINGUNA opción
-                  return null;
-                })()}
-              </div>
-
               {vendorSavedToast && (
-                <div className="mb-1.5 p-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold flex items-center gap-1">
-                  <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                <div className="mb-2 p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-1.5 animate-in fade-in">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>{vendorSavedToast}</span>
                 </div>
               )}
 
-              <input
-                type="text"
-                list="vendors-list-datalist"
-                value={formData.vendor}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setFormData({ ...formData, vendor: val });
-                  const matched = vendors.find(
-                    (v) => (v.name || '').trim().toLowerCase() === val.trim().toLowerCase()
-                  );
-                  if (matched) {
-                    if (matched.notes !== undefined) {
-                      setVendorNotes(matched.notes);
-                    }
-                    if (matched.cuit && !formData.cuit) {
-                      setFormData((prev) => (prev ? { ...prev, vendor: val, cuit: matched.cuit } : prev));
-                    }
-                    if (matched.bankDetails && (matched.bankDetails.cbuCvu || matched.bankDetails.alias)) {
-                      setBankData((prev) => ({
-                        ...prev,
-                        ...matched.bankDetails,
-                      }));
-                    }
-                  }
-                }}
-                className="w-full px-4 py-2 rounded-2xl border border-slate-200 text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
-                required
-              />
-              <datalist id="vendors-list-datalist">
-                {sortedUniqueVendors.map((v) => (
-                  <option key={v.id} value={v.name} />
-                ))}
-              </datalist>
+              {matchedCatalogVendor ? (
+                /* Vendor Chip UI when an existing catalog vendor is selected */
+                <div className="p-3 bg-indigo-50/90 border border-indigo-200/90 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div className="p-2.5 bg-indigo-600 text-white rounded-xl shrink-0 shadow-xs">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                        <span className="font-extrabold text-sm text-indigo-950 truncate">
+                          {matchedCatalogVendor.name}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0">
+                          Proveedor en Catálogo
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-600 font-mono mt-0.5">
+                        {matchedCatalogVendor.cuit ? `CUIT: ${matchedCatalogVendor.cuit}` : 'Sin CUIT'}
+                        {matchedCatalogVendor.bankDetails?.alias
+                          ? ` • Alias: ${matchedCatalogVendor.bankDetails.alias}`
+                          : matchedCatalogVendor.bankDetails?.bankName
+                          ? ` • ${matchedCatalogVendor.bankDetails.bankName}`
+                          : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVendorModalInitialData(matchedCatalogVendor);
+                        setIsVendorModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer flex items-center space-x-1.5"
+                      title="Editar datos del proveedor en el catálogo"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Editar Proveedor</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData({ ...formData, vendor: '', cuit: '' });
+                        setBankData({
+                          bankName: '',
+                          accountType: 'Indefinido',
+                          cbuCvu: '',
+                          alias: '',
+                          cuitCuil: '',
+                          accountHolder: '',
+                        });
+                        setVendorNotes('');
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+                      title="Cambiar o desvincular proveedor"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Autocomplete input when typing / selecting vendor */
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      Proveedor / Comercio *
+                    </label>
+                    {onAddVendor && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVendorModalInitialData({
+                            id: '',
+                            name: formData.vendor || '',
+                            cuit: formData.cuit || '',
+                            notes: vendorNotes || '',
+                            bankDetails: {
+                              ...bankData,
+                              accountHolder: bankData.accountHolder || formData.vendor || '',
+                            },
+                            createdAt: '',
+                          });
+                          setIsVendorModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 transition cursor-pointer"
+                        title="Registrar en catálogo oficial de proveedores"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Crear Proveedor en Catálogo</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    type="text"
+                    list="vendors-list-datalist"
+                    value={formData.vendor}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData({ ...formData, vendor: val });
+                      const matched = vendors.find(
+                        (v) => (v.name || '').trim().toLowerCase() === val.trim().toLowerCase()
+                      );
+                      if (matched) {
+                        if (matched.notes !== undefined) {
+                          setVendorNotes(matched.notes);
+                        }
+                        if (matched.cuit && !formData.cuit) {
+                          setFormData((prev) => (prev ? { ...prev, vendor: val, cuit: matched.cuit } : prev));
+                        }
+                        if (matched.bankDetails && (matched.bankDetails.cbuCvu || matched.bankDetails.alias)) {
+                          setBankData((prev) => ({
+                            ...prev,
+                            ...matched.bankDetails,
+                          }));
+                        }
+                      }
+                    }}
+                    placeholder="Escribe el nombre o razón social del proveedor..."
+                    className="w-full px-4 py-2 rounded-2xl border border-slate-200 text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
+                    required
+                  />
+                  <datalist id="vendors-list-datalist">
+                    {sortedUniqueVendors.map((v) => (
+                      <option key={v.id} value={v.name} />
+                    ))}
+                  </datalist>
+                </div>
+              )}
 
               {/* Notas / Observaciones del Proveedor - Campo modificable */}
               <div className="mt-2.5">
@@ -845,6 +859,11 @@ export function EditExpenseModal({
             existingExpenses={existingExpenses}
             reimbursementStatus={formData.reimbursementStatus}
             onChangeReimbursementStatus={allowStatusChange ? handleReimbursementStatusChange : undefined}
+            isVendorLocked={Boolean(matchedCatalogVendor)}
+            onOpenVendorEditModal={() => {
+              setVendorModalInitialData(matchedCatalogVendor || undefined);
+              setIsVendorModalOpen(true);
+            }}
             onSelectVendorName={(vName) => {
               setFormData((prev) => (prev ? { ...prev, vendor: vName } : prev));
               const matched = vendors.find(
@@ -932,6 +951,48 @@ export function EditExpenseModal({
           </div>
         </form>
       </div>
+
+      {/* Unified Vendor Modal for Creating/Editing Vendors from the Expense Form */}
+      <VendorFormModal
+        isOpen={isVendorModalOpen}
+        initialData={vendorModalInitialData}
+        existingVendors={vendors}
+        onClose={() => {
+          setIsVendorModalOpen(false);
+          setVendorModalInitialData(undefined);
+        }}
+        onSave={(savedData) => {
+          if (vendorModalInitialData && vendorModalInitialData.id) {
+            const updatedVendor: Vendor = {
+              ...vendorModalInitialData,
+              ...savedData,
+              id: vendorModalInitialData.id,
+            };
+            onUpdateVendor?.(updatedVendor);
+            setFormData((prev) => (prev ? { ...prev, vendor: updatedVendor.name, cuit: updatedVendor.cuit || prev.cuit } : prev));
+            if (updatedVendor.bankDetails) {
+              setBankData(updatedVendor.bankDetails);
+            }
+            if (updatedVendor.notes !== undefined) {
+              setVendorNotes(updatedVendor.notes);
+            }
+            setVendorSavedToast(`Proveedor "${updatedVendor.name}" actualizado.`);
+          } else {
+            onAddVendor?.(savedData);
+            setFormData((prev) => (prev ? { ...prev, vendor: savedData.name, cuit: savedData.cuit || prev.cuit } : prev));
+            if (savedData.bankDetails) {
+              setBankData(savedData.bankDetails);
+            }
+            if (savedData.notes !== undefined) {
+              setVendorNotes(savedData.notes);
+            }
+            setVendorSavedToast(`Proveedor "${savedData.name}" guardado en el catálogo.`);
+          }
+          setTimeout(() => setVendorSavedToast(null), 3500);
+          setIsVendorModalOpen(false);
+          setVendorModalInitialData(undefined);
+        }}
+      />
     </div>
   );
 }

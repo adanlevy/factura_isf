@@ -47,6 +47,7 @@ import {
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
+import { VendorFormModal } from './VendorFormModal';
 
 export interface SmartScannerModalProps {
   isOpen: boolean;
@@ -172,546 +173,6 @@ function highlightLookupMatch(text: string, query: string): React.ReactNode {
 }
 
 /**
- * Modal emergente para registrar o editar una Cuenta Bancaria
- */
-function AccountModal({
-  isOpen,
-  onClose,
-  title = 'Nueva cuenta bancaria',
-  subtitle = 'Se guardará en proveedores y se asignará al comprobante',
-  initialData,
-  currentUser,
-  onSave,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  title?: string;
-  subtitle?: string;
-  currentUser?: UserProfile | null;
-  initialData?: {
-    name?: string;
-    cuit?: string;
-    alias?: string;
-    cbuCvu?: string;
-    bankName?: string;
-    accountType?: string;
-    notes?: string;
-  };
-  onSave: (data: {
-    name: string;
-    cuit: string;
-    bankDetails: UserBankDetails;
-    notes?: string;
-  }) => void;
-}) {
-  const [name, setName] = useState(initialData?.name || '');
-  const [cuit, setCuit] = useState(initialData?.cuit || '');
-  const [alias, setAlias] = useState(initialData?.alias || '');
-  const [cbuCvu, setCbuCvu] = useState(initialData?.cbuCvu || '');
-  const [bankName, setBankName] = useState(initialData?.bankName || '');
-  const [accountType, setAccountType] = useState<string>(initialData?.accountType || 'Indefinido');
-  const [notes, setNotes] = useState(initialData?.notes || '');
-  const [error, setError] = useState('');
-
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
-  const [scanErrorMsg, setScanErrorMsg] = useState<string | null>(null);
-  const [previousValues, setPreviousValues] = useState<Record<string, string>>({});
-
-  const prevOpenRef = useRef(false);
-
-  // Sincronizar campos iniciales SOLO cuando la ventana se abre (transición de cerrada a abierta)
-  useEffect(() => {
-    if (isOpen && !prevOpenRef.current) {
-      setName(initialData?.name || '');
-      setCuit(initialData?.cuit || '');
-      setAlias(initialData?.alias || '');
-      setCbuCvu(initialData?.cbuCvu || '');
-      setBankName(initialData?.bankName || '');
-      setAccountType(initialData?.accountType || 'Indefinido');
-      setNotes(initialData?.notes || '');
-      setError('');
-      setPreviousValues({});
-      setScanSuccessMsg(null);
-      setScanErrorMsg(null);
-      setIsScanning(false);
-    }
-    prevOpenRef.current = isOpen;
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  const handleRevertField = (fieldKey: string) => {
-    const prevVal = previousValues[fieldKey];
-    if (prevVal === undefined) return;
-
-    if (fieldKey === 'name') setName(prevVal);
-    else if (fieldKey === 'cuit') setCuit(prevVal);
-    else if (fieldKey === 'alias') setAlias(prevVal);
-    else if (fieldKey === 'cbuCvu') setCbuCvu(prevVal);
-    else if (fieldKey === 'bankName') setBankName(prevVal);
-    else if (fieldKey === 'accountType') setAccountType(prevVal);
-    else if (fieldKey === 'notes') setNotes(prevVal);
-
-    const updated = { ...previousValues };
-    delete updated[fieldKey];
-    setPreviousValues(updated);
-  };
-
-  const getCurrentFieldValue = (fieldKey: string): string => {
-    if (fieldKey === 'name') return name;
-    if (fieldKey === 'cuit') return cuit;
-    if (fieldKey === 'alias') return alias;
-    if (fieldKey === 'cbuCvu') return cbuCvu;
-    if (fieldKey === 'bankName') return bankName;
-    if (fieldKey === 'accountType') return accountType || 'Indefinido';
-    if (fieldKey === 'notes') return notes;
-    return '';
-  };
-
-  const renderPreviousValueNotice = (fieldKey: string) => {
-    const prevVal = previousValues[fieldKey];
-    if (prevVal === undefined || prevVal === null) return null;
-    const currentVal = getCurrentFieldValue(fieldKey);
-    if (!prevVal.trim() || prevVal.trim().toLowerCase() === currentVal.trim().toLowerCase()) {
-      return null;
-    }
-
-    return (
-      <div className="flex items-center justify-between text-[11px] text-amber-900 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/80 mt-1">
-        <span className="truncate">
-          valor anterior: <strong className="font-semibold">{prevVal}</strong>
-        </span>
-        <button
-          type="button"
-          onClick={() => handleRevertField(fieldKey)}
-          className="text-amber-800 hover:text-purple-700 font-bold text-[10px] underline cursor-pointer shrink-0 ml-2 flex items-center gap-1"
-          title="Restaurar valor anterior"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Revertir</span>
-        </button>
-      </div>
-    );
-  };
-
-  const handleFileScan = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsScanning(true);
-    setScanErrorMsg(null);
-    setScanSuccessMsg(null);
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64 = reader.result as string;
-        const res = await fetch('/api/process-vendor-doc', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileBase64: base64,
-            mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
-          }),
-        });
-
-        const json = await res.json();
-        if (!json.success || !json.data) {
-          throw new Error(json.error || 'No se pudieron extraer los datos del documento');
-        }
-
-        const ext = json.data;
-        const newPreviousValues: Record<string, string> = { ...previousValues };
-        let changedCount = 0;
-
-        const invalidPlaceholders = /^(no_alias|no alias|no_tiene|no tiene|n\/a|na|null|none|sin alias|undefined|sin_alias|no posee|s\/d|sd|-|—)$/i;
-
-        // Name
-        if (ext.name && ext.name.trim() && !invalidPlaceholders.test(ext.name.trim())) {
-          const val = ext.name.trim();
-          if (name && name.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['name'] = name.trim();
-            setName(val);
-            changedCount++;
-          } else if (!name) {
-            setName(val);
-            changedCount++;
-          }
-        }
-
-        // CUIT
-        if (ext.cuit && ext.cuit.trim() && !invalidPlaceholders.test(ext.cuit.trim())) {
-          const val = ext.cuit.trim();
-          if (cuit && cuit.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['cuit'] = cuit.trim();
-            setCuit(val);
-            changedCount++;
-          } else if (!cuit) {
-            setCuit(val);
-            changedCount++;
-          }
-        }
-
-        // Alias
-        if (ext.alias && ext.alias.trim() && !invalidPlaceholders.test(ext.alias.trim())) {
-          const val = ext.alias.trim();
-          if (alias && alias.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['alias'] = alias.trim();
-            setAlias(val);
-            changedCount++;
-          } else if (!alias) {
-            setAlias(val);
-            changedCount++;
-          }
-        }
-
-        // CBU / CVU
-        if (ext.cbuCvu && ext.cbuCvu.trim() && !invalidPlaceholders.test(ext.cbuCvu.trim())) {
-          const val = ext.cbuCvu.trim().replace(/\D/g, '');
-          const finalVal = val.length === 22 ? val : ext.cbuCvu.trim();
-          if (cbuCvu && cbuCvu.trim().toLowerCase() !== finalVal.toLowerCase()) {
-            newPreviousValues['cbuCvu'] = cbuCvu.trim();
-            setCbuCvu(finalVal);
-            changedCount++;
-          } else if (!cbuCvu) {
-            setCbuCvu(finalVal);
-            changedCount++;
-          }
-        }
-
-        // Bank Name
-        if (ext.bankName && ext.bankName.trim() && !invalidPlaceholders.test(ext.bankName.trim())) {
-          const val = ext.bankName.trim();
-          if (bankName && bankName.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['bankName'] = bankName.trim();
-            setBankName(val);
-            changedCount++;
-          } else if (!bankName) {
-            setBankName(val);
-            changedCount++;
-          }
-        }
-
-        // Account Type
-        if (
-          ext.accountType &&
-          ['Caja de Ahorro', 'Cuenta Corriente', 'Billetera Virtual', 'Indefinido'].includes(ext.accountType)
-        ) {
-          const val = ext.accountType;
-          const currentAcc = accountType || 'Indefinido';
-          if (currentAcc.trim().toLowerCase() !== val.trim().toLowerCase()) {
-            if (currentAcc && currentAcc !== 'Indefinido') {
-              newPreviousValues['accountType'] = currentAcc;
-            }
-            setAccountType(val);
-            changedCount++;
-          }
-        }
-
-        // Notes
-        if (ext.notes && ext.notes.trim()) {
-          const val = ext.notes.trim();
-          if (notes && notes.trim().toLowerCase() !== val.toLowerCase()) {
-            newPreviousValues['notes'] = notes.trim();
-            setNotes(val);
-            changedCount++;
-          } else if (!notes) {
-            setNotes(val);
-            changedCount++;
-          }
-        }
-
-        setPreviousValues(newPreviousValues);
-
-        if (changedCount > 0) {
-          setScanSuccessMsg(`¡Datos extraídos con IA! Se completaron o actualizaron ${changedCount} campos.`);
-        } else {
-          setScanSuccessMsg('Documento procesado. No se detectaron nuevos datos.');
-        }
-      } catch (err: any) {
-        setScanErrorMsg(err.message || 'Error al escanear archivo con IA');
-      } finally {
-        setIsScanning(false);
-        e.target.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError('El nombre del proveedor o titular es obligatorio.');
-      return;
-    }
-
-    const bankDetails: UserBankDetails = {
-      accountHolder: name.trim(),
-      alias: alias.trim(),
-      cbuCvu: cbuCvu.trim(),
-      cuitCuil: cuit.trim(),
-      bankName: bankName.trim(),
-      accountType,
-    };
-
-    if (bankDetails.cbuCvu || bankDetails.alias || bankDetails.bankName) {
-      notifyBankDetailsChange({
-        updatedBy: { email: currentUser?.email || 'admin@isf-argentina.org', name: currentUser?.name || 'Administrador' },
-        targetType: 'vendor',
-        targetName: name.trim(),
-        bankDetails,
-      }).catch((err) => console.warn('Bank details notification error:', err));
-    }
-
-    onSave({
-      name: name.trim(),
-      cuit: cuit.trim(),
-      bankDetails,
-      notes: notes.trim(),
-    });
-    setPreviousValues({});
-    onClose();
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div
-        className="fixed inset-0 bg-transparent"
-        onClick={onClose}
-      />
-      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 z-10 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-purple-700 text-white flex items-center justify-center shadow-2xs">
-              <CreditCard className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                {title}
-              </h3>
-              <p className="text-xs text-slate-500">
-                {subtitle}
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* File Upload / OCR Scan Box with IA */}
-        <div className="p-3.5 rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/40 space-y-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center space-x-2">
-              <div className="p-1.5 rounded-lg bg-purple-700 text-white shadow-2xs shrink-0">
-                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900">Escanear archivo con datos de cuenta (IA)</h4>
-                <p className="text-[11px] text-slate-500">
-                  Subí imagen (JPG, PNG) o PDF de factura, CBU, Alias o constancia.
-                </p>
-              </div>
-            </div>
-
-            <label
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition flex items-center justify-center space-x-1.5 shrink-0 ${
-                isScanning
-                  ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                  : 'bg-purple-700 hover:bg-purple-800 text-white shadow-2xs active:scale-95'
-              }`}
-            >
-              {isScanning ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Escaneando...</span>
-                </>
-              ) : (
-                <>
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Cargar Imagen / PDF</span>
-                </>
-              )}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,application/pdf"
-                disabled={isScanning}
-                onChange={handleFileScan}
-                className="hidden"
-              />
-            </label>
-          </div>
-
-          {scanSuccessMsg && (
-            <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] flex items-center space-x-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="font-medium">{scanSuccessMsg}</span>
-            </div>
-          )}
-
-          {scanErrorMsg && (
-            <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-center space-x-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-              <span className="font-medium">{scanErrorMsg}</span>
-            </div>
-          )}
-        </div>
-
-        {error && (
-          <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex items-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-3.5">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Nombre / Titular / Razón Social <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ej: Distribuidora Norte SRL o Juan Pérez"
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden font-medium"
-            />
-            {renderPreviousValueNotice('name')}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                CUIT / CUIL
-              </label>
-              <input
-                type="text"
-                value={cuit}
-                onChange={(e) => setCuit(e.target.value)}
-                placeholder="XX-XXXXXXXX-X"
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden font-mono"
-              />
-              {renderPreviousValueNotice('cuit')}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Alias
-              </label>
-              <input
-                type="text"
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-                placeholder="ej: distribuidora.mp"
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden"
-              />
-              {renderPreviousValueNotice('alias')}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              CBU / CVU (22 dígitos)
-            </label>
-            <input
-              type="text"
-              value={cbuCvu}
-              onChange={(e) => setCbuCvu(e.target.value)}
-              placeholder="0000003100010000000000"
-              maxLength={22}
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden font-mono"
-            />
-            {renderPreviousValueNotice('cbuCvu')}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Banco / Entidad
-              </label>
-              <input
-                type="text"
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
-                placeholder="Mercado Pago, Galicia, BBVA..."
-                list="bank-suggestions-modal"
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden"
-              />
-              <datalist id="bank-suggestions-modal">
-                <option value="Mercado Pago" />
-                <option value="Banco Galicia" />
-                <option value="Banco Santander" />
-                <option value="BBVA" />
-                <option value="Banco Nación" />
-                <option value="Banco Provincia" />
-                <option value="Brubank" />
-                <option value="Naranja X" />
-                <option value="Banco Macro" />
-                <option value="ICBC" />
-                <option value="Ualá" />
-              </datalist>
-              {renderPreviousValueNotice('bankName')}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Tipo de Cuenta
-              </label>
-              <select
-                value={accountType}
-                onChange={(e) => setAccountType(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden bg-white"
-              >
-                <option value="Caja de Ahorro">Caja de Ahorro</option>
-                <option value="Cuenta Corriente">Cuenta Corriente</option>
-                <option value="Billetera Virtual">Billetera Virtual</option>
-              </select>
-              {renderPreviousValueNotice('accountType')}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Notas / Observaciones (opcional)
-            </label>
-            <input
-              type="text"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Plazos de pago, titular de factura, etc."
-              className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-600 focus:border-purple-600 outline-hidden"
-            />
-            {renderPreviousValueNotice('notes')}
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer active:scale-95 flex items-center gap-1.5"
-            >
-              <Check className="w-3.5 h-3.5" />
-              <span>{title.includes('Editar') ? 'Guardar cambios' : 'Guardar cuenta'}</span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-/**
  * Subcomponente para la columna "Datos de cuenta"
  * Implementa el selector dinámico estilo Lookup de Salesforce con búsqueda dinámica,
  * máximo de 6 sugerencias y la última opción fija "Nueva cuenta".
@@ -725,6 +186,7 @@ function AccountDataCell({
   vendors,
   onUpdateBankDetails,
   onAddVendor,
+  onSelectAccount,
 }: {
   item: QueueItem;
   currentUser: UserProfile | null;
@@ -1070,41 +532,72 @@ function AccountDataCell({
         document.body
       )}
 
-      {/* Modal emergente para crear Nueva Cuenta */}
-      <AccountModal
+      {/* Modal emergente unificado para crear Nueva Cuenta / Proveedor */}
+      <VendorFormModal
         isOpen={isNewAccountModalOpen}
-        onClose={() => setIsNewAccountModalOpen(false)}
-        title="Nueva cuenta bancaria"
+        existingVendors={vendors}
+        title="Nueva cuenta bancaria / Proveedor"
         subtitle="Se guardará en proveedores y se asignará al comprobante"
-        currentUser={currentUser}
         initialData={{
+          id: '',
           name: search || item.vendor || '',
           cuit: item.cuit || item.bankDetails?.cuitCuil || '',
-          alias: '',
-          cbuCvu: '',
-          bankName: '',
-          accountType: 'Indefinido',
+          category: item.category || 'Varios',
+          bankDetails: {
+            accountHolder: search || item.vendor || '',
+            bankName: '',
+            accountType: 'Indefinido',
+            cbuCvu: '',
+            alias: '',
+            cuitCuil: item.cuit || item.bankDetails?.cuitCuil || '',
+          },
         }}
-        onSave={handleSaveNewAccountFromModal}
+        onClose={() => setIsNewAccountModalOpen(false)}
+        onSave={(savedVendor) => {
+          if (onAddVendor) {
+            onAddVendor(savedVendor);
+          }
+          if (savedVendor.bankDetails) {
+            onUpdateBankDetails(savedVendor.bankDetails);
+          }
+          if (onSelectAccount) {
+            onSelectAccount({
+              bankDetails: savedVendor.bankDetails || {
+                accountHolder: savedVendor.name,
+                bankName: '',
+                accountType: 'Indefinido',
+                cbuCvu: '',
+                alias: '',
+                cuitCuil: savedVendor.cuit || '',
+              },
+              vendorName: savedVendor.name,
+              cuit: savedVendor.cuit,
+              category: savedVendor.category,
+            });
+          }
+          setIsNewAccountModalOpen(false);
+        }}
       />
 
-      {/* Modal emergente para editar los Datos de la Cuenta seleccionada */}
-      <AccountModal
+      {/* Modal emergente unificado para editar los Datos de la Cuenta seleccionada */}
+      <VendorFormModal
         isOpen={isEditAccountModalOpen}
-        onClose={() => setIsEditAccountModalOpen(false)}
-        title="Editar datos de cuenta"
+        existingVendors={vendors}
+        title="Editar datos de cuenta bancaria"
         subtitle="Modificar datos bancarios asignados a este comprobante"
-        currentUser={currentUser}
         initialData={{
+          id: '',
           name: item.bankDetails?.accountHolder || item.vendor || '',
           cuit: item.bankDetails?.cuitCuil || item.cuit || '',
-          alias: item.bankDetails?.alias || '',
-          cbuCvu: item.bankDetails?.cbuCvu || '',
-          bankName: item.bankDetails?.bankName || '',
-          accountType: item.bankDetails?.accountType || 'Indefinido',
+          category: item.category || 'Varios',
+          bankDetails: item.bankDetails,
         }}
-        onSave={(data) => {
-          onUpdateBankDetails(data.bankDetails);
+        onClose={() => setIsEditAccountModalOpen(false)}
+        onSave={(savedVendor) => {
+          if (savedVendor.bankDetails) {
+            onUpdateBankDetails(savedVendor.bankDetails);
+          }
+          setIsEditAccountModalOpen(false);
         }}
       />
     </div>

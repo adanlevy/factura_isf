@@ -24,7 +24,7 @@ import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
-import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject } from './utils/helpers';
+import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
@@ -326,11 +326,58 @@ export default function App() {
     showToast(`✅ Proveedor "${updatedVendor.name}" actualizado.`);
   };
 
-  const handleDeleteVendor = (id: string) => {
+  const handleDeleteVendor = async (id: string) => {
     const vendorToDelete = vendors.find((v) => v.id === id);
     setVendors((prev) => prev.filter((v) => v.id !== id));
     deleteCentralVendors([id]);
-    showToast(`🗑️ Proveedor "${vendorToDelete?.name || ''}" eliminado.`);
+
+    if (vendorToDelete) {
+      const vName = (vendorToDelete.name || '').trim().toLowerCase();
+      const vCuit = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+
+      const updatedExpensesList: Expense[] = [];
+      const updatedExpenses = expenses.map((e) => {
+        const expVendor = (e.vendor || '').trim().toLowerCase();
+        const expCuit = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
+        const isMatch = (vName && expVendor === vName) || (vCuit && expCuit && vCuit === expCuit);
+
+        if (isMatch) {
+          // Preserve snapshot of transfer details if not already present
+          const currentBank = e.bankDetails || vendorToDelete.bankDetails;
+          const transferSnapshot =
+            e.transferDetails ||
+            (currentBank ? formatTransferDetails(currentBank) : '') ||
+            (vName ? `Proveedor: ${vendorToDelete.name}` : '');
+
+          const updated: Expense = {
+            ...e,
+            vendor: '',
+            cuit: '',
+            bankDetails: undefined,
+            transferDetails: transferSnapshot || e.transferDetails,
+            updatedAt: new Date().toISOString(),
+          };
+          updatedExpensesList.push(updated);
+          return updated;
+        }
+        return e;
+      });
+
+      if (updatedExpensesList.length > 0) {
+        setExpenses(updatedExpenses);
+        try {
+          await upsertCentralExpenses(updatedExpensesList);
+        } catch (err) {
+          console.error('Error updating expenses on vendor delete:', err);
+        }
+      }
+
+      showToast(
+        updatedExpensesList.length > 0
+          ? `🗑️ Proveedor "${vendorToDelete.name}" eliminado y desvinculado de ${updatedExpensesList.length} comprobante(s).`
+          : `🗑️ Proveedor "${vendorToDelete.name}" eliminado del catálogo.`
+      );
+    }
   };
 
   const handleViewVendorExpenses = (vendorName: string) => {
@@ -533,35 +580,6 @@ export default function App() {
 
     setExpenses((prev) => [...initializedExpenses, ...prev]);
     upsertCentralExpenses(initializedExpenses);
-
-    // Automatically check and register any new vendors
-    const newVendorsToAdd: Vendor[] = [];
-    initializedExpenses.forEach((exp, idx) => {
-      const vName = exp.vendor.trim();
-      if (
-        vName &&
-        !vendors.some((v) => v.name.toLowerCase() === vName.toLowerCase()) &&
-        !newVendorsToAdd.some((v) => v.name.toLowerCase() === vName.toLowerCase())
-      ) {
-        newVendorsToAdd.push({
-          id: `v-${Date.now()}-${idx}`,
-          name: vName,
-          category: exp.category,
-          cuit: exp.cuit || '',
-          bankDetails: exp.bankDetails,
-          createdAt: new Date().toISOString(),
-          notes: `Creado automáticamente desde comprobante #${exp.invoiceNumber || 'sin número'}`,
-        });
-      }
-    });
-
-    if (newVendorsToAdd.length > 0) {
-      setVendors((prev) => {
-        const next = [...newVendorsToAdd, ...prev];
-        saveCentralVendors(next).catch(console.warn);
-        return next;
-      });
-    }
 
     // Trigger Google Drive uploads in background
     initializedExpenses.forEach((exp) => {
@@ -788,11 +806,14 @@ export default function App() {
     const todayStr = nowIso.slice(0, 10);
     const updatedList = expenses.map((e) => {
       if (ids.includes(e.id)) {
+        const matchingVendor = vendors.find((v) => (v.name || '').trim().toLowerCase() === (e.vendor || '').trim().toLowerCase());
+        const transferSnapshot = e.transferDetails || formatTransferDetails(e, matchingVendor);
         return {
           ...e,
           reimbursementStatus: 'REIMBURSED' as const,
           reimbursedAt: todayStr,
           paymentConfirmedAt: nowIso,
+          transferDetails: transferSnapshot || e.transferDetails,
           updatedAt: nowIso,
         };
       }
