@@ -1,9 +1,12 @@
 // Google Workspace integration for Gmail API and Google Drive API
 import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord } from '../types';
 import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 const CUSTOM_CLIENT_ID_KEY = 'isf_custom_google_client_id';
-const DEFAULT_CLIENT_ID = '305271627193-tnbvvlag0m73pm1gea4al7mtaougri1m.apps.googleusercontent.com';
+const DEFAULT_CLIENT_ID =
+  firebaseConfig?.oAuthClientId ||
+  '50454054524-sd319a8otrbj57urqd8766f2baj9mv96.apps.googleusercontent.com';
 
 export function getGoogleClientId(): string {
   try {

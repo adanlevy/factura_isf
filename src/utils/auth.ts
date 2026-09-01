@@ -1,7 +1,7 @@
 // Helper for Google Workspace authentication and session persistence
+import { getGoogleClientId } from './googleWorkspace';
 
 const AUTH_STORAGE_KEY = 'isf_auth_user_v1';
-const GOOGLE_CLIENT_ID = '87735189447-e17o4u1u2f354f05k98418g53i4g0fsm.apps.googleusercontent.com'; // Google OAuth client
 
 export interface AuthState {
   isAuthenticated: boolean;
