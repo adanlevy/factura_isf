@@ -127,15 +127,29 @@ export function VendorsView({
     return expenses.reduce((acc, exp) => acc + (exp.amount || 0), 0);
   }, [expenses]);
 
-  // Check matching expenses for the vendor to delete
+  // Check matching expenses whose bank details are linked to the vendor to delete
   const matchingExpensesForDelete = useMemo(() => {
     if (!vendorToDelete) return [];
     const vName = (vendorToDelete.name || '').trim().toLowerCase();
     const vCuit = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+    const vCbu = (vendorToDelete.bankDetails?.cbuCvu || '').trim();
+    const vAlias = (vendorToDelete.bankDetails?.alias || '').trim().toLowerCase();
+    const vHolder = (vendorToDelete.bankDetails?.accountHolder || '').trim().toLowerCase();
+
     return expenses.filter((e) => {
-      const expVendor = (e.vendor || '').trim().toLowerCase();
+      if (!e.bankDetails) return false;
       const expCuit = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
-      return (vName && expVendor === vName) || (vCuit && expCuit && vCuit === expCuit);
+      const expCbu = (e.bankDetails?.cbuCvu || '').trim();
+      const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
+      const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
+
+      return Boolean(
+        (vCbu && expCbu && vCbu === expCbu) ||
+        (vAlias && expAlias && vAlias === expAlias) ||
+        (vCuit && expCuit && vCuit === expCuit) ||
+        (vHolder && expHolder && vHolder === expHolder) ||
+        (vName && expHolder === vName)
+      );
     });
   }, [vendorToDelete, expenses]);
 
@@ -458,7 +472,7 @@ export function VendorsView({
                 </div>
 
                 <p className="text-[11px] text-amber-800 leading-relaxed">
-                  Si continúas, <strong>el proveedor se eliminará y se desvinculará de estos {matchingExpensesForDelete.length} comprobantes</strong> para que no vuelva a auto-generarse. Los datos de transferencias ya liquidadas se conservarán respaldados en el registro del pago.
+                  Si continúas, <strong>los datos de cuenta bancaria del proveedor se desvincularán de estos {matchingExpensesForDelete.length} comprobantes</strong>, conservando intacto el <em>Nombre / Factura</em> original del comprobante.
                 </p>
               </div>
             )}
@@ -486,7 +500,7 @@ export function VendorsView({
                 }`}
               >
                 {matchingExpensesForDelete.length > 0
-                  ? `Sí, Eliminar y Desvincular (${matchingExpensesForDelete.length})`
+                  ? `Sí, Eliminar y Desvincular Cuentas (${matchingExpensesForDelete.length})`
                   : 'Sí, Eliminar Proveedor'}
               </button>
             </div>

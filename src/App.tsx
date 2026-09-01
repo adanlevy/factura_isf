@@ -165,32 +165,11 @@ export default function App() {
               .map(normalizeVendorBankDetails);
           }
 
-          // Auto-reconcile any vendors that exist in expenses but are missing from vendors catalog
-          if (Array.isArray(cloudData.expenses) && cloudData.expenses.length > 0) {
-            const existingNames = new Set(cleanVendors.map((v) => (v.name || '').trim().toLowerCase()));
-            const missingFromExpenses: Vendor[] = [];
-            cloudData.expenses.forEach((exp, idx) => {
-              const vName = (exp.vendor || '').trim();
-              if (vName && !existingNames.has(vName.toLowerCase())) {
-                existingNames.add(vName.toLowerCase());
-                missingFromExpenses.push({
-                  id: `v-auto-${Date.now()}-${idx}`,
-                  name: vName,
-                  cuit: exp.cuit || '',
-                  category: exp.category,
-                  bankDetails: exp.bankDetails,
-                  createdAt: exp.date || new Date().toISOString(),
-                  notes: `Registrado automáticamente desde comprobante #${exp.invoiceNumber || 'sin número'}`,
-                });
-              }
-            });
-            if (missingFromExpenses.length > 0) {
-              cleanVendors = [...cleanVendors, ...missingFromExpenses];
-            }
-          }
-
           setVendors(cleanVendors);
-          saveCentralVendors(cleanVendors).catch(console.warn);
+
+          if (Array.isArray(cloudData.expenses)) {
+            setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
+          }
 
           if (Array.isArray(cloudData.costCenters) && cloudData.costCenters.length > 0) {
             setCostCenters(cloudData.costCenters.map(sanitizeCostCenter));
@@ -236,8 +215,8 @@ export default function App() {
       if (incoming.expenses) {
         setExpenses((prev) => mergeExpensesList(prev, incoming.expenses || []));
       }
-      if (incoming.vendors && incoming.vendors.length > 0) {
-        setVendors((prev) => mergeVendorsList(prev, incoming.vendors || []));
+      if (incoming.vendors !== undefined) {
+        setVendors((incoming.vendors || []).filter((v) => v && v.id && !sessionDeletedVendorIds.has(v.id)).map(normalizeVendorBankDetails));
       }
       if (incoming.costCenters && incoming.costCenters.length > 0) {
         setCostCenters(incoming.costCenters.map(sanitizeCostCenter));
@@ -260,8 +239,8 @@ export default function App() {
         if (cloudData.expenses) {
           setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
         }
-        if (cloudData.vendors && cloudData.vendors.length > 0) {
-          setVendors((prev) => mergeVendorsList(prev, cloudData.vendors));
+        if (cloudData.vendors !== undefined) {
+          setVendors((cloudData.vendors || []).filter((v) => v && v.id && !sessionDeletedVendorIds.has(v.id)).map(normalizeVendorBankDetails));
         }
         setLastSyncTime(new Date());
       }).catch(() => {});
@@ -334,15 +313,28 @@ export default function App() {
     if (vendorToDelete) {
       const vName = (vendorToDelete.name || '').trim().toLowerCase();
       const vCuit = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
+      const vCbu = (vendorToDelete.bankDetails?.cbuCvu || '').trim();
+      const vAlias = (vendorToDelete.bankDetails?.alias || '').trim().toLowerCase();
+      const vHolder = (vendorToDelete.bankDetails?.accountHolder || '').trim().toLowerCase();
 
       const updatedExpensesList: Expense[] = [];
       const updatedExpenses = expenses.map((e) => {
-        const expVendor = (e.vendor || '').trim().toLowerCase();
+        if (!e.bankDetails) return e;
+
         const expCuit = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
-        const isMatch = (vName && expVendor === vName) || (vCuit && expCuit && vCuit === expCuit);
+        const expCbu = (e.bankDetails?.cbuCvu || '').trim();
+        const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
+        const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
+
+        const isMatch = Boolean(
+          (vCbu && expCbu && vCbu === expCbu) ||
+          (vAlias && expAlias && vAlias === expAlias) ||
+          (vCuit && expCuit && vCuit === expCuit) ||
+          (vHolder && expHolder && vHolder === expHolder) ||
+          (vName && expHolder === vName)
+        );
 
         if (isMatch) {
-          // Preserve snapshot of transfer details if not already present
           const currentBank = e.bankDetails || vendorToDelete.bankDetails;
           const transferSnapshot =
             e.transferDetails ||
@@ -351,8 +343,7 @@ export default function App() {
 
           const updated: Expense = {
             ...e,
-            vendor: '',
-            cuit: '',
+            // vendor (Nombre / Factura) stays intact!
             bankDetails: undefined,
             transferDetails: transferSnapshot || e.transferDetails,
             updatedAt: new Date().toISOString(),
@@ -374,7 +365,7 @@ export default function App() {
 
       showToast(
         updatedExpensesList.length > 0
-          ? `🗑️ Proveedor "${vendorToDelete.name}" eliminado y desvinculado de ${updatedExpensesList.length} comprobante(s).`
+          ? `🗑️ Proveedor "${vendorToDelete.name}" eliminado y desvinculado de los datos de cuenta de ${updatedExpensesList.length} comprobante(s).`
           : `🗑️ Proveedor "${vendorToDelete.name}" eliminado del catálogo.`
       );
     }
@@ -464,28 +455,6 @@ export default function App() {
 
     setExpenses((prev) => [initialExpense, ...prev]);
     upsertCentralExpenses([initialExpense]);
-
-    // Automatically check if vendor exists, if not, optionally register
-    const vendorName = newExpense.vendor.trim();
-    if (vendorName) {
-      const exists = vendors.some((v) => v.name.toLowerCase() === vendorName.toLowerCase());
-      if (!exists) {
-        const autoVendor: Vendor = {
-          id: `v-${Date.now()}`,
-          name: vendorName,
-          category: newExpense.category,
-          cuit: newExpense.cuit || '',
-          bankDetails: newExpense.bankDetails,
-          createdAt: new Date().toISOString(),
-          notes: `Creado automáticamente desde comprobante #${newExpense.invoiceNumber || 'sin número'}`,
-        };
-        setVendors((prev) => {
-          const next = [autoVendor, ...prev];
-          saveCentralVendors(next).catch(console.warn);
-          return next;
-        });
-      }
-    }
 
     // Auto upload to Google Drive ONLY on creation if receipt is attached
     if (newExpense.receiptImage) {

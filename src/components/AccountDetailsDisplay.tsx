@@ -20,14 +20,29 @@ interface AccountDetailsDisplayProps {
 export function AccountDetailsDisplay({ expense, className = '' }: AccountDetailsDisplayProps) {
   const bank = expense.bankDetails;
 
-  // 1. Nombre: Titular de la cuenta bancaria, o solicitante de reintegro / proveedor
-  const rawName =
-    bank?.accountHolder?.trim() ||
-    expense.submittedByName?.trim() ||
-    (expense.paymentType === 'PAGO_PROVEEDOR' || expense.paymentMethod === 'Pago a Proveedor'
-      ? expense.vendor?.trim()
-      : '') ||
-    '';
+  // If no bank details are linked to this expense
+  if (!bank) {
+    // For reimbursements without formal bank details, show submittedByName if available
+    if (
+      (expense.paymentType === 'REINTEGRO' || expense.paymentMethod === 'Reintegro') &&
+      expense.submittedByName?.trim()
+    ) {
+      return (
+        <div className={`text-[10.5px] leading-tight space-y-0.5 select-text ${className}`}>
+          <div className="truncate font-semibold text-slate-700" title={`Solicitante: ${expense.submittedByName}`}>
+            {expense.submittedByName}
+          </div>
+          <div className="text-[9.5px] text-amber-600 font-medium italic">
+            Sin CBU / Alias
+          </div>
+        </div>
+      );
+    }
+    return <span className="text-slate-300 text-xs">—</span>;
+  }
+
+  // 1. Nombre / Titular de la cuenta
+  const rawName = bank.accountHolder?.trim() || '';
   const name =
     rawName &&
     rawName.toLowerCase() !== 'null' &&
@@ -37,8 +52,8 @@ export function AccountDetailsDisplay({ expense, className = '' }: AccountDetail
       ? rawName
       : null;
 
-  // 2. CUIT: CUIT de los datos bancarios o CUIT del comprobante
-  const rawCuit = bank?.cuitCuil?.trim() || expense.cuit?.trim() || '';
+  // 2. CUIT bancario / fiscal del titular
+  const rawCuit = bank.cuitCuil?.trim() || '';
   const cuit =
     rawCuit &&
     rawCuit.toLowerCase() !== 'null' &&
@@ -49,7 +64,7 @@ export function AccountDetailsDisplay({ expense, className = '' }: AccountDetail
       : null;
 
   // 3. Alias
-  const rawAlias = bank?.alias?.trim() || '';
+  const rawAlias = bank.alias?.trim() || '';
   const alias =
     rawAlias &&
     rawAlias.toLowerCase() !== 'null' &&
@@ -60,7 +75,7 @@ export function AccountDetailsDisplay({ expense, className = '' }: AccountDetail
       : null;
 
   // 4. CBU
-  const rawCbu = bank?.cbuCvu?.trim() || '';
+  const rawCbu = bank.cbuCvu?.trim() || '';
   const cbu =
     rawCbu &&
     rawCbu.toLowerCase() !== 'null' &&
@@ -80,7 +95,7 @@ export function AccountDetailsDisplay({ expense, className = '' }: AccountDetail
     <div className={`text-[10.5px] leading-tight space-y-0.5 select-text ${className}`}>
       {/* 1. Nombre */}
       {name && (
-        <div className="truncate font-semibold text-slate-800" title={`Nombre: ${name}`}>
+        <div className="truncate font-semibold text-slate-800" title={`Titular: ${name}`}>
           {name}
         </div>
       )}

@@ -517,7 +517,7 @@ export function AdminMovementView({
                       {renderSortTh('createdAt', 'Fecha Carga', 'left', 'whitespace-nowrap')}
                       {renderSortTh('date', 'Fecha Doc.', 'left', 'whitespace-nowrap')}
                       {renderSortTh('submittedByName', 'Enviado por', 'left')}
-                      {renderSortTh('vendor', 'Proveedor / Factura', 'left')}
+                      {renderSortTh('vendor', 'Nombre / Factura', 'left')}
                       {renderSortTh('project', 'Centro de Costos', 'left')}
                       {renderSortTh('amount', 'Monto', 'right', 'whitespace-nowrap')}
                       {renderSortTh('status', 'Estado', 'center', 'whitespace-nowrap')}
@@ -625,10 +625,16 @@ export function AdminMovementView({
                         )}
                       </td>
 
-                      {/* 4. Proveedor / Comprobante (2 renglones) */}
-                      <td className="px-2 py-2 max-w-[145px]" title={expense.vendor}>
+                      {/* 4. Nombre / Factura (2 renglones) */}
+                      <td className="px-2 py-2 max-w-[145px]" title={expense.vendor || 'Sin nombre / factura'}>
                         <div className="font-bold text-slate-900 text-xs truncate flex items-center gap-1">
-                          <span className="truncate">{expense.vendor || 'Comercio'}</span>
+                          <span className="truncate">
+                            {expense.vendor?.trim() ? (
+                              expense.vendor
+                            ) : (
+                              <span className="text-slate-400 font-normal italic">Sin nombre</span>
+                            )}
+                          </span>
                           {isVendorInCatalog && (
                             <span className="inline-flex items-center text-sky-700 bg-sky-50 border border-sky-200 px-1 py-0.2 rounded text-[8.5px]" title="Proveedor registrado en el catálogo">
                               <Cloud className="w-2.5 h-2.5 text-sky-600" />
@@ -993,8 +999,14 @@ export function AdminMovementView({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-sm font-bold text-slate-900 truncate flex items-center gap-1.5" title={expense.vendor}>
-                        <span>{expense.vendor || 'Comercio / Proveedor'}</span>
+                      <h3 className="text-sm font-bold text-slate-900 truncate flex items-center gap-1.5" title={expense.vendor || 'Sin nombre / factura'}>
+                        <span>
+                          {expense.vendor?.trim() ? (
+                            expense.vendor
+                          ) : (
+                            <span className="text-slate-400 font-normal italic">Sin nombre</span>
+                          )}
+                        </span>
                         {isVendorInCatalog && (
                           <span className="inline-flex items-center text-sky-700 bg-sky-50 border border-sky-200 px-1 py-0.2 rounded text-[9.5px]" title="Proveedor registrado en el catálogo">
                             <Cloud className="w-2.5 h-2.5 text-sky-600" />

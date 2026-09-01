@@ -264,7 +264,7 @@ export function AccountingReportView({ expenses, onImportJSON }: AccountingRepor
                     className="py-2.5 px-3"
                   />
                   <SortableHeader
-                    label="Proveedor / Comercio"
+                    label="Nombre / Factura"
                     field="vendor"
                     currentField={sortConfig.field}
                     currentDirection={sortConfig.direction}

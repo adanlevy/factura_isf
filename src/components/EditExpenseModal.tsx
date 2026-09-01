@@ -412,13 +412,6 @@ export function EditExpenseModal({
             : existingVendor.bankDetails,
         });
       }
-    } else if (!existingVendor && onAddVendor && formData.vendor?.trim()) {
-      onAddVendor({
-        name: formData.vendor.trim(),
-        cuit: formData.cuit || '',
-        notes: vendorNotes.trim(),
-        bankDetails: hasBank ? bankData : undefined,
-      });
     }
 
     const isPendingType = paymentType === 'REINTEGRO' || paymentType === 'PAGO_PROVEEDOR';
@@ -544,161 +537,8 @@ export function EditExpenseModal({
             </div>
           </div>
 
-          {/* Vendor & Invoice Number */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="sm:col-span-2">
-              {vendorSavedToast && (
-                <div className="mb-2 p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-1.5 animate-in fade-in">
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>{vendorSavedToast}</span>
-                </div>
-              )}
-
-              {matchedCatalogVendor ? (
-                /* Vendor Chip UI when an existing catalog vendor is selected */
-                <div className="p-3 bg-indigo-50/90 border border-indigo-200/90 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                  <div className="flex items-center space-x-3 min-w-0">
-                    <div className="p-2.5 bg-indigo-600 text-white rounded-xl shrink-0 shadow-xs">
-                      <Building2 className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                        <span className="font-extrabold text-sm text-indigo-950 truncate">
-                          {matchedCatalogVendor.name}
-                        </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0">
-                          Proveedor en Catálogo
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-600 font-mono mt-0.5">
-                        {matchedCatalogVendor.cuit ? `CUIT: ${matchedCatalogVendor.cuit}` : 'Sin CUIT'}
-                        {matchedCatalogVendor.bankDetails?.alias
-                          ? ` • Alias: ${matchedCatalogVendor.bankDetails.alias}`
-                          : matchedCatalogVendor.bankDetails?.bankName
-                          ? ` • ${matchedCatalogVendor.bankDetails.bankName}`
-                          : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setVendorModalInitialData(matchedCatalogVendor);
-                        setIsVendorModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition shadow-2xs cursor-pointer flex items-center space-x-1.5"
-                      title="Editar datos del proveedor en el catálogo"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Editar Proveedor</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFormData({ ...formData, vendor: '', cuit: '' });
-                        setBankData({
-                          bankName: '',
-                          accountType: 'Indefinido',
-                          cbuCvu: '',
-                          alias: '',
-                          cuitCuil: '',
-                          accountHolder: '',
-                        });
-                        setVendorNotes('');
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
-                      title="Cambiar o desvincular proveedor"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Autocomplete input when typing / selecting vendor */
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-slate-700">
-                      Proveedor / Comercio *
-                    </label>
-                    {onAddVendor && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setVendorModalInitialData({
-                            id: '',
-                            name: formData.vendor || '',
-                            cuit: formData.cuit || '',
-                            notes: vendorNotes || '',
-                            bankDetails: {
-                              ...bankData,
-                              accountHolder: bankData.accountHolder || formData.vendor || '',
-                            },
-                            createdAt: '',
-                          });
-                          setIsVendorModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 transition cursor-pointer"
-                        title="Registrar en catálogo oficial de proveedores"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Crear Proveedor en Catálogo</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <input
-                    type="text"
-                    list="vendors-list-datalist"
-                    value={formData.vendor}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setFormData({ ...formData, vendor: val });
-                      const matched = vendors.find(
-                        (v) => (v.name || '').trim().toLowerCase() === val.trim().toLowerCase()
-                      );
-                      if (matched) {
-                        if (matched.notes !== undefined) {
-                          setVendorNotes(matched.notes);
-                        }
-                        if (matched.cuit && !formData.cuit) {
-                          setFormData((prev) => (prev ? { ...prev, vendor: val, cuit: matched.cuit } : prev));
-                        }
-                        if (matched.bankDetails && (matched.bankDetails.cbuCvu || matched.bankDetails.alias)) {
-                          setBankData((prev) => ({
-                            ...prev,
-                            ...matched.bankDetails,
-                          }));
-                        }
-                      }
-                    }}
-                    placeholder="Escribe el nombre o razón social del proveedor..."
-                    className="w-full px-4 py-2 rounded-2xl border border-slate-200 text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
-                    required
-                  />
-                  <datalist id="vendors-list-datalist">
-                    {sortedUniqueVendors.map((v) => (
-                      <option key={v.id} value={v.name} />
-                    ))}
-                  </datalist>
-                </div>
-              )}
-
-              {/* Notas / Observaciones del Proveedor - Campo modificable */}
-              <div className="mt-2.5">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Notas / Observaciones del Proveedor
-                </label>
-                <textarea
-                  rows={2}
-                  value={vendorNotes}
-                  onChange={(e) => setVendorNotes(e.target.value)}
-                  placeholder="Observaciones o notas sobre el proveedor (condiciones, datos de contacto, acuerdos, etc.)..."
-                  className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition leading-relaxed"
-                />
-              </div>
-            </div>
-
+          {/* Invoice Number, Amount, Currency & Date */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 N° Comprobante / Factura
@@ -711,10 +551,7 @@ export function EditExpenseModal({
                 className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white"
               />
             </div>
-          </div>
 
-          {/* Amount & Currency & Date */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">Monto Total *</label>
               <input

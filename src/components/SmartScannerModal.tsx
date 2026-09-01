@@ -48,6 +48,7 @@ import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import { VendorFormModal } from './VendorFormModal';
+import { AccountSelector } from './AccountSelector';
 
 export interface SmartScannerModalProps {
   isOpen: boolean;
@@ -201,406 +202,30 @@ function AccountDataCell({
     category?: string;
   }) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isNewAccountModalOpen, setIsNewAccountModalOpen] = useState(false);
-  const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  const calculateCoords = () => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const dropdownHeight = 360;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      let top = rect.bottom + 4;
-      if (spaceBelow < dropdownHeight && rect.top > dropdownHeight) {
-        top = Math.max(10, rect.top - dropdownHeight - 4);
-      }
-      let left = rect.left;
-      const dropdownWidth = 340;
-      if (left + dropdownWidth > window.innerWidth - 16) {
-        left = Math.max(16, window.innerWidth - dropdownWidth - 16);
-      }
-      setCoords({ top: Math.max(10, top), left: Math.max(10, left), width: dropdownWidth });
-    }
-  };
-
-  const myBank = storedBank || currentUser?.bankDetails;
-
-  const handleOpenDropdown = () => {
-    setSearch('');
-    calculateCoords();
-    setIsOpen(true);
-    setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 50);
-  };
-
-  // Generar lista unificada de cuentas (Mis datos + Proveedores)
-  const allAccounts = useMemo(() => {
-    const list: Array<{
-      id: string;
-      name: string;
-      subtitle: string;
-      cuit: string;
-      bankDetails: UserBankDetails;
-      vendorName: string;
-      category?: string;
-      isPersonal: boolean;
-    }> = [];
-
-    // 1. Mis datos personales
-    if (myBank || currentUser?.name) {
-      const pBank = myBank || {
-        accountHolder: currentUser?.name || 'Solicitante',
-        bankName: '',
-        accountType: 'Indefinido',
-        cbuCvu: '',
-        alias: '',
-        cuitCuil: '',
-      };
-      const subParts: string[] = [];
-      if (pBank.alias) subParts.push(`Alias: ${pBank.alias}`);
-      if (pBank.cbuCvu) subParts.push(`CBU: ${pBank.cbuCvu}`);
-      if (pBank.bankName) subParts.push(pBank.bankName);
-      if (subParts.length === 0) subParts.push('Cuenta bancaria personal');
-
-      list.push({
-        id: 'personal-my-bank',
-        name: currentUser?.name || 'Mis datos personales',
-        subtitle: subParts.join(' • '),
-        cuit: pBank.cuitCuil || '',
-        bankDetails: pBank,
-        vendorName: currentUser?.name || 'Solicitante',
-        category: 'Reintegros',
-        isPersonal: true,
-      });
-    }
-
-    // 2. Proveedores registrados
-    vendors.forEach((v) => {
-      const vBank = v.bankDetails || {
-        accountHolder: v.name,
-        cuitCuil: v.cuit || '',
-        bankName: '',
-        accountType: 'Indefinido',
-        alias: '',
-        cbuCvu: '',
-      };
-
-      const subParts: string[] = [];
-      if (vBank.alias) subParts.push(`Alias: ${vBank.alias}`);
-      if (vBank.cbuCvu) subParts.push(`CBU: ${vBank.cbuCvu}`);
-      if (v.cuit) subParts.push(`CUIT: ${formatCuit(v.cuit)}`);
-      if (vBank.bankName) subParts.push(vBank.bankName);
-      else if (v.category) subParts.push(v.category);
-
-      list.push({
-        id: `vendor-${v.id}`,
-        name: v.name,
-        subtitle: subParts.join(' • ') || 'Proveedor registrado',
-        cuit: v.cuit || vBank.cuitCuil || '',
-        bankDetails: vBank,
-        vendorName: v.name,
-        category: v.category,
-        isPersonal: false,
-      });
-    });
-
-    return list;
-  }, [currentUser, myBank, vendors]);
-
-  // Filtrar y limitar a máximo 6 items
-  const filteredAccounts = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    if (!q) {
-      if (item.paymentType === 'REINTEGRO') {
-        return allAccounts.slice(0, 6);
-      }
-      return [...allAccounts]
-        .sort((a, b) => {
-          if (a.isPersonal && !b.isPersonal) return 1;
-          if (!a.isPersonal && b.isPersonal) return -1;
-          return 0;
-        })
-        .slice(0, 6);
-    }
-
-    return allAccounts
-      .filter((acc) => {
-        const text = `${acc.name} ${acc.subtitle} ${acc.cuit} ${acc.bankDetails.alias || ''} ${acc.bankDetails.cbuCvu || ''} ${acc.bankDetails.accountHolder || ''}`.toLowerCase();
-        return text.includes(q);
-      })
-      .slice(0, 6);
-  }, [allAccounts, search, item.paymentType]);
-
-  const handleSelectAccountItem = (acc: (typeof allAccounts)[0]) => {
-    onUpdateBankDetails(acc.bankDetails);
-    setIsOpen(false);
-  };
-
-  const handleSaveNewAccountFromModal = (data: {
-    name: string;
-    cuit: string;
-    bankDetails: UserBankDetails;
-    notes?: string;
-  }) => {
-    if (onAddVendor) {
-      onAddVendor({
-        name: data.name,
-        cuit: data.cuit,
-        category: item.category || 'Varios',
-        bankDetails: data.bankDetails,
-        notes: data.notes || `Registrado desde comprobante #${item.invoiceNumber || 'sin número'}`,
-      });
-    }
-
-    onUpdateBankDetails(data.bankDetails);
-  };
-
-  const hasAnyData = Boolean(
-    item.bankDetails && (item.bankDetails.alias || item.bankDetails.cbuCvu || item.bankDetails.accountHolder)
-  );
+  if (item.paymentType !== 'REINTEGRO' && item.paymentType !== 'PAGO_PROVEEDOR') {
+    return <span className="text-[11px] text-slate-400 font-medium">n/a</span>;
+  }
 
   return (
-    <div ref={triggerRef} className="relative">
-      {item.paymentType === 'REINTEGRO' || item.paymentType === 'PAGO_PROVEEDOR' ? (
-        <div className="flex items-center gap-1">
-          {hasAnyData ? (
-            <>
-              {/* Al hacer clic en un dato de cuenta ya seleccionado, abre el modal para editarlo */}
-              <div
-                onClick={() => setIsEditAccountModalOpen(true)}
-                className="p-1.5 rounded-lg border border-purple-200 bg-purple-50/40 hover:border-purple-400 hover:bg-purple-50 transition cursor-pointer group max-w-[160px] shadow-2xs"
-                title={`Titular: ${item.bankDetails?.accountHolder || '—'}\nAlias: ${item.bankDetails?.alias || '—'}\nCBU: ${item.bankDetails?.cbuCvu || '—'}\nBanco: ${item.bankDetails?.bankName || '—'}\n(Clic para editar datos de cuenta)`}
-              >
-                <div className="flex items-center justify-between gap-1">
-                  <div className="text-[11px] font-bold text-purple-950 truncate flex items-center gap-1">
-                    <CreditCard className="w-3 h-3 text-purple-700 shrink-0" />
-                    <span className="truncate">
-                      {item.bankDetails?.alias || item.bankDetails?.cbuCvu || item.bankDetails?.accountHolder}
-                    </span>
-                  </div>
-                  <Edit3 className="w-2.5 h-2.5 text-purple-400 group-hover:text-purple-700 shrink-0" />
-                </div>
-                <div className="text-[10px] text-purple-800/80 truncate mt-0.5 font-medium">
-                  {item.bankDetails?.accountHolder || item.vendor || 'Titular'}
-                </div>
-              </div>
-
-              {/* Botón Quitar (cruz): limpia la cuenta y abre el selector de búsqueda */}
-              <button
-                type="button"
-                onClick={() => {
-                  onUpdateBankDetails(undefined);
-                  setTimeout(() => {
-                    handleOpenDropdown();
-                  }, 50);
-                }}
-                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
-                title="Quitar cuenta y seleccionar otra"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={handleOpenDropdown}
-              className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 hover:text-slate-900 border border-slate-300 hover:border-slate-400 rounded-lg flex items-center gap-1.5 cursor-pointer transition shadow-2xs whitespace-nowrap"
-              title="Seleccionar cuenta o buscar en catálogo"
-            >
-              <CreditCard className="w-3.5 h-3.5 text-purple-700 shrink-0" />
-              <span>Seleccionar cuenta...</span>
-              <ChevronDown className="w-2.5 h-2.5 text-slate-400 ml-0.5" />
-            </button>
-          )}
-        </div>
-      ) : (
-        <span className="text-[11px] text-slate-400 font-medium">n/a</span>
-      )}
-
-      {/* POPUP ESTILO SALESFORCE LOOKUP (Renderizado en Portal) */}
-      {isOpen && coords && createPortal(
-        <div className="fixed inset-0 z-[99999]">
-          <div
-            className="fixed inset-0 bg-transparent"
-            onClick={() => setIsOpen(false)}
-          />
-          <div
-            style={{
-              position: 'fixed',
-              top: `${coords.top}px`,
-              left: `${coords.left}px`,
-              width: `${coords.width}px`,
-            }}
-            className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden z-10 text-left animate-in fade-in zoom-in-95 duration-100 flex flex-col"
-          >
-            {/* Input de Búsqueda Salesforce Lookup */}
-            <div className="p-2 border-b border-slate-200 bg-white">
-              <div className="relative flex items-center">
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar cuenta por nombre, alias, CUIT..."
-                  className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg border border-slate-300 focus:border-purple-600 focus:ring-1 focus:ring-purple-600 outline-hidden font-medium"
-                />
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
-                {search && (
-                  <button
-                    type="button"
-                    onClick={() => setSearch('')}
-                    className="p-1 text-slate-400 hover:text-slate-600 absolute right-1.5"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Cabecera / Info de búsqueda */}
-            {search.trim() && (
-              <div className="px-3 py-1.5 border-b border-slate-100 flex items-center gap-2 text-[11px] text-slate-600 bg-slate-50/70">
-                <Search className="w-3 h-3 text-slate-400 shrink-0" />
-                <span className="truncate">
-                  Resultados para <span className="font-semibold text-slate-900">"{search}"</span>
-                </span>
-              </div>
-            )}
-
-            <div className="px-3 pt-2 pb-1 text-[10.5px] font-bold uppercase tracking-wider text-slate-400">
-              Resultados de búsqueda
-            </div>
-
-            {/* Listado dinámico (Máximo 6 resultados) */}
-            <div className="max-h-60 overflow-y-auto divide-y divide-slate-50">
-              {filteredAccounts.length > 0 ? (
-                filteredAccounts.map((acc) => (
-                  <button
-                    key={acc.id}
-                    type="button"
-                    onClick={() => handleSelectAccountItem(acc)}
-                    className="w-full px-3 py-2 text-left hover:bg-purple-50/50 flex items-center gap-3 transition cursor-pointer group"
-                  >
-                    {/* Icono de contacto/cuenta Salesforce en morado */}
-                    <div className="w-7 h-7 rounded-md bg-purple-700 text-white flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
-                      {acc.isPersonal ? (
-                        <User className="w-3.5 h-3.5" />
-                      ) : (
-                        <CreditCard className="w-3.5 h-3.5" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate leading-tight group-hover:text-purple-700 transition-colors">
-                        {highlightLookupMatch(acc.name, search)}
-                      </div>
-                      <div className="text-[10px] text-slate-500 truncate leading-tight mt-0.5">
-                        {acc.subtitle}
-                      </div>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="py-4 px-3 text-center text-xs text-slate-500">
-                  No se encontraron cuentas para "{search}"
-                </div>
-              )}
-            </div>
-
-            {/* ÚLTIMA POSICIÓN: SIEMPRE "Nueva cuenta" en grisecito (sin doble '+') */}
-            <div className="border-t border-slate-200 p-1 bg-slate-50/70">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsOpen(false);
-                  setIsNewAccountModalOpen(true);
-                }}
-                className="w-full px-3 py-2 text-left text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition flex items-center gap-2 cursor-pointer group"
-              >
-                <Plus className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-800 shrink-0" />
-                <span className="font-semibold text-slate-600 group-hover:text-slate-900">
-                  Nueva cuenta
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Modal emergente unificado para crear Nueva Cuenta / Proveedor */}
-      <VendorFormModal
-        isOpen={isNewAccountModalOpen}
-        existingVendors={vendors}
-        title="Nueva cuenta bancaria / Proveedor"
-        subtitle="Se guardará en proveedores y se asignará al comprobante"
-        initialData={{
-          id: '',
-          name: search || item.vendor || '',
-          cuit: item.cuit || item.bankDetails?.cuitCuil || '',
-          category: item.category || 'Varios',
-          bankDetails: {
-            accountHolder: search || item.vendor || '',
-            bankName: '',
-            accountType: 'Indefinido',
-            cbuCvu: '',
-            alias: '',
-            cuitCuil: item.cuit || item.bankDetails?.cuitCuil || '',
-          },
-        }}
-        onClose={() => setIsNewAccountModalOpen(false)}
-        onSave={(savedVendor) => {
-          if (onAddVendor) {
-            onAddVendor(savedVendor);
-          }
-          if (savedVendor.bankDetails) {
-            onUpdateBankDetails(savedVendor.bankDetails);
-          }
-          if (onSelectAccount) {
-            onSelectAccount({
-              bankDetails: savedVendor.bankDetails || {
-                accountHolder: savedVendor.name,
-                bankName: '',
-                accountType: 'Indefinido',
-                cbuCvu: '',
-                alias: '',
-                cuitCuil: savedVendor.cuit || '',
-              },
-              vendorName: savedVendor.name,
-              cuit: savedVendor.cuit,
-              category: savedVendor.category,
-            });
-          }
-          setIsNewAccountModalOpen(false);
-        }}
-      />
-
-      {/* Modal emergente unificado para editar los Datos de la Cuenta seleccionada */}
-      <VendorFormModal
-        isOpen={isEditAccountModalOpen}
-        existingVendors={vendors}
-        title="Editar datos de cuenta bancaria"
-        subtitle="Modificar datos bancarios asignados a este comprobante"
-        initialData={{
-          id: '',
-          name: item.bankDetails?.accountHolder || item.vendor || '',
-          cuit: item.bankDetails?.cuitCuil || item.cuit || '',
-          category: item.category || 'Varios',
-          bankDetails: item.bankDetails,
-        }}
-        onClose={() => setIsEditAccountModalOpen(false)}
-        onSave={(savedVendor) => {
-          if (savedVendor.bankDetails) {
-            onUpdateBankDetails(savedVendor.bankDetails);
-          }
-          setIsEditAccountModalOpen(false);
-        }}
-      />
-    </div>
+    <AccountSelector
+      bankDetails={item.bankDetails}
+      vendorName={item.vendor}
+      cuit={item.cuit || item.bankDetails?.cuitCuil}
+      vendors={vendors}
+      currentUser={currentUser || undefined}
+      storedBank={storedBank || undefined}
+      paymentType={item.paymentType}
+      onAddVendor={onAddVendor}
+      onSelectAccount={(data) => {
+        onUpdateBankDetails(data.bankDetails);
+        if (onSelectAccount) {
+          onSelectAccount(data);
+        }
+      }}
+      onClearAccount={() => {
+        onUpdateBankDetails(undefined);
+      }}
+    />
   );
 }
 
@@ -1395,7 +1020,7 @@ export function SmartScannerModal({
                   <thead className="bg-slate-900 text-white font-semibold text-[11px] tracking-wider uppercase sticky top-0 z-10">
                     <tr>
                       <th className="py-2.5 px-3 w-16 text-center">Foto</th>
-                      <th className="py-2.5 px-3 min-w-[150px]">Proveedor</th>
+                      <th className="py-2.5 px-3 min-w-[150px]">Nombre / Factura</th>
                       <th className="py-2.5 px-3 min-w-[110px]">
                         Monto <span className="text-rose-300 font-bold">*</span>
                       </th>
@@ -1856,10 +1481,10 @@ export function SmartScannerModal({
 
                     {/* Card Form fields */}
                     <div className="space-y-2.5">
-                      {/* 1. Proveedor */}
+                      {/* 1. Nombre / Factura */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Proveedor
+                          Nombre / Factura
                         </label>
                         <input
                           type="text"

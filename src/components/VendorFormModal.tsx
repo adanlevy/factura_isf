@@ -63,9 +63,11 @@ export function VendorFormModal({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize or reset form state when modal opens
+  const prevIsOpenRef = useRef(false);
+
+  // Initialize or reset form state ONLY when modal opens (transition from closed to open)
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       if (initialData) {
         setName(initialData.name || '');
         setCategory(initialData.category || '');
@@ -99,7 +101,8 @@ export function VendorFormModal({
       setIsCuitApproved(false);
       setShowCuitConfirmDialog(false);
     }
-  }, [isOpen, initialData]);
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen]);
 
   // Clean CBU/CVU helper (digits only)
   const cleanNumber = (val?: string) => (val || '').replace(/[^0-9]/g, '');
@@ -265,7 +268,7 @@ export function VendorFormModal({
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [isOpen, name, category, cuit, notes, bankDetails]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
