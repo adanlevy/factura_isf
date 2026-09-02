@@ -326,8 +326,18 @@ app.get("/api/health", (_req, res) => {
 });
 
 // ==========================================
-// API USAGE & SYSTEM METRICS TRACKING ENGINE
+// API USAGE & SYSTEM METRICS TRACKING ENGINE (CLOUD FIRESTORE PERSISTENT)
 // ==========================================
+
+let firebaseConfigData: any = null;
+try {
+  const cfgPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(cfgPath)) {
+    firebaseConfigData = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  }
+} catch (e) {
+  console.warn("[Server Firebase Config] Note:", e);
+}
 
 export interface ApiUsageRecord {
   id: string;
@@ -360,6 +370,85 @@ function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number 
   return Number(total.toFixed(6));
 }
 
+// Asynchronously persist API log to Cloud Firestore
+async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?documentId=${encodeURIComponent(record.id)}&key=${firebaseConfigData.apiKey}`;
+
+  const fields: Record<string, any> = {
+    id: { stringValue: record.id },
+    timestamp: { stringValue: record.timestamp },
+    service: { stringValue: record.service },
+    serviceName: { stringValue: record.serviceName || '' },
+    endpoint: { stringValue: record.endpoint || '' },
+    actionName: { stringValue: record.actionName || '' },
+    model: { stringValue: record.model || '' },
+    promptTokens: { integerValue: String(record.promptTokens || 0) },
+    candidatesTokens: { integerValue: String(record.candidatesTokens || 0) },
+    totalTokens: { integerValue: String(record.totalTokens || 0) },
+    estimatedCostUsd: { doubleValue: record.estimatedCostUsd || 0 },
+    estimatedCostArs: { doubleValue: record.estimatedCostArs || 0 },
+    status: { stringValue: record.status || 'success' },
+    durationMs: { integerValue: String(record.durationMs || 0) },
+    userEmail: { stringValue: record.userEmail || '' },
+    details: { stringValue: record.details || '' },
+  };
+
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+  } catch (err) {
+    console.warn('[Server Firestore REST] Error saving API log:', err);
+  }
+}
+
+// Asynchronously fetch API logs from Cloud Firestore
+async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return [];
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?pageSize=300&key=${firebaseConfigData.apiKey}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (!json.documents || !Array.isArray(json.documents)) return [];
+
+    const records: ApiUsageRecord[] = [];
+    for (const doc of json.documents) {
+      const f = doc.fields || {};
+      const id = f.id?.stringValue || doc.name?.split('/').pop() || '';
+      if (id.startsWith('seed_')) continue;
+      records.push({
+        id,
+        timestamp: f.timestamp?.stringValue || new Date().toISOString(),
+        service: (f.service?.stringValue as any) || 'gemini_ai',
+        serviceName: f.serviceName?.stringValue || 'Google Gemini AI',
+        endpoint: f.endpoint?.stringValue || '',
+        actionName: f.actionName?.stringValue || 'Operación',
+        model: f.model?.stringValue,
+        promptTokens: parseInt(f.promptTokens?.integerValue || '0', 10),
+        candidatesTokens: parseInt(f.candidatesTokens?.integerValue || '0', 10),
+        totalTokens: parseInt(f.totalTokens?.integerValue || '0', 10),
+        estimatedCostUsd: parseFloat(f.estimatedCostUsd?.doubleValue ?? f.estimatedCostUsd?.integerValue ?? '0'),
+        estimatedCostArs: parseFloat(f.estimatedCostArs?.doubleValue ?? f.estimatedCostArs?.integerValue ?? '0'),
+        status: (f.status?.stringValue as any) || 'success',
+        durationMs: parseInt(f.durationMs?.integerValue || '0', 10),
+        userEmail: f.userEmail?.stringValue,
+        details: f.details?.stringValue,
+      });
+    }
+    return records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch (err) {
+    console.warn('[Server Firestore REST] Error fetching API logs:', err);
+    return [];
+  }
+}
+
 function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimatedCostArs'>): ApiUsageRecord {
   const timestamp = new Date().toISOString();
   const estimatedCostArs = Number((entry.estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
@@ -376,32 +465,67 @@ function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimated
     if (logs.length > 2000) logs.length = 2000;
     writeCollection('api_usage_logs', logs);
   } catch (e) {
-    console.warn('[API Log] Error persisting log:', e);
+    console.warn('[API Log] Error persisting local log:', e);
   }
+
+  // Persist to Cloud Firestore in background
+  saveApiLogToFirestore(record).catch(() => {});
+
   return record;
 }
 
-// Get genuine API execution logs
-function getRealApiLogs(): ApiUsageRecord[] {
-  const logs = readCollection<ApiUsageRecord[]>('api_usage_logs', []);
-  // Filter out any previous mock/seed logs so only genuine operations are reported
-  return logs.filter((l) => !l.id.startsWith('seed_'));
+// Get genuine API execution logs merged with Firestore
+async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
+  const localLogs = readCollection<ApiUsageRecord[]>('api_usage_logs', []).filter((l) => !l.id.startsWith('seed_'));
+  const cloudLogs = await fetchFirestoreApiLogs();
+
+  const map = new Map<string, ApiUsageRecord>();
+  for (const log of localLogs) {
+    if (log && log.id) map.set(log.id, log);
+  }
+  for (const log of cloudLogs) {
+    if (log && log.id) map.set(log.id, log);
+  }
+
+  const combined = Array.from(map.values()).sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  // Update local cache
+  if (combined.length > 0 && combined.length !== localLogs.length) {
+    try {
+      writeCollection('api_usage_logs', combined.slice(0, 2000));
+    } catch (_) {}
+  }
+
+  return combined;
 }
 
 // Endpoint: Clear API logs
-app.post("/api/system/clear-logs", (_req, res) => {
+app.post("/api/system/clear-logs", async (_req, res) => {
   try {
     writeCollection('api_usage_logs', []);
-    res.json({ success: true, message: 'Historial de auditoría de APIs reseteado con éxito' });
+    
+    // Attempt to delete cloud records if any
+    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+      const cloudLogs = await fetchFirestoreApiLogs();
+      for (const log of cloudLogs) {
+        const delUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs/${encodeURIComponent(log.id)}?key=${firebaseConfigData.apiKey}`;
+        fetch(delUrl, { method: 'DELETE' }).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, message: 'Historial de auditoría de APIs reseteado con éxito en Cloud Firestore' });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message || 'Error al resetear logs' });
   }
 });
 
 // Endpoint: System & API Metrics Report
-app.get("/api/system/metrics", (_req, res) => {
+app.get("/api/system/metrics", async (_req, res) => {
   try {
-    const logs = getRealApiLogs();
+    const logs = await getRealApiLogsAsync();
 
     // 1. Storage Calculation in Firestore
     const expenses = readCollection<any[]>("expenses", []);
@@ -410,6 +534,7 @@ app.get("/api/system/metrics", (_req, res) => {
     const categories = readCollection<any[]>("categories", []);
     const appUsers = readCollection<any[]>("app-users", []);
     const userPrefs = readCollection<any[]>("user-preferences", []);
+    const auditLogs = readCollection<any[]>("audit_logs", []);
 
     const calcCollectionBytes = (items: any[], basePerDoc: number = 40) => {
       let bytes = 0;
@@ -425,6 +550,7 @@ app.get("/api/system/metrics", (_req, res) => {
     const categoriesBytes = calcCollectionBytes(categories, 32);
     const appUsersBytes = calcCollectionBytes(appUsers, 48);
     const userPrefsBytes = calcCollectionBytes(userPrefs, 32);
+    const auditLogsBytes = calcCollectionBytes(auditLogs, 48);
     const apiLogsBytes = calcCollectionBytes(logs, 48);
 
     const totalEstimatedBytes =
@@ -434,6 +560,7 @@ app.get("/api/system/metrics", (_req, res) => {
       categoriesBytes +
       appUsersBytes +
       userPrefsBytes +
+      auditLogsBytes +
       apiLogsBytes;
 
     const totalDocuments =
@@ -443,6 +570,7 @@ app.get("/api/system/metrics", (_req, res) => {
       categories.length +
       appUsers.length +
       userPrefs.length +
+      auditLogs.length +
       logs.length;
 
     const tierLimitBytes = 1024 * 1024 * 1024; // 1 GiB free Spark Tier

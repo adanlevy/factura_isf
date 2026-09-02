@@ -35,6 +35,13 @@ import {
   ApiUsageLogEntry,
 } from '../types';
 import { computeFirestoreStorage, formatBytes, formatCurrencyUsd, formatCurrencyArs } from '../utils/firestoreMetrics';
+import {
+  subscribeToApiUsageLogs,
+  fetchCentralApiUsageLogs,
+  aggregateApiUsage,
+  clearCentralApiUsageLogs,
+  ARS_EXCHANGE_RATE,
+} from '../utils/apiUsageLogger';
 import { matchesSearch } from '../utils/helpers';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
 
@@ -54,6 +61,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   appUsers,
 }) => {
   const [metrics, setMetrics] = useState<SystemMetricsReport | null>(null);
+  const [firestoreApiLogs, setFirestoreApiLogs] = useState<ApiUsageLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
@@ -64,8 +72,16 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
   // Exact real-time Firestore storage calculation computed directly from the live React Firestore snapshot state
   const firestoreData = useMemo(() => {
-    return computeFirestoreStorage(expenses, vendors, costCenters, categories, appUsers);
-  }, [expenses, vendors, costCenters, categories, appUsers]);
+    return computeFirestoreStorage(
+      expenses,
+      vendors,
+      costCenters,
+      categories,
+      appUsers,
+      0,
+      firestoreApiLogs.length
+    );
+  }, [expenses, vendors, costCenters, categories, appUsers, firestoreApiLogs.length]);
 
   const fetchMetrics = async () => {
     try {
@@ -86,15 +102,13 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   };
 
   const handleClearLogs = async () => {
-    if (!window.confirm('¿Deseas resetear y limpiar el historial de auditoría de APIs?')) {
+    if (!window.confirm('¿Deseas resetear y limpiar el historial de auditoría de APIs permanente en Cloud Firestore?')) {
       return;
     }
     try {
       setClearingLogs(true);
-      const res = await fetch('/api/system/clear-logs', { method: 'POST' });
-      if (res.ok) {
-        await fetchMetrics();
-      }
+      await clearCentralApiUsageLogs();
+      await fetchMetrics();
     } catch (err) {
       console.error('Error clearing logs:', err);
     } finally {
@@ -103,13 +117,32 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   };
 
   useEffect(() => {
+    // 1. Initial backend metrics fetch & poll
     fetchMetrics();
-    const interval = setInterval(fetchMetrics, 30000); // Poll every 30s
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchMetrics, 30000);
+
+    // 2. Real-time Cloud Firestore subscription for API logs
+    const unsubscribe = subscribeToApiUsageLogs((logs) => {
+      setFirestoreApiLogs(logs);
+      setLoading(false);
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, []);
 
-  const apiUsage = metrics?.apiUsage;
-  const exchangeRate = apiUsage?.exchangeRateArs || 1060;
+  // Compute live API usage metrics prioritizing real-time Firestore logs if available
+  const liveApiUsage = useMemo(() => {
+    if (firestoreApiLogs.length > 0) {
+      return aggregateApiUsage(firestoreApiLogs);
+    }
+    return metrics?.apiUsage;
+  }, [firestoreApiLogs, metrics?.apiUsage]);
+
+  const apiUsage = liveApiUsage;
+  const exchangeRate = apiUsage?.exchangeRateArs || ARS_EXCHANGE_RATE;
 
   // Format currency helper based on state
   const formatCost = (usd: number) => {
@@ -121,8 +154,8 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
   // Filtered API logs
   const filteredLogs = useMemo(() => {
-    if (!apiUsage?.recentLogs) return [];
-    return apiUsage.recentLogs.filter((log: ApiUsageLogEntry) => {
+    const logsToFilter = firestoreApiLogs.length > 0 ? firestoreApiLogs : (apiUsage?.recentLogs || []);
+    return logsToFilter.filter((log: ApiUsageLogEntry) => {
       const matchesService =
         logFilterService === 'all' || log.service === logFilterService;
       const matchesQuery =
@@ -130,7 +163,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         matchesSearch([log.actionName, log.endpoint, log.details, log.userEmail, log.serviceName, log.status], logSearchQuery);
       return matchesService && matchesQuery;
     });
-  }, [apiUsage?.recentLogs, logFilterService, logSearchQuery]);
+  }, [firestoreApiLogs, apiUsage?.recentLogs, logFilterService, logSearchQuery]);
 
   return (
     <div id="system-admin-view-root" className="space-y-6 max-w-7xl mx-auto pb-12">

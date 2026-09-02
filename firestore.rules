@@ -30,6 +30,14 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /api_usage_logs/{logId} {
+      allow read, write: if true;
+    }
+
     match /system_health/{docId} {
       allow read, write: if true;
     }

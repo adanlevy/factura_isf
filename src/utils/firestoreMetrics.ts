@@ -55,7 +55,9 @@ export function computeFirestoreStorage(
   vendors: Vendor[] = [],
   costCenters: CostCenter[] = [],
   categories: string[] = [],
-  appUsers: AppUserRecord[] = []
+  appUsers: AppUserRecord[] = [],
+  auditLogsCount: number = 0,
+  apiLogsCount: number = 0
 ): FirestoreStorageMetrics {
   // 1. Expenses collection
   let expensesBytes = 0;
@@ -91,6 +93,10 @@ export function computeFirestoreStorage(
   const preferencesBytes = appUsers.length * 280; // Estimated preference documents per user
   const systemHealthBytes = 1024; // System ping documents
 
+  // 7. Audit logs & API usage logs
+  const auditLogsBytes = Math.max(auditLogsCount, 0) * 450;
+  const apiLogsBytes = Math.max(apiLogsCount, 0) * 380;
+
   const totalEstimatedBytes =
     expensesBytes +
     vendorsBytes +
@@ -98,6 +104,8 @@ export function computeFirestoreStorage(
     categoriesBytes +
     appUsersBytes +
     preferencesBytes +
+    auditLogsBytes +
+    apiLogsBytes +
     systemHealthBytes;
 
   const totalDocuments =
@@ -107,6 +115,8 @@ export function computeFirestoreStorage(
     (categories.length > 0 ? categories.length : 1) +
     appUsers.length +
     appUsers.length + // preferences
+    Math.max(auditLogsCount, 0) +
+    Math.max(apiLogsCount, 0) +
     1; // health
 
   const tierLimitBytes = 1024 * 1024 * 1024; // 1 GiB (1,073,741,824 bytes) Free Spark Tier
@@ -142,6 +152,26 @@ export function computeFirestoreStorage(
       estimatedKb: Number((costCentersBytes / 1024).toFixed(2)),
       estimatedMb: Number((costCentersBytes / (1024 * 1024)).toFixed(3)),
       percentage: totalEstimatedBytes > 0 ? Number(((costCentersBytes / totalEstimatedBytes) * 100).toFixed(1)) : 0,
+    },
+    {
+      id: 'api_usage_logs',
+      name: 'api_usage_logs (Auditoría de APIs)',
+      description: 'Registro histórico en la nube de llamadas Gemini, Drive y Gmail',
+      documentCount: apiLogsCount,
+      estimatedBytes: apiLogsBytes,
+      estimatedKb: Number((apiLogsBytes / 1024).toFixed(2)),
+      estimatedMb: Number((apiLogsBytes / (1024 * 1024)).toFixed(3)),
+      percentage: totalEstimatedBytes > 0 ? Number(((apiLogsBytes / totalEstimatedBytes) * 100).toFixed(1)) : 0,
+    },
+    {
+      id: 'audit_logs',
+      name: 'audit_logs (Auditoría de Cambios)',
+      description: 'Trazabilidad de modificaciones, creaciones y eliminaciones',
+      documentCount: auditLogsCount,
+      estimatedBytes: auditLogsBytes,
+      estimatedKb: Number((auditLogsBytes / 1024).toFixed(2)),
+      estimatedMb: Number((auditLogsBytes / (1024 * 1024)).toFixed(3)),
+      percentage: totalEstimatedBytes > 0 ? Number(((auditLogsBytes / totalEstimatedBytes) * 100).toFixed(1)) : 0,
     },
     {
       id: 'app_users',

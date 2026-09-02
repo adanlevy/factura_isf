@@ -88,6 +88,30 @@
         "addedBy": { "type": "string" }
       },
       "required": ["email", "role"]
+    },
+    "ApiUsageLog": {
+      "title": "ApiUsageLog",
+      "description": "Registro persistente de consumo de APIs (Gemini, Drive, Gmail, Firestore)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "service": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "actionName": { "type": "string" },
+        "model": { "type": "string" },
+        "promptTokens": { "type": "number" },
+        "candidatesTokens": { "type": "number" },
+        "totalTokens": { "type": "number" },
+        "estimatedCostUsd": { "type": "number" },
+        "estimatedCostArs": { "type": "number" },
+        "status": { "type": "string" },
+        "durationMs": { "type": "number" },
+        "userEmail": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "service", "actionName", "estimatedCostUsd"]
     }
   },
   "firestore": {
@@ -114,6 +138,14 @@
     "/app_users/{userEmail}": {
       "schema": { "$ref": "#/entities/AppUser" },
       "description": "Gestión de roles y permisos de usuarios y administradores"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Historial y registro de auditoría de modificaciones"
+    },
+    "/api_usage_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ApiUsageLog" },
+      "description": "Historial permanente de auditoría de consumo y costos de APIs"
     },
     "/system_health/{docId}": {
       "schema": { "$ref": "#/entities/Category" },
