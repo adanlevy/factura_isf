@@ -265,11 +265,13 @@ export interface ApiUsageRecord {
 const ARS_EXCHANGE_RATE = 1060;
 
 function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number = 0): number {
-  // Official Gemini pricing: $0.10 / 1M prompt tokens, $0.40 / 1M output tokens (Gemini 2.5/3.7 Flash)
+  // Official Google Gemini 2.5 / 3.7 Flash pricing:
+  // $0.10 / 1M prompt tokens ($0.00000010 per token)
+  // $0.40 / 1M candidates/output tokens ($0.00000040 per token)
   const inputCost = (promptTokens / 1_000_000) * 0.10;
   const outputCost = (candidatesTokens / 1_000_000) * 0.40;
   const total = inputCost + outputCost;
-  return Number(Math.max(total, 0.00015).toFixed(6));
+  return Number(total.toFixed(6));
 }
 
 function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimatedCostArs'>): ApiUsageRecord {
@@ -283,7 +285,7 @@ function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimated
   };
 
   try {
-    const logs = readCollection<ApiUsageRecord[]>('api_usage_logs', []);
+    const logs = readCollection<ApiUsageRecord[]>('api_usage_logs', []).filter((l) => !l.id.startsWith('seed_'));
     logs.unshift(record);
     if (logs.length > 2000) logs.length = 2000;
     writeCollection('api_usage_logs', logs);
@@ -293,87 +295,27 @@ function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimated
   return record;
 }
 
-// Seed realistic historical sample logs if the store is empty
-function ensureSeededApiLogs(): ApiUsageRecord[] {
-  let logs = readCollection<ApiUsageRecord[]>('api_usage_logs', []);
-  if (logs.length > 0) return logs;
-
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
-
-  const makeDate = (year: number, month: number, day: number, hour: number, min: number) => {
-    const d = new Date(year, month, day, hour, min, 0);
-    return d.toISOString();
-  };
-
-  const seeded: ApiUsageRecord[] = [];
-  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-
-  const sampleActions = [
-    { service: 'gemini_ai', serviceName: 'Google Gemini AI', endpoint: '/api/extract-invoice', action: 'Escaneo Inteligente de Factura (OCR)', model: 'gemini-3.7-flash', pTokens: 1420, cTokens: 280, cost: 0.00025, dur: 1250 },
-    { service: 'gemini_ai', serviceName: 'Google Gemini AI', endpoint: '/api/process-vendor-doc', action: 'Extracción Constancia CBU / Proveedor', model: 'gemini-3.7-flash', pTokens: 1650, cTokens: 310, cost: 0.00029, dur: 1420 },
-    { service: 'gemini_ai', serviceName: 'Google Gemini AI', endpoint: '/api/process-audio', action: 'Procesamiento de Nota de Voz (Audio)', model: 'gemini-3.7-flash', pTokens: 2100, cTokens: 190, cost: 0.00028, dur: 1850 },
-    { service: 'google_drive', serviceName: 'Google Drive API', endpoint: '/api/upload-to-drive', action: 'Subida Comprobante a Drive', model: 'Drive v3 API', pTokens: 0, cTokens: 0, cost: 0.00005, dur: 890 },
-    { service: 'google_gmail', serviceName: 'Google Gmail API', endpoint: '/api/send-email', action: 'Notificación de Orden de Pago', model: 'Gmail REST API', pTokens: 0, cTokens: 0, cost: 0.00010, dur: 620 },
-  ];
-
-  // 1. Previous month calls (30 calls)
-  for (let i = 1; i <= 28; i += 2) {
-    const action = sampleActions[i % sampleActions.length];
-    const costArs = Number((action.cost * ARS_EXCHANGE_RATE).toFixed(2));
-    seeded.push({
-      id: `seed_prev_${i}`,
-      timestamp: makeDate(prevYear, prevMonth, i, 10 + (i % 8), 15 + ((i * 3) % 45)),
-      service: action.service as any,
-      serviceName: action.serviceName,
-      endpoint: action.endpoint,
-      actionName: action.action,
-      model: action.model,
-      promptTokens: action.pTokens,
-      candidatesTokens: action.cTokens,
-      totalTokens: action.pTokens + action.cTokens,
-      estimatedCostUsd: action.cost,
-      estimatedCostArs: costArs,
-      status: 'success',
-      durationMs: action.dur,
-      userEmail: i % 2 === 0 ? 'alevy@isf-argentina.org' : 'finanzas@isf-argentina.org',
-    });
-  }
-
-  // 2. Current month calls (22 calls)
-  for (let i = 1; i <= Math.min(now.getDate() || 28, 28); i += 2) {
-    const action = sampleActions[(i + 2) % sampleActions.length];
-    const costArs = Number((action.cost * ARS_EXCHANGE_RATE).toFixed(2));
-    seeded.push({
-      id: `seed_curr_${i}`,
-      timestamp: makeDate(currentYear, currentMonth, i, 9 + (i % 9), 10 + ((i * 4) % 50)),
-      service: action.service as any,
-      serviceName: action.serviceName,
-      endpoint: action.endpoint,
-      actionName: action.action,
-      model: action.model,
-      promptTokens: action.pTokens,
-      candidatesTokens: action.cTokens,
-      totalTokens: action.pTokens + action.cTokens,
-      estimatedCostUsd: action.cost,
-      estimatedCostArs: costArs,
-      status: 'success',
-      durationMs: action.dur,
-      userEmail: 'alevy@isf-argentina.org',
-    });
-  }
-
-  seeded.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  writeCollection('api_usage_logs', seeded);
-  return seeded;
+// Get genuine API execution logs
+function getRealApiLogs(): ApiUsageRecord[] {
+  const logs = readCollection<ApiUsageRecord[]>('api_usage_logs', []);
+  // Filter out any previous mock/seed logs so only genuine operations are reported
+  return logs.filter((l) => !l.id.startsWith('seed_'));
 }
+
+// Endpoint: Clear API logs
+app.post("/api/system/clear-logs", (_req, res) => {
+  try {
+    writeCollection('api_usage_logs', []);
+    res.json({ success: true, message: 'Historial de auditoría de APIs reseteado con éxito' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message || 'Error al resetear logs' });
+  }
+});
 
 // Endpoint: System & API Metrics Report
 app.get("/api/system/metrics", (_req, res) => {
   try {
-    const logs = ensureSeededApiLogs();
+    const logs = getRealApiLogs();
 
     // 1. Storage Calculation in Firestore
     const expenses = readCollection<any[]>("expenses", []);
@@ -1036,21 +978,42 @@ Devuelve los datos en JSON conforme al esquema.`;
 // Endpoint 1b: Process Vendor Document (Image or PDF) to extract vendor & bank details
 app.post("/api/process-vendor-doc", async (req, res) => {
   try {
-    const { fileBase64, mimeType } = req.body;
-    if (!fileBase64) {
+    const rawBase64 = req.body.fileBase64 || req.body.imageBase64 || req.body.data;
+    let mimeType = req.body.mimeType;
+
+    if (!rawBase64) {
       return res.status(400).json({ success: false, error: "No se envió contenido de archivo" });
     }
 
-    let cleanBase64 = fileBase64;
+    let cleanBase64 = rawBase64;
     let effectiveMimeType = mimeType || "image/jpeg";
 
-    if (fileBase64.includes(";base64,")) {
-      const parts = fileBase64.split(";base64,");
-      const header = parts[0];
-      cleanBase64 = parts[1];
-      if (header.includes("data:")) {
-        effectiveMimeType = header.replace("data:", "");
+    if (typeof rawBase64 === "string" && rawBase64.includes(",")) {
+      const dataUrlMatch = rawBase64.match(/^data:([^;]+);base64,(.+)$/s);
+      if (dataUrlMatch) {
+        effectiveMimeType = dataUrlMatch[1];
+        cleanBase64 = dataUrlMatch[2];
+      } else {
+        const parts = rawBase64.split(",");
+        cleanBase64 = parts[parts.length - 1];
       }
+    }
+
+    // Clean whitespace and linebreaks from base64
+    cleanBase64 = cleanBase64.replace(/\s+/g, "");
+
+    // Normalize mimeType for Gemini API
+    effectiveMimeType = effectiveMimeType.split(";")[0].toLowerCase().trim();
+    if (effectiveMimeType === "image/jpg" || effectiveMimeType === "image/pjpeg") {
+      effectiveMimeType = "image/jpeg";
+    } else if (effectiveMimeType === "image/x-png") {
+      effectiveMimeType = "image/png";
+    } else if (
+      !["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"].includes(
+        effectiveMimeType
+      )
+    ) {
+      effectiveMimeType = "image/jpeg";
     }
 
     const ai = getGeminiClient();
@@ -1073,7 +1036,10 @@ Instrucciones de extracción:
    - "Indefinido": Si NO figura ninguna de las anteriores (por ejemplo ante textos generales como "Cuenta Única", "Cuenta Santander", "CBU", "Alias" o sin especificación clara de CA o CC). NUNCA asumas Caja de Ahorro si no está especificado.
 9. "cbuCvu": CBU (Clave Bancaria Uniforme) o CVU (Clave Virtual Uniforme) de 22 dígitos numéricos. Extrae solo los dígitos. Devuelve null si no se observa CBU/CVU de 22 dígitos.
 10. "alias": Alias de la cuenta bancaria en Argentina (ej: "PROVEEDOR.MERCADO.MP", "empresa.pago.cbu").
-    IMPORTANTE: Si no se encuentra un alias explícito en el documento, devuelve null (NUNCA devuelvas "NO_ALIAS", "NO ALIAS", "NO_TIENE", "N/A" ni textos inventados; debe ser null o vacío).
+    REGLA ESTRICTA Y OBLIGATORIA:
+    - ÚNICAMENTE debes extraer un alias si en el documento existe una etiqueta o texto que haga referencia explícita a la palabra "Alias", "Alias CBU", "Alias CVU", "Alias Cta", "Alias Bancario", "Alias:", "AL.MP" o similar seguida del alias.
+    - PROHIBIDO INVENTAR: NUNCA inventes, supongas, generes ni deduzcas un alias a partir del nombre del proveedor, razón social, email, CUIT o CBU si no está explícitamente escrito con referencia de Alias en el comprobante/documento.
+    - Si no existe una referencia explícita a Alias en el documento, DEBES devolver estrictamente null (o no incluir alias). NUNCA devuelvas placeholders como "NO_ALIAS", "N/A" ni textos inventados.
 11. "accountHolder": Nombre y Apellido o Razón Social del Titular de la cuenta bancaria.
 12. "notes": Breve resumen de observaciones o datos adicionales útiles detectados.
 
@@ -1106,7 +1072,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
             bankName: { type: Type.STRING, description: "Banco o Billetera Virtual o null" },
             accountType: { type: Type.STRING, description: "Caja de Ahorro, Cuenta Corriente o Indefinido si no está expresamente aclarado" },
             cbuCvu: { type: Type.STRING, description: "CBU o CVU de 22 dígitos o null" },
-            alias: { type: Type.STRING, description: "Alias de la cuenta bancaria o null si no figura" },
+            alias: { type: Type.STRING, description: "Alias de la cuenta bancaria ÚNICAMENTE si figura con referencia explícita de Alias en el documento, o null si no figura. NUNCA inventar." },
             accountHolder: { type: Type.STRING, description: "Titular de la cuenta bancaria o null" },
             notes: { type: Type.STRING, description: "Notas adicionales detectadas o null" },
           },

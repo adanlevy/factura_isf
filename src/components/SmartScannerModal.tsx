@@ -63,6 +63,7 @@ export interface SmartScannerModalProps {
   vendors?: Vendor[];
   costCenters?: CostCenter[];
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
+  onUpdateVendor?: (vendor: Vendor) => void;
 }
 
 export interface QueueItem {
@@ -187,6 +188,7 @@ function AccountDataCell({
   vendors,
   onUpdateBankDetails,
   onAddVendor,
+  onUpdateVendor,
   onSelectAccount,
 }: {
   item: QueueItem;
@@ -195,6 +197,7 @@ function AccountDataCell({
   vendors: Vendor[];
   onUpdateBankDetails: (details: UserBankDetails | undefined) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
+  onUpdateVendor?: (vendor: Vendor) => void;
   onSelectAccount?: (data: {
     bankDetails: UserBankDetails;
     vendorName?: string;
@@ -216,6 +219,7 @@ function AccountDataCell({
       storedBank={storedBank || undefined}
       paymentType={item.paymentType}
       onAddVendor={onAddVendor}
+      onUpdateVendor={onUpdateVendor}
       onSelectAccount={(data) => {
         onUpdateBankDetails(data.bankDetails);
         if (onSelectAccount) {
@@ -242,6 +246,7 @@ export function SmartScannerModal({
   vendors = [],
   costCenters = [],
   onAddVendor,
+  onUpdateVendor,
 }: SmartScannerModalProps) {
   // Queue of uploaded receipts
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -1303,14 +1308,24 @@ export function SmartScannerModal({
                               storedBank={storedBank}
                               vendors={vendors}
                               onAddVendor={onAddVendor}
+                              onUpdateVendor={onUpdateVendor}
                               onUpdateBankDetails={(newBank) => {
                                 setQueue((prev) =>
                                   prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                                 );
                               }}
-                              onSelectAccount={({ bankDetails }) => {
+                              onSelectAccount={({ bankDetails, vendorName, cuit }) => {
                                 setQueue((prev) =>
-                                  prev.map((q) => (q.id === item.id ? { ...q, bankDetails } : q))
+                                  prev.map((q) =>
+                                    q.id === item.id
+                                      ? {
+                                          ...q,
+                                          bankDetails,
+                                          vendor: vendorName || q.vendor,
+                                          cuit: cuit || q.cuit,
+                                        }
+                                      : q
+                                  )
                                 );
                               }}
                             />
@@ -1640,14 +1655,24 @@ export function SmartScannerModal({
                             storedBank={storedBank}
                             vendors={vendors}
                             onAddVendor={onAddVendor}
+                            onUpdateVendor={onUpdateVendor}
                             onUpdateBankDetails={(newBank) => {
                               setQueue((prev) =>
                                 prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                               );
                             }}
-                            onSelectAccount={({ bankDetails }) => {
+                            onSelectAccount={({ bankDetails, vendorName, cuit }) => {
                               setQueue((prev) =>
-                                prev.map((q) => (q.id === item.id ? { ...q, bankDetails } : q))
+                                prev.map((q) =>
+                                  q.id === item.id
+                                    ? {
+                                        ...q,
+                                        bankDetails,
+                                        vendor: vendorName || q.vendor,
+                                        cuit: cuit || q.cuit,
+                                      }
+                                    : q
+                                )
                               );
                             }}
                           />

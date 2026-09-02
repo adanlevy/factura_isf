@@ -339,15 +339,19 @@ export function normalizeVendorBankDetails(vendor: Vendor): Vendor {
     }
   }
 
+  const normalizedCuit = (vendor.cuit || bankDetails.cuitCuil || '').trim();
+
   return {
     ...vendor,
+    cuit: normalizedCuit,
     bankDetails: {
       ...bankDetails,
       bankName: bankName,
       accountType,
+      currency: bankDetails.currency || '$Ar',
       cbuCvu: rawCbu,
       alias: rawAlias,
-      cuitCuil: bankDetails.cuitCuil || vendor.cuit || '',
+      cuitCuil: normalizedCuit,
       accountHolder: bankDetails.accountHolder || vendor.name || '',
     },
   };

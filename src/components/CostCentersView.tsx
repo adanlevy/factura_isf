@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { CostCenter, Expense } from '../types';
 import { GoogleDriveIcon, GoogleDriveLinkButton } from './GoogleDriveIcon';
-import { sanitizeCostCenter } from '../utils/helpers';
+import { sanitizeCostCenter, matchesSearch } from '../utils/helpers';
 import { fetchDriveFolderInfo } from '../utils/googleWorkspace';
 
 interface CostCentersViewProps {
@@ -110,14 +110,9 @@ export function CostCentersView({
   }, [costCenters]);
 
   const filteredCostCenters = useMemo(() => {
-    const term = searchTerm.toLowerCase().trim();
-    if (!term) return cleanCostCenters;
-    return cleanCostCenters.filter(
-      (cc) =>
-        cc.name.toLowerCase().includes(term) ||
-        (cc.code && cc.code.toLowerCase().includes(term)) ||
-        (cc.driveFolder && cc.driveFolder.toLowerCase().includes(term)) ||
-        (cc.driveUrl && cc.driveUrl.toLowerCase().includes(term))
+    if (!searchTerm.trim()) return cleanCostCenters;
+    return cleanCostCenters.filter((cc) =>
+      matchesSearch([cc.name, cc.code, cc.driveFolder, cc.driveUrl, cc.notifyEmails], searchTerm)
     );
   }, [cleanCostCenters, searchTerm]);
 

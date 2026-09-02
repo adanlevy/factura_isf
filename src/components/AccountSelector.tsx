@@ -10,7 +10,7 @@ import {
   Edit3,
 } from 'lucide-react';
 import { UserBankDetails, UserProfile, Vendor, ExpensePaymentType } from '../types';
-import { formatCuit } from '../utils/helpers';
+import { formatCuit, matchesSearch } from '../utils/helpers';
 import { VendorFormModal } from './VendorFormModal';
 
 export interface AccountOption {
@@ -200,8 +200,7 @@ export function AccountSelector({
 
   // Filter accounts and prioritize by paymentType (Reintegro vs Pago Proveedor)
   const filteredAccounts = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    if (!q) {
+    if (!search.trim()) {
       if (paymentType === 'REINTEGRO') {
         return allAccounts;
       }
@@ -212,10 +211,25 @@ export function AccountSelector({
       });
     }
 
-    return allAccounts.filter((acc) => {
-      const text = `${acc.name} ${acc.line1} ${acc.line2} ${acc.cuit || ''} ${acc.bankDetails.alias || ''} ${acc.bankDetails.cbuCvu || ''} ${acc.bankDetails.accountHolder || ''}`.toLowerCase();
-      return text.includes(q);
-    });
+    return allAccounts.filter((acc) =>
+      matchesSearch(
+        [
+          acc.name,
+          acc.vendorName,
+          acc.cuit,
+          acc.line1,
+          acc.line2,
+          acc.category,
+          acc.notes,
+          acc.bankDetails.alias,
+          acc.bankDetails.cbuCvu,
+          acc.bankDetails.cuitCuil,
+          acc.bankDetails.bankName,
+          acc.bankDetails.accountHolder,
+        ],
+        search
+      )
+    );
   }, [allAccounts, search, paymentType]);
 
   const handleSelectAccountItem = (acc: AccountOption) => {
@@ -465,7 +479,6 @@ export function AccountSelector({
           id: '',
           name: search.trim() ? search.trim() : '',
           cuit: '',
-          category: 'Varios',
           bankDetails: {
             accountHolder: search.trim() ? search.trim() : '',
             bankName: '',
@@ -491,7 +504,6 @@ export function AccountSelector({
             },
             vendorName: savedVendor.name,
             cuit: savedVendor.cuit,
-            category: savedVendor.category,
             notes: savedVendor.notes,
           });
           setIsNewVendorModalOpen(false);
@@ -508,31 +520,32 @@ export function AccountSelector({
           id: matchedVendor?.id || '',
           name: bankDetails?.accountHolder || vendorName || '',
           cuit: bankDetails?.cuitCuil || cuit || '',
-          category: matchedVendor?.category || 'Varios',
           notes: matchedVendor?.notes || '',
           bankDetails: bankDetails || matchedVendor?.bankDetails,
         }}
         onClose={() => setIsEditVendorModalOpen(false)}
         onSave={(savedVendor) => {
-          if (onUpdateVendor && matchedVendor) {
+          if (matchedVendor && onUpdateVendor) {
             onUpdateVendor({
               ...matchedVendor,
               ...savedVendor,
               id: matchedVendor.id,
             });
+          } else if (onAddVendor) {
+            onAddVendor(savedVendor);
           }
           onSelectAccount({
             bankDetails: savedVendor.bankDetails || {
               accountHolder: savedVendor.name,
               bankName: '',
               accountType: 'Indefinido',
+              currency: '$Ar',
               cbuCvu: '',
               alias: '',
               cuitCuil: savedVendor.cuit || '',
             },
             vendorName: savedVendor.name,
             cuit: savedVendor.cuit,
-            category: savedVendor.category,
             notes: savedVendor.notes,
           });
           setIsEditVendorModalOpen(false);

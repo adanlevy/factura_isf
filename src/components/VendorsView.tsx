@@ -17,7 +17,7 @@ import {
   Receipt,
 } from 'lucide-react';
 import { Vendor, Expense } from '../types';
-import { formatCurrency, formatDate, formatTransferDetails } from '../utils/helpers';
+import { formatCurrency, formatDate, formatTransferDetails, matchesSearch } from '../utils/helpers';
 import { normalizeVendorBankDetails } from '../utils/cloudSync';
 import { VendorFormModal } from './VendorFormModal';
 
@@ -32,7 +32,7 @@ export type VendorSortOption =
 interface VendorsViewProps {
   vendors: Vendor[];
   expenses: Expense[];
-  availableCategories: string[];
+  availableCategories?: string[];
   onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
   onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => void;
   onUpdateVendor: (vendor: Vendor) => void;
@@ -43,7 +43,6 @@ interface VendorsViewProps {
 export function VendorsView({
   vendors,
   expenses,
-  availableCategories,
   onAddVendor,
   onBatchAddVendors,
   onUpdateVendor,
@@ -51,7 +50,7 @@ export function VendorsView({
   onViewVendorExpenses,
 }: VendorsViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortOption, setSortOption] = useState<VendorSortOption>('name-asc');
+  const [sortOption, setSortOption] = useState<VendorSortOption>('createdAt-desc');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
@@ -75,21 +74,23 @@ export function VendorsView({
 
   // Filtered vendors
   const filteredVendors = useMemo(() => {
-    return vendors.filter((v) => {
-      if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const matchName = v.name.toLowerCase().includes(term);
-        const matchCuit = (v.cuit || '').toLowerCase().includes(term);
-        const matchEmail = (v.contactEmail || '').toLowerCase().includes(term);
-        const matchNotes = (v.notes || '').toLowerCase().includes(term);
-        const matchAlias = (v.bankDetails?.alias || '').toLowerCase().includes(term);
-        const matchCbu = (v.bankDetails?.cbuCvu || '').toLowerCase().includes(term);
-        if (!matchName && !matchCuit && !matchEmail && !matchNotes && !matchAlias && !matchCbu) {
-          return false;
-        }
-      }
-      return true;
-    });
+    if (!searchTerm.trim()) return vendors;
+    return vendors.filter((v) =>
+      matchesSearch(
+        [
+          v.name,
+          v.cuit,
+          v.contactEmail,
+          v.notes,
+          v.bankDetails?.alias,
+          v.bankDetails?.cbuCvu,
+          v.bankDetails?.cuitCuil,
+          v.bankDetails?.bankName,
+          v.bankDetails?.accountHolder,
+        ],
+        searchTerm
+      )
+    );
   }, [vendors, searchTerm]);
 
   // Sorted vendors
@@ -309,7 +310,16 @@ export function VendorsView({
                     </div>
                     <div className="truncate">
                       <span className="text-slate-400 font-medium">Tipo:</span>{' '}
-                      <span className="font-bold text-slate-800">{bank?.accountType || 'Indefinido'}</span>
+                      <span className="font-bold text-slate-800">
+                        {bank?.accountType || 'Indefinido'}
+                        {bank?.currency ? (
+                          <span className={`ml-1 px-1 py-0.2 rounded text-[10px] font-bold ${
+                            bank.currency === 'u$' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {bank.currency}
+                          </span>
+                        ) : null}
+                      </span>
                     </div>
                     <div className="col-span-2 truncate">
                       <span className="text-slate-400 font-medium">Alias:</span>{' '}
@@ -372,7 +382,6 @@ export function VendorsView({
       {isImportModalOpen && (
         <VendorImportModal
           isOpen={isImportModalOpen}
-          availableCategories={availableCategories}
           existingVendors={vendors}
           onClose={() => setIsImportModalOpen(false)}
           onImport={(importedVendors) => {
@@ -518,7 +527,6 @@ export function VendorsView({
 interface VendorImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  availableCategories: string[];
   existingVendors: Vendor[];
   onImport: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => void;
 }
@@ -526,12 +534,10 @@ interface VendorImportModalProps {
 function VendorImportModal({
   isOpen,
   onClose,
-  availableCategories,
   existingVendors,
   onImport,
 }: VendorImportModalProps) {
   const [rawText, setRawText] = useState('');
-  const [defaultCategory, setDefaultCategory] = useState<string>(availableCategories[0] || 'Alimentos y Viáticos');
   const [parsedItems, setParsedItems] = useState<Omit<Vendor, 'id' | 'createdAt'>[]>([]);
 
   if (!isOpen) return null;
@@ -565,7 +571,7 @@ function VendorImportModal({
 
     const header = rows[0].map((h) => h.toLowerCase());
     const hasHeader = header.some((h) =>
-      ['nombre', 'razon', 'razón', 'proveedor', 'empresa', 'cuit', 'cuil', 'rubro', 'categoria', 'categoría', 'cbu', 'alias', 'email'].some(
+      ['nombre', 'razon', 'razón', 'proveedor', 'empresa', 'cuit', 'cuil', 'cbu', 'alias', 'email'].some(
         (k) => h.includes(k)
       )
     );
@@ -573,7 +579,6 @@ function VendorImportModal({
     const colMap = {
       name: -1,
       cuit: -1,
-      category: -1,
       contactEmail: -1,
       phone: -1,
       address: -1,
@@ -593,8 +598,6 @@ function VendorImportModal({
           colMap.name = idx;
         } else if ((h.includes('cuit') || h.includes('cuil') || h.includes('tax')) && colMap.cuit === -1) {
           colMap.cuit = idx;
-        } else if ((h.includes('rubro') || h.includes('categoria') || h.includes('categoría') || h.includes('tipo')) && colMap.category === -1) {
-          colMap.category = idx;
         } else if ((h.includes('email') || h.includes('correo') || h.includes('mail')) && colMap.contactEmail === -1) {
           colMap.contactEmail = idx;
         } else if ((h.includes('telefono') || h.includes('teléfono') || h.includes('celular') || h.includes('movil')) && colMap.phone === -1) {
@@ -623,7 +626,6 @@ function VendorImportModal({
 
       let name = colMap.name !== -1 ? r[colMap.name] : r[0];
       let cuit = colMap.cuit !== -1 ? r[colMap.cuit] : '';
-      let category = colMap.category !== -1 ? r[colMap.category] : '';
       let contactEmail = colMap.contactEmail !== -1 ? r[colMap.contactEmail] : '';
       let phone = colMap.phone !== -1 ? r[colMap.phone] : '';
       let address = colMap.address !== -1 ? r[colMap.address] : '';
@@ -648,7 +650,6 @@ function VendorImportModal({
         id: 'temp',
         name: name.trim(),
         cuit: cuit.trim() || undefined,
-        category: category.trim() || defaultCategory || 'General',
         contactEmail: contactEmail.trim() || undefined,
         phone: phone.trim() || undefined,
         address: address.trim() || undefined,
@@ -669,7 +670,6 @@ function VendorImportModal({
       parsed.push({
         name: norm.name,
         cuit: norm.cuit,
-        category: norm.category,
         contactEmail: norm.contactEmail,
         phone: norm.phone,
         address: norm.address,
@@ -724,25 +724,6 @@ function VendorImportModal({
         </div>
 
         <div className="space-y-4 flex-1 overflow-y-auto pr-1">
-          {/* Default Category selector */}
-          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-            <span className="font-semibold text-slate-700">Rubro por defecto (si la fila no lo especifica):</span>
-            <select
-              value={defaultCategory}
-              onChange={(e) => {
-                setDefaultCategory(e.target.value);
-                if (rawText) handleTextChange(rawText);
-              }}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-800 outline-hidden"
-            >
-              {availableCategories.map((cat) => (
-                <option key={`import-cat-${cat}`} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {/* Text Area & File Input */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -763,7 +744,7 @@ function VendorImportModal({
               rows={4}
               value={rawText}
               onChange={(e) => handleTextChange(e.target.value)}
-              placeholder={`Nombre\tCUIT\tRubro\tEmail\tCBU\tAlias\nLa Cabrera Norte\t30-71089945-8\tAlimentos y Viáticos\tfacturacion@lacabrera.com\t0720198220000034509123\tlacabrera.norte\nEstación YPF\t30-54668997-9\tTransporte, Combustible\tcontacto@ypf.com.ar\t\t`}
+              placeholder={`Nombre\tCUIT\tEmail\tCBU\tAlias\nLa Cabrera Norte\t30-71089945-8\tfacturacion@lacabrera.com\t0720198220000034509123\tlacabrera.norte\nEstación YPF\t30-54668997-9\tcontacto@ypf.com.ar\t\t`}
               className="w-full p-3 rounded-2xl border border-slate-200 text-xs font-mono bg-slate-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-hidden"
             />
           </div>
@@ -784,7 +765,6 @@ function VendorImportModal({
                     <tr>
                       <th className="p-2">Proveedor / Razón Social</th>
                       <th className="p-2">CUIT</th>
-                      <th className="p-2">Rubro</th>
                       <th className="p-2">Tipo de Cuenta</th>
                       <th className="p-2">Banco</th>
                       <th className="p-2">CBU / Alias</th>
@@ -802,7 +782,6 @@ function VendorImportModal({
                             {exists && <span className="ml-1 text-[9px] text-amber-700 bg-amber-100 px-1 rounded">Ya existe</span>}
                           </td>
                           <td className="p-2 text-slate-600 font-mono">{item.cuit || '-'}</td>
-                          <td className="p-2 text-slate-600">{item.category}</td>
                           <td className="p-2 text-slate-700 font-medium">{item.bankDetails?.accountType || 'Indefinido'}</td>
                           <td className="p-2 text-slate-700 font-medium">{item.bankDetails?.bankName || '-'}</td>
                           <td className="p-2 text-slate-600 font-mono truncate max-w-[120px]">

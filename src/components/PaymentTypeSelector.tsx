@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
+import { matchesSearch } from '../utils/helpers';
 import { AccountSelector } from './AccountSelector';
 
 interface PaymentTypeSelectorProps {
@@ -27,6 +28,7 @@ interface PaymentTypeSelectorProps {
   reimbursementStatus?: ReimbursementStatus;
   onChangeReimbursementStatus?: (status: ReimbursementStatus) => void;
   onSelectVendorName?: (name: string) => void;
+  onChangeCuit?: (cuit: string) => void;
   isCompact?: boolean;
   vendorNotes?: string;
   onChangeVendorNotes?: (notes: string) => void;
@@ -49,6 +51,7 @@ export function PaymentTypeSelector({
   reimbursementStatus = 'PENDING',
   onChangeReimbursementStatus,
   onSelectVendorName,
+  onChangeCuit,
   isCompact = false,
   vendorNotes,
   onChangeVendorNotes,
@@ -146,18 +149,17 @@ export function PaymentTypeSelector({
 
   // Filter suggestions based on query
   const filteredSuggestions = useMemo(() => {
-    const q = (searchQuery || bankDetails.accountHolder || '').toLowerCase().trim();
+    const q = (searchQuery || bankDetails.accountHolder || '').trim();
     if (!q) return suggestedAccounts.slice(0, 8);
 
-    return suggestedAccounts.filter(
-      (acc) =>
-        acc.name.toLowerCase().includes(q) ||
-        (acc.accountHolder && acc.accountHolder.toLowerCase().includes(q)) ||
-        (acc.alias && acc.alias.toLowerCase().includes(q)) ||
-        (acc.cuit && acc.cuit.includes(q)) ||
-        (acc.bankName && acc.bankName.toLowerCase().includes(q)) ||
-        (acc.cbuCvu && acc.cbuCvu.includes(q))
-    ).slice(0, 10);
+    return suggestedAccounts
+      .filter((acc) =>
+        matchesSearch(
+          [acc.name, acc.accountHolder, acc.alias, acc.cuit, acc.bankName, acc.cbuCvu, acc.notes],
+          q
+        )
+      )
+      .slice(0, 10);
   }, [suggestedAccounts, searchQuery, bankDetails.accountHolder]);
 
   const handleApplySuggestion = (acc: typeof suggestedAccounts[0]) => {
@@ -542,8 +544,14 @@ export function PaymentTypeSelector({
               onAddVendor={onAddVendor}
               onUpdateVendor={onUpdateVendor}
               placeholder="Seleccionar cuenta..."
-              onSelectAccount={({ bankDetails: newBank, notes: newNotes }) => {
+              onSelectAccount={({ bankDetails: newBank, vendorName: newVendor, cuit: newCuit, notes: newNotes }) => {
                 onChangeBankDetails(newBank);
+                if (newVendor && onSelectVendorName) {
+                  onSelectVendorName(newVendor);
+                }
+                if (newCuit !== undefined && onChangeCuit) {
+                  onChangeCuit(newCuit);
+                }
                 if (newNotes !== undefined && onChangeVendorNotes) {
                   onChangeVendorNotes(newNotes);
                 }

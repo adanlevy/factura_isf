@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Tag, Plus, Trash2, Edit2, Check, X, Search, FileSpreadsheet, Layers } from 'lucide-react';
 import { Expense } from '../types';
-import { formatCurrency } from '../utils/helpers';
+import { formatCurrency, matchesSearch } from '../utils/helpers';
 
 interface CategoriesViewProps {
   categories: string[];
@@ -42,9 +42,12 @@ export function CategoriesView({
   }, [categories, expenses]);
 
   const filteredCategories = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return [...categories].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    }
     return categories
-      .filter((cat) => cat.toLowerCase().includes(searchTerm.toLowerCase().trim()))
-      .sort((a, b) => a.localeCompare(b));
+      .filter((cat) => matchesSearch(cat, searchTerm))
+      .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
   }, [categories, searchTerm]);
 
   const handleCreate = (e: React.FormEvent) => {

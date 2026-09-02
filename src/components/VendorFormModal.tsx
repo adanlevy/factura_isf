@@ -77,9 +77,36 @@ export function VendorFormModal({
         setName(initialData.name || '');
         setCuit(initialData.cuit || '');
         setNotes(initialData.notes || '');
+
+        // Normalize legacy account type if needed
+        let initialAccType: 'Indefinido' | 'Billetera' | 'Caja de Ahorro' | 'Cuenta Corriente' = 'Indefinido';
+        const rawType = (initialData.bankDetails?.accountType || '').toLowerCase();
+        if (rawType.includes('billetera') || rawType.includes('cvu') || rawType.includes('virtual')) {
+          initialAccType = 'Billetera';
+        } else if (rawType.includes('corriente')) {
+          initialAccType = 'Cuenta Corriente';
+        } else if (rawType.includes('ahorro')) {
+          initialAccType = 'Caja de Ahorro';
+        } else if (rawType === 'indefinido') {
+          initialAccType = 'Indefinido';
+        }
+
+        // Normalize currency
+        let initialCurrency: '$Ar' | 'u$' = '$Ar';
+        if (
+          initialData.bankDetails?.currency === 'u$' ||
+          initialData.bankDetails?.currency === 'USD' ||
+          rawType.includes('usd') ||
+          rawType.includes('u$') ||
+          rawType.includes('dolar')
+        ) {
+          initialCurrency = 'u$';
+        }
+
         setBankDetails({
           bankName: initialData.bankDetails?.bankName || '',
-          accountType: initialData.bankDetails?.accountType || 'Indefinido',
+          accountType: initialAccType,
+          currency: initialCurrency,
           cbuCvu: initialData.bankDetails?.cbuCvu || '',
           alias: initialData.bankDetails?.alias || '',
           cuitCuil: initialData.bankDetails?.cuitCuil || initialData.cuit || '',
@@ -92,6 +119,7 @@ export function VendorFormModal({
         setBankDetails({
           bankName: '',
           accountType: 'Indefinido',
+          currency: '$Ar',
           cbuCvu: '',
           alias: '',
           cuitCuil: '',
@@ -198,26 +226,32 @@ export function VendorFormModal({
               bankDetails: { ...bankDetails },
             });
 
-            if (data.name && (!name || name === 'Nuevo Proveedor')) setName(data.name);
-            if (data.cuit) {
-              setCuit(data.cuit);
-              setBankDetails((prev) => ({ ...prev, cuitCuil: data.cuit }));
+            const bankName = data.bankName || data.bankDetails?.bankName || '';
+            const accountType = data.accountType || data.bankDetails?.accountType || '';
+            const cbuCvu = data.cbuCvu || data.bankDetails?.cbuCvu || '';
+            const alias = data.alias || data.bankDetails?.alias || '';
+            const cuitVal = data.cuit || data.bankDetails?.cuitCuil || '';
+            const accountHolder = data.accountHolder || data.name || data.bankDetails?.accountHolder || '';
+
+            if (data.name && (!name || name === 'Nuevo Proveedor' || name.trim() === '')) {
+              setName(data.name);
+            }
+            if (cuitVal) {
+              setCuit(cuitVal);
             }
             if (data.notes) {
               setNotes((prev) => (prev ? `${prev} | ${data.notes}` : data.notes));
             }
 
-            if (data.bankDetails) {
-              setBankDetails((prev) => ({
-                ...prev,
-                bankName: data.bankDetails.bankName || prev.bankName,
-                accountType: data.bankDetails.accountType || prev.accountType,
-                cbuCvu: data.bankDetails.cbuCvu || prev.cbuCvu,
-                alias: data.bankDetails.alias || prev.alias,
-                cuitCuil: data.bankDetails.cuitCuil || data.cuit || prev.cuitCuil,
-                accountHolder: data.name || data.bankDetails.accountHolder || name || prev.accountHolder,
-              }));
-            }
+            setBankDetails((prev) => ({
+              ...prev,
+              bankName: bankName || prev.bankName,
+              accountType: accountType || prev.accountType,
+              cbuCvu: cbuCvu || prev.cbuCvu,
+              alias: alias || prev.alias,
+              cuitCuil: cuitVal || prev.cuitCuil,
+              accountHolder: accountHolder || name || prev.accountHolder,
+            }));
 
             setDocFeedback({
               type: 'success',
@@ -281,19 +315,21 @@ export function VendorFormModal({
         bankDetails.accountHolder?.trim()
     );
 
+    const cleanCuit = cuit.trim();
+
     const payload: Omit<Vendor, 'id' | 'createdAt'> = {
       name: name.trim(),
-      category: category.trim() || undefined,
-      cuit: cuit.trim() || bankDetails.cuitCuil?.trim() || undefined,
+      cuit: cleanCuit || undefined,
       notes: notes.trim() || undefined,
       bankDetails: hasAnyBank
         ? {
             bankName: bankDetails.bankName.trim(),
             accountType: bankDetails.accountType || 'Indefinido',
+            currency: bankDetails.currency || '$Ar',
             cbuCvu: bankDetails.cbuCvu.trim(),
             alias: bankDetails.alias.trim(),
-            cuitCuil: (bankDetails.cuitCuil || cuit).trim(),
-            accountHolder: (bankDetails.accountHolder || name).trim(),
+            cuitCuil: cleanCuit || (bankDetails.cuitCuil || '').trim(),
+            accountHolder: name.trim() || bankDetails.accountHolder?.trim() || '',
           }
         : undefined,
     };
@@ -323,9 +359,11 @@ export function VendorFormModal({
       return;
     }
 
-    // If only CUIT collision exists, require explicit user confirmation / approval
+    // If CUIT collision exists, block until user checks the approval box below the CUIT field
     if (validation.cuitCollision && !isCuitApproved) {
-      setShowCuitConfirmDialog(true);
+      alert(
+        `Coincidencia de CUIT detectada: El CUIT ${validation.cuitCollision.cuit} ya pertenece a "${validation.cuitCollision.vendorName}". Para guardar, debes tildar la casilla de confirmación ubicada debajo del campo CUIT.`
+      );
       return;
     }
 
@@ -474,7 +512,6 @@ export function VendorFormModal({
                   type="button"
                   onClick={() => {
                     setName(prevValuesBeforeOcr.name);
-                    setCategory(prevValuesBeforeOcr.category);
                     setCuit(prevValuesBeforeOcr.cuit);
                     setNotes(prevValuesBeforeOcr.notes);
                     setBankDetails(prevValuesBeforeOcr.bankDetails);
@@ -490,60 +527,35 @@ export function VendorFormModal({
           )}
 
           {/* Validation Errors & Alerts */}
-          <div className="space-y-2">
-            {validation.aliasCollision && (
-              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start space-x-2.5 animate-in fade-in">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-extrabold text-rose-950">Error: Alias bancario duplicado (Prohibido)</p>
-                  <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
-                    El Alias <strong>&quot;{validation.aliasCollision.alias}&quot;</strong> ya está registrado para el proveedor{' '}
-                    <strong>&quot;{validation.aliasCollision.vendorName}&quot;</strong>. Los Alias bancarios deben ser únicos.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {validation.cbuCollision && (
-              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start space-x-2.5 animate-in fade-in">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-extrabold text-rose-950">Error: CBU/CVU bancario duplicado (Prohibido)</p>
-                  <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
-                    El CBU/CVU <strong>&quot;{validation.cbuCollision.cbu}&quot;</strong> ya está registrado para el proveedor{' '}
-                    <strong>&quot;{validation.cbuCollision.vendorName}&quot;</strong>. Los CBU/CVU no pueden duplicarse.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {validation.cuitCollision && !validation.hasBlockingError && (
-              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2 animate-in fade-in">
-                <div className="flex items-start space-x-2.5">
-                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+          {(validation.aliasCollision || validation.cbuCollision) && (
+            <div className="space-y-2">
+              {validation.aliasCollision && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start space-x-2.5 animate-in fade-in">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-extrabold text-amber-950">Coincidencia de CUIT detectada</p>
-                    <p className="text-[11px] text-amber-900 mt-0.5 leading-relaxed">
-                      El CUIT <strong>{validation.cuitCollision.cuit}</strong> ya se encuentra registrado en el catálogo bajo el proveedor{' '}
-                      <strong>&quot;{validation.cuitCollision.vendorName}&quot;</strong>.
+                    <p className="font-extrabold text-rose-950">Error: Alias bancario duplicado (Prohibido)</p>
+                    <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
+                      El Alias <strong>&quot;{validation.aliasCollision.alias}&quot;</strong> ya está registrado para el proveedor{' '}
+                      <strong>&quot;{validation.aliasCollision.vendorName}&quot;</strong>. Los Alias bancarios deben ser únicos.
                     </p>
                   </div>
                 </div>
+              )}
 
-                <label className="flex items-center space-x-2 p-2 bg-white/80 rounded-xl border border-amber-200 cursor-pointer text-amber-900 font-semibold text-[11px]">
-                  <input
-                    type="checkbox"
-                    checked={isCuitApproved}
-                    onChange={(e) => setIsCuitApproved(e.target.checked)}
-                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-amber-300"
-                  />
-                  <span>
-                    He verificado la coincidencia y apruebo registrar este proveedor con el mismo CUIT (misma empresa/titular con diferente cuenta).
-                  </span>
-                </label>
-              </div>
-            )}
-          </div>
+              {validation.cbuCollision && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start space-x-2.5 animate-in fade-in">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-rose-950">Error: CBU/CVU bancario duplicado (Prohibido)</p>
+                    <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
+                      El CBU/CVU <strong>&quot;{validation.cbuCollision.cbu}&quot;</strong> ya está registrado para el proveedor{' '}
+                      <strong>&quot;{validation.cbuCollision.vendorName}&quot;</strong>. Los CBU/CVU no pueden duplicarse.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <form id="vendor-form-modal-form" onSubmit={handleSubmit} className="space-y-4">
             {/* General Info */}
@@ -583,7 +595,7 @@ export function VendorFormModal({
                 )}
               </div>
 
-              <div>
+              <div className="sm:col-span-2">
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">CUIT / CUIL</label>
                 <input
                   type="text"
@@ -595,7 +607,9 @@ export function VendorFormModal({
                     setIsCuitApproved(false);
                   }}
                   placeholder="Ej: 30-12345678-9"
-                  className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
+                  className={`w-full px-3.5 py-2 rounded-2xl border text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition ${
+                    validation.cuitCollision ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200'
+                  }`}
                 />
                 {suggestedCuit && suggestedCuit.trim() && cuit.replace(/[^0-9]/g, '') !== suggestedCuit.replace(/[^0-9]/g, '') && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 animate-in fade-in">
@@ -617,17 +631,34 @@ export function VendorFormModal({
                     </button>
                   </div>
                 )}
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Rubro / Categoría sugerida</label>
-                <input
-                  type="text"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  placeholder="Ej: Ferretería, Honorarios, Transporte..."
-                  className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
-                />
+                {/* Cartel de Coincidencia de CUIT colocado directamente debajo del campo del CUIT */}
+                {validation.cuitCollision && (
+                  <div className="mt-2.5 p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-2 animate-in fade-in">
+                    <div className="flex items-start space-x-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-extrabold text-amber-950">Coincidencia de CUIT detectada</p>
+                        <p className="text-[11px] text-amber-900 mt-0.5 leading-relaxed">
+                          El CUIT <strong>{validation.cuitCollision.cuit}</strong> ya se encuentra registrado en el catálogo bajo el proveedor{' '}
+                          <strong>&quot;{validation.cuitCollision.vendorName}&quot;</strong>.
+                        </p>
+                      </div>
+                    </div>
+
+                    <label className="flex items-center space-x-2.5 p-2 bg-white/90 rounded-xl border border-amber-200 hover:border-amber-400 cursor-pointer text-amber-950 font-semibold text-[11px] transition">
+                      <input
+                        type="checkbox"
+                        checked={isCuitApproved}
+                        onChange={(e) => setIsCuitApproved(e.target.checked)}
+                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-amber-300 cursor-pointer shrink-0"
+                      />
+                      <span>
+                        He verificado la coincidencia y autorizo registrar este proveedor con el mismo CUIT (misma empresa/titular con diferente cuenta).
+                      </span>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -680,41 +711,43 @@ export function VendorFormModal({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Banco o Billetera</label>
-                  <input
-                    type="text"
-                    value={bankDetails.bankName || ''}
-                    onChange={(e) => setBankDetails({ ...bankDetails, bankName: e.target.value })}
-                    placeholder="Ej: Galicia, Santander, Mercado Pago..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition"
-                  />
-                </div>
+                <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">Banco o Billetera</label>
+                    <input
+                      type="text"
+                      value={bankDetails.bankName || ''}
+                      onChange={(e) => setBankDetails({ ...bankDetails, bankName: e.target.value })}
+                      placeholder="Ej: Galicia, Santander, Mercado Pago..."
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Tipo de Cuenta</label>
-                  <select
-                    value={bankDetails.accountType || 'Indefinido'}
-                    onChange={(e) => setBankDetails({ ...bankDetails, accountType: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition cursor-pointer"
-                  >
-                    <option value="Indefinido">Indefinido / Billetera</option>
-                    <option value="Caja de Ahorro $">Caja de Ahorro en Pesos ($)</option>
-                    <option value="Cuenta Corriente $">Cuenta Corriente en Pesos ($)</option>
-                    <option value="Caja de Ahorro USD">Caja de Ahorro en Dólares (US$)</option>
-                    <option value="Cuenta Corriente USD">Cuenta Corriente en Dólares (US$)</option>
-                  </select>
-                </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">Tipo de Cuenta</label>
+                    <select
+                      value={bankDetails.accountType || 'Indefinido'}
+                      onChange={(e) => setBankDetails({ ...bankDetails, accountType: e.target.value })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition cursor-pointer font-medium text-slate-800"
+                    >
+                      <option value="Indefinido">Indefinido</option>
+                      <option value="Billetera">Billetera</option>
+                      <option value="Caja de Ahorro">Caja de Ahorro</option>
+                      <option value="Cuenta Corriente">Cuenta Corriente</option>
+                    </select>
+                  </div>
 
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Titular de la Cuenta</label>
-                  <input
-                    type="text"
-                    value={bankDetails.accountHolder || ''}
-                    onChange={(e) => setBankDetails({ ...bankDetails, accountHolder: e.target.value })}
-                    placeholder={name || 'Nombre o Razón social del titular'}
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition"
-                  />
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">Moneda de la Cuenta</label>
+                    <select
+                      value={bankDetails.currency || '$Ar'}
+                      onChange={(e) => setBankDetails({ ...bankDetails, currency: e.target.value as '$Ar' | 'u$' })}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition cursor-pointer font-bold text-indigo-900"
+                    >
+                      <option value="$Ar">$Ar (Pesos)</option>
+                      <option value="u$">u$ (Dólares)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
@@ -747,8 +780,15 @@ export function VendorFormModal({
           <button
             type="submit"
             form="vendor-form-modal-form"
-            disabled={validation.hasBlockingError}
+            disabled={validation.hasBlockingError || (Boolean(validation.cuitCollision) && !isCuitApproved)}
             className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95 flex items-center space-x-1.5"
+            title={
+              validation.hasBlockingError
+                ? 'Corrige los errores de CBU/Alias duplicado para continuar'
+                : validation.cuitCollision && !isCuitApproved
+                ? 'Debes tildar la casilla de confirmación de CUIT debajo del campo CUIT para guardar'
+                : undefined
+            }
           >
             <Check className="w-4 h-4" />
             <span>{initialData ? 'Guardar Cambios' : 'Crear Proveedor'}</span>

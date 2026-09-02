@@ -713,6 +713,12 @@ export function EditExpenseModal({
             onUpdateVendor={onUpdateVendor}
             vendorName={formData.vendor}
             cuit={formData.cuit}
+            onSelectVendorName={(newName) => {
+              setFormData((prev) => (prev ? { ...prev, vendor: newName } : prev));
+            }}
+            onChangeCuit={(newCuit) => {
+              setFormData((prev) => (prev ? { ...prev, cuit: newCuit } : prev));
+            }}
             existingExpenses={existingExpenses}
             reimbursementStatus={formData.reimbursementStatus}
             onChangeReimbursementStatus={allowStatusChange ? handleReimbursementStatusChange : undefined}

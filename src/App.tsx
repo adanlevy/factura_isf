@@ -296,13 +296,92 @@ export default function App() {
     showToast(`✅ Se importaron ${initialized.length} proveedores exitosamente.`);
   };
 
-  const handleUpdateVendor = (updatedVendor: Vendor) => {
+  const handleUpdateVendor = async (updatedVendor: Vendor) => {
+    const prevVendor = vendors.find((v) => v.id === updatedVendor.id);
+    const prevName = (prevVendor?.name || '').trim().toLowerCase();
+    const prevCuitDigits = (prevVendor?.cuit || prevVendor?.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
+    const prevCbu = (prevVendor?.bankDetails?.cbuCvu || '').trim();
+    const prevAlias = (prevVendor?.bankDetails?.alias || '').trim().toLowerCase();
+
+    const newName = (updatedVendor.name || '').trim();
+    const newCuit = (updatedVendor.cuit || updatedVendor.bankDetails?.cuitCuil || '').trim();
+    const newCuitDigits = newCuit.replace(/[^0-9]/g, '');
+
+    // 1. Update vendors state and central persistence
     setVendors((prev) => {
       const next = prev.map((v) => (v.id === updatedVendor.id ? updatedVendor : v));
       saveCentralVendors(next);
       return next;
     });
-    showToast(`✅ Proveedor "${updatedVendor.name}" actualizado.`);
+
+    // 2. Cascade update matching expenses
+    const updatedExpensesList: Expense[] = [];
+    const updatedExpenses = expenses.map((e) => {
+      const isPersonalReimbursement = Boolean(
+        (e.paymentType === 'REINTEGRO' || e.paymentMethod === 'Reintegro') &&
+        e.submittedByName?.trim()
+      );
+      if (isPersonalReimbursement) return e;
+
+      const expVendor = (e.vendor || '').trim().toLowerCase();
+      const expCuitDigits = (e.cuit || e.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
+      const expCbu = (e.bankDetails?.cbuCvu || '').trim();
+      const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
+      const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
+
+      const isMatch = Boolean(
+        (prevName && expVendor === prevName) ||
+        (newName && expVendor === newName.toLowerCase()) ||
+        (prevName && expHolder && expHolder === prevName) ||
+        (prevCuitDigits && expCuitDigits && prevCuitDigits === expCuitDigits) ||
+        (newCuitDigits && expCuitDigits && newCuitDigits === expCuitDigits) ||
+        (prevCbu && expCbu && prevCbu === expCbu) ||
+        (prevAlias && expAlias && prevAlias === expAlias)
+      );
+
+      if (isMatch) {
+        const updated: Expense = {
+          ...e,
+          vendor: newName || e.vendor,
+          cuit: newCuit || e.cuit,
+          bankDetails: updatedVendor.bankDetails
+            ? {
+                ...updatedVendor.bankDetails,
+                accountHolder: newName || updatedVendor.bankDetails.accountHolder || e.vendor,
+                cuitCuil: newCuit || updatedVendor.bankDetails.cuitCuil || e.cuit || '',
+              }
+            : e.bankDetails,
+          transferDetails: formatTransferDetails(
+            {
+              ...e,
+              vendor: newName || e.vendor,
+              cuit: newCuit || e.cuit,
+              bankDetails: updatedVendor.bankDetails,
+            },
+            updatedVendor
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+        updatedExpensesList.push(updated);
+        return updated;
+      }
+      return e;
+    });
+
+    if (updatedExpensesList.length > 0) {
+      setExpenses(updatedExpenses);
+      try {
+        await upsertCentralExpenses(updatedExpensesList);
+      } catch (err) {
+        console.error('Error cascading vendor update to expenses:', err);
+      }
+    }
+
+    showToast(
+      updatedExpensesList.length > 0
+        ? `✅ Proveedor "${updatedVendor.name}" actualizado y sincronizado en ${updatedExpensesList.length} comprobante(s).`
+        : `✅ Proveedor "${updatedVendor.name}" actualizado.`
+    );
   };
 
   const handleDeleteVendor = async (id: string) => {
@@ -1177,6 +1256,7 @@ export default function App() {
             <ExpenseList
               expenses={expenses}
               costCenters={costCenters}
+              vendors={vendors}
               currentUser={currentUser}
               onEditExpense={(exp) => setEditingExpense(exp)}
               onViewReceipt={(exp) => setViewingReceiptExpense(exp)}
@@ -1338,6 +1418,7 @@ export default function App() {
         vendors={vendors}
         costCenters={costCenters}
         onAddVendor={handleAddVendor}
+        onUpdateVendor={handleUpdateVendor}
       />
 
       <ReceiptViewerModal

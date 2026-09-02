@@ -20,8 +20,8 @@ import {
   ArrowDown,
   RefreshCw,
 } from 'lucide-react';
-import { Expense, CostCenter, UserProfile } from '../types';
-import { formatCurrency, formatDate, formatUploadDateTime } from '../utils/helpers';
+import { Expense, CostCenter, UserProfile, Vendor } from '../types';
+import { formatCurrency, formatDate, formatUploadDateTime, matchesSearch } from '../utils/helpers';
 import { sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { AccountDetailsDisplay } from './AccountDetailsDisplay';
@@ -29,6 +29,7 @@ import { AccountDetailsDisplay } from './AccountDetailsDisplay';
 interface ExpenseListProps {
   expenses: Expense[];
   costCenters?: CostCenter[];
+  vendors?: Vendor[];
   currentUser?: UserProfile | null;
   onEditExpense: (expense: Expense) => void;
   onViewReceipt: (expense: Expense) => void;
@@ -40,6 +41,7 @@ interface ExpenseListProps {
 export function ExpenseList({
   expenses,
   costCenters = [],
+  vendors = [],
   currentUser,
   onEditExpense,
   onViewReceipt,
@@ -101,16 +103,25 @@ export function ExpenseList({
       }
 
       // Search term filter
-      if (!term) return true;
-      return (
-        e.vendor?.toLowerCase().includes(term) ||
-        e.project?.toLowerCase().includes(term) ||
-        (e.accountingNotes && e.accountingNotes.toLowerCase().includes(term)) ||
-        (e.notes && e.notes.toLowerCase().includes(term)) ||
-        e.invoiceNumber?.toLowerCase().includes(term) ||
-        e.amount.toString().includes(term) ||
-        (e.bankDetails?.alias && e.bankDetails.alias.toLowerCase().includes(term)) ||
-        (e.bankDetails?.cbuCvu && e.bankDetails.cbuCvu.toLowerCase().includes(term))
+      if (!searchTerm.trim()) return true;
+      return matchesSearch(
+        [
+          e.vendor,
+          e.cuit,
+          e.project,
+          e.accountingNotes,
+          e.notes,
+          e.invoiceNumber,
+          e.amount ? String(e.amount) : '',
+          e.category,
+          e.paymentMethod,
+          e.bankDetails?.alias,
+          e.bankDetails?.cbuCvu,
+          e.bankDetails?.cuitCuil,
+          e.bankDetails?.bankName,
+          e.bankDetails?.accountHolder,
+        ],
+        searchTerm
       );
     });
 
@@ -382,7 +393,7 @@ export function ExpenseList({
 
                       {/* 7. Datos de Cuenta */}
                       <td className="px-2.5 py-2 min-w-[125px] max-w-[150px]">
-                        <AccountDetailsDisplay expense={expense} />
+                        <AccountDetailsDisplay expense={expense} vendors={vendors} />
                       </td>
 
                       {/* 8. Notas Contables */}
@@ -625,7 +636,7 @@ export function ExpenseList({
                 {/* Bank details */}
                 <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 space-y-1">
                   <span className="text-[10px] uppercase font-bold text-slate-400 block">Datos de Cuenta</span>
-                  <AccountDetailsDisplay expense={expense} />
+                  <AccountDetailsDisplay expense={expense} vendors={vendors} />
                 </div>
               </div>
             );

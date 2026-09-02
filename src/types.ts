@@ -67,7 +67,8 @@ export interface AppUserRecord {
 
 export interface UserBankDetails {
   bankName: string;
-  accountType: 'Caja de Ahorro' | 'Cuenta Corriente' | 'Indefinido' | string;
+  accountType: 'Indefinido' | 'Billetera' | 'Caja de Ahorro' | 'Cuenta Corriente' | string;
+  currency?: '$Ar' | 'u$' | string;
   cbuCvu: string; // 22 digits
   alias: string;
   cuitCuil: string;

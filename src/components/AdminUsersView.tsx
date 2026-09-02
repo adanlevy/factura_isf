@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Shield,
   ShieldCheck,
@@ -15,6 +15,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { AppUserRecord, UserProfile } from '../types';
+import { matchesSearch } from '../utils/helpers';
 
 interface AdminUsersViewProps {
   users: AppUserRecord[];
@@ -43,14 +44,10 @@ export function AdminUsersView({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<AppUserRecord | null>(null);
 
-  const filteredUsers = users.filter((u) => {
-    const term = searchTerm.toLowerCase().trim();
-    return (
-      (u.name || '').toLowerCase().includes(term) ||
-      (u.email || '').toLowerCase().includes(term) ||
-      (u.notes || '').toLowerCase().includes(term)
-    );
-  });
+  const filteredUsers = useMemo(() => {
+    if (!searchTerm.trim()) return users;
+    return users.filter((u) => matchesSearch([u.name, u.email, u.notes, u.role], searchTerm));
+  }, [users, searchTerm]);
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();

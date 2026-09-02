@@ -40,6 +40,7 @@ import {
   formatUploadDateTime,
   exportToCSV,
   generateDriveFileName,
+  matchesSearch,
 } from '../utils/helpers';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -164,17 +165,28 @@ export function AdminMovementView({
     const matching = (expenses || []).filter((e) => {
       if (!e) return false;
       if (searchTerm.trim()) {
-        const term = searchTerm.toLowerCase();
-        const matchVendor = (e.vendor || '').toLowerCase().includes(term);
-        const matchSubmitter = (e.submittedByName || e.submittedByEmail || '').toLowerCase().includes(term);
-        const matchInvoice = (e.invoiceNumber || '').toLowerCase().includes(term);
-        const matchNotes = (e.accountingNotes || e.notes || '').toLowerCase().includes(term);
-        const matchCostCenter = (e.project || '').toLowerCase().includes(term);
-        const matchAlias = (e.bankDetails?.alias || '').toLowerCase().includes(term);
-        const matchCbu = (e.bankDetails?.cbuCvu || '').toLowerCase().includes(term);
-        const matchAccountHolder = (e.bankDetails?.accountHolder || '').toLowerCase().includes(term);
-        const matchPaymentMethod = (e.paymentMethod || '').toLowerCase().includes(term);
-        if (!matchVendor && !matchSubmitter && !matchInvoice && !matchNotes && !matchCostCenter && !matchAlias && !matchCbu && !matchAccountHolder && !matchPaymentMethod) {
+        const matches = matchesSearch(
+          [
+            e.vendor,
+            e.cuit,
+            e.submittedByName,
+            e.submittedByEmail,
+            e.invoiceNumber,
+            e.accountingNotes,
+            e.notes,
+            e.project,
+            e.paymentMethod,
+            e.category,
+            e.bankDetails?.alias,
+            e.bankDetails?.cbuCvu,
+            e.bankDetails?.cuitCuil,
+            e.bankDetails?.bankName,
+            e.bankDetails?.accountHolder,
+            e.amount ? String(e.amount) : '',
+          ],
+          searchTerm
+        );
+        if (!matches) {
           return false;
         }
       }
@@ -795,7 +807,7 @@ export function AdminMovementView({
                       {/* 8. Datos de Cuenta / Beneficiario */}
                       <td className="px-2 py-2 min-w-[125px] max-w-[155px]">
                         <div className="space-y-1">
-                          <AccountDetailsDisplay expense={expense} />
+                          <AccountDetailsDisplay expense={expense} vendors={vendors} />
                           {expense.reimbursable && !expense.bankDetails?.alias && !expense.bankDetails?.cbuCvu && isPending && (
                             <div className="pt-0.5">
                               <button
@@ -1076,7 +1088,7 @@ export function AdminMovementView({
                       </button>
                     )}
                   </div>
-                  <AccountDetailsDisplay expense={expense} />
+                  <AccountDetailsDisplay expense={expense} vendors={vendors} />
                 </div>
 
                 {/* Bottom Actions Row */}

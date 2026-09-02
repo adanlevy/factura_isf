@@ -631,3 +631,69 @@ export function getGoogleDrivePreviewUrl(url?: string | null): string | null {
   return `https://drive.google.com/file/d/${fileId}/preview`;
 }
 
+/**
+ * Normaliza texto para búsquedas:
+ * - Convierte a minúsculas
+ * - Remueve tildes / diacríticos (ej: á->a, é->e, í->i, ó->o, ú->u, etc.)
+ * - Elimina espacios en los extremos
+ */
+export function normalizeSearchText(text: string | null | undefined): string {
+  if (!text) return '';
+  return String(text)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+/**
+ * Verifica si alguno de los campos objetivos (targets) coincide con la búsqueda (query).
+ * - Ignora tildes/acentos
+ * - Ignora mayúsculas/minúsculas
+ * - Para CUITs y números: ignora guiones (-), puntos (.), barras (/) y espacios
+ */
+export function matchesSearch(
+  targets: string | null | undefined | (string | null | undefined)[],
+  query: string | null | undefined
+): boolean {
+  if (!query || !query.trim()) return true;
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+
+  const targetList = Array.isArray(targets) ? targets : [targets];
+  const queryDigits = normalizedQuery.replace(/\D/g, '');
+
+  return targetList.some((target) => {
+    if (!target) return false;
+    const normalizedTarget = normalizeSearchText(target);
+    if (!normalizedTarget) return false;
+
+    // 1. Coincidencia directa de texto normalizado sin tildes
+    if (normalizedTarget.includes(normalizedQuery)) return true;
+
+    // 2. Coincidencia numérica / CUIT ignorando guiones, espacios y signos
+    if (queryDigits.length >= 2) {
+      const targetDigits = normalizedTarget.replace(/\D/g, '');
+      if (targetDigits.includes(queryDigits)) return true;
+    }
+
+    // 3. Coincidencia de múltiples palabras (todas las palabras de la búsqueda deben estar presentes)
+    const words = normalizedQuery.split(/\s+/).filter(Boolean);
+    if (words.length > 1) {
+      const allWordsMatch = words.every((w) => {
+        if (normalizedTarget.includes(w)) return true;
+        const wDigits = w.replace(/\D/g, '');
+        if (wDigits.length >= 2) {
+          const targetDigits = normalizedTarget.replace(/\D/g, '');
+          if (targetDigits.includes(wDigits)) return true;
+        }
+        return false;
+      });
+      if (allWordsMatch) return true;
+    }
+
+    return false;
+  });
+}
+
+

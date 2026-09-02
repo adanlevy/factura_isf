@@ -24,6 +24,7 @@ import {
   ArrowDownRight,
   Clock,
   Info,
+  Trash2,
 } from 'lucide-react';
 import {
   Expense,
@@ -34,6 +35,7 @@ import {
   ApiUsageLogEntry,
 } from '../types';
 import { computeFirestoreStorage, formatBytes, formatCurrencyUsd, formatCurrencyArs } from '../utils/firestoreMetrics';
+import { matchesSearch } from '../utils/helpers';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
 
 interface SystemAdminViewProps {
@@ -54,13 +56,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   const [metrics, setMetrics] = useState<SystemMetricsReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
   const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>('USD');
   const [logFilterService, setLogFilterService] = useState<string>('all');
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
   const [selectedTab, setSelectedTab] = useState<'overview' | 'storage' | 'apis' | 'logs'>('overview');
 
-  // Fallback client-side calculation if backend metrics request fails
-  const localFirestoreMetrics = useMemo(() => {
+  // Exact real-time Firestore storage calculation computed directly from the live React Firestore snapshot state
+  const firestoreData = useMemo(() => {
     return computeFirestoreStorage(expenses, vendors, costCenters, categories, appUsers);
   }, [expenses, vendors, costCenters, categories, appUsers]);
 
@@ -75,10 +78,27 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         }
       }
     } catch (err) {
-      console.warn('Could not load backend system metrics, using local calculation:', err);
+      console.warn('Could not load backend system metrics:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const handleClearLogs = async () => {
+    if (!window.confirm('¿Deseas resetear y limpiar el historial de auditoría de APIs?')) {
+      return;
+    }
+    try {
+      setClearingLogs(true);
+      const res = await fetch('/api/system/clear-logs', { method: 'POST' });
+      if (res.ok) {
+        await fetchMetrics();
+      }
+    } catch (err) {
+      console.error('Error clearing logs:', err);
+    } finally {
+      setClearingLogs(false);
     }
   };
 
@@ -88,8 +108,6 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Merged Firestore Storage data
-  const firestoreData = metrics?.firestore || localFirestoreMetrics;
   const apiUsage = metrics?.apiUsage;
   const exchangeRate = apiUsage?.exchangeRateArs || 1060;
 
@@ -109,10 +127,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         logFilterService === 'all' || log.service === logFilterService;
       const matchesQuery =
         !logSearchQuery ||
-        log.actionName.toLowerCase().includes(logSearchQuery.toLowerCase()) ||
-        log.endpoint.toLowerCase().includes(logSearchQuery.toLowerCase()) ||
-        (log.details && log.details.toLowerCase().includes(logSearchQuery.toLowerCase())) ||
-        (log.userEmail && log.userEmail.toLowerCase().includes(logSearchQuery.toLowerCase()));
+        matchesSearch([log.actionName, log.endpoint, log.details, log.userEmail, log.serviceName, log.status], logSearchQuery);
       return matchesService && matchesQuery;
     });
   }, [apiUsage?.recentLogs, logFilterService, logSearchQuery]);
@@ -688,6 +703,17 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                 <option value="google_drive">Google Drive API</option>
                 <option value="google_gmail">Google Gmail API</option>
               </select>
+
+              <button
+                id="btn-clear-api-logs"
+                onClick={handleClearLogs}
+                disabled={clearingLogs || filteredLogs.length === 0}
+                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 transition disabled:opacity-40 cursor-pointer"
+                title="Limpiar registros de auditoría"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{clearingLogs ? 'Limpiando...' : 'Limpiar Logs'}</span>
+              </button>
             </div>
           </div>
 
