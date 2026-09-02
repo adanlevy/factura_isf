@@ -21,7 +21,9 @@ import {
   sendGmailMessage,
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
+  extractDriveFileId,
 } from '../utils/googleWorkspace';
+import { cachePaymentProofFile } from '../utils/receiptCache';
 import { SafePdfViewer } from './SafePdfViewer';
 
 interface PaymentProcessModalProps {
@@ -152,18 +154,27 @@ export function PaymentProcessModal({
     const timestamp = new Date().toISOString();
     let finalPaymentProofUrl: string | undefined = undefined;
 
-    // 1. Upload payment proof to Google Drive if attached
+    // 1. Upload payment proof to Google Drive if attached (deleting old proof if replacing)
     if (paymentProofBase64 && paymentProofFileName) {
       try {
         const proofDriveName = `${standardizedBaseName}-ComprobantePago-${paymentProofFileName}`;
         const matchedCenter = costCenters.find(
           (c) => c.name.toLowerCase() === (expense.project || '').toLowerCase()
         );
+        const oldFileId = extractDriveFileId(expense.paymentProofDriveUrl) || undefined;
+        const oldFileName = expense.paymentProofFileName
+          ? (expense.paymentProofFileName.startsWith(standardizedBaseName)
+              ? expense.paymentProofFileName
+              : `${standardizedBaseName}-ComprobantePago-${expense.paymentProofFileName}`)
+          : undefined;
+
         const driveRes = await uploadReceiptToGoogleDrive({
           expense,
           costCenter: matchedCenter,
           customFileName: proofDriveName,
           fileBase64: paymentProofBase64,
+          oldFileId,
+          oldFileName,
         });
         if (driveRes.success && driveRes.webViewLink) {
           finalPaymentProofUrl = driveRes.webViewLink;
@@ -171,6 +182,9 @@ export function PaymentProcessModal({
       } catch (err) {
         console.warn('Payment proof drive upload notice:', err);
       }
+
+      // Cache updated payment proof for immediate preview rendering
+      cachePaymentProofFile(expense.id, paymentProofBase64).catch(() => {});
     }
 
     // 2. Build email and send confirmation to submitter

@@ -33,6 +33,9 @@ export const GOOGLE_SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/gmail.send',
 ].join(' ');
 
 const TOKEN_STORAGE_KEY = 'isf_google_workspace_token';
@@ -153,6 +156,22 @@ export function extractDriveFolderId(driveUrlOrFolder?: string): string | null {
 }
 
 /**
+ * Extracts Google Drive File ID from a view/preview sharing URL or ID string
+ */
+export function extractDriveFileId(driveUrlOrFile?: string): string | null {
+  if (!driveUrlOrFile) return null;
+  const trimmed = driveUrlOrFile.trim();
+  const fileMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch && fileMatch[1]) return fileMatch[1];
+  const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch && idMatch[1]) return idMatch[1];
+  if (/^[a-zA-Z0-9_-]{20,60}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+/**
  * Uploads a receipt image/PDF to Google Drive in the specific Cost Center's folder
  */
 export async function uploadReceiptToGoogleDrive(params: {
@@ -162,6 +181,8 @@ export async function uploadReceiptToGoogleDrive(params: {
   accessToken?: string;
   customFileName?: string;
   folderId?: string;
+  oldFileId?: string;
+  oldFileName?: string;
 }): Promise<{
   success: boolean;
   fileId?: string;
@@ -171,7 +192,16 @@ export async function uploadReceiptToGoogleDrive(params: {
   message?: string;
   error?: string;
 }> {
-  const { expense, costCenter, fileBase64, accessToken: explicitToken, customFileName, folderId: explicitFolderId } = params;
+  const {
+    expense,
+    costCenter,
+    fileBase64,
+    accessToken: explicitToken,
+    customFileName,
+    folderId: explicitFolderId,
+    oldFileId,
+    oldFileName,
+  } = params;
   const token = explicitToken || getStoredWorkspaceToken();
 
   const fileData = fileBase64 || expense.receiptImage;
@@ -210,11 +240,16 @@ export async function uploadReceiptToGoogleDrive(params: {
         costCenterCode,
         fileBase64: fileData,
         accessToken: token,
+        oldFileId,
+        oldFileName,
       }),
     });
 
     const data = await response.json();
     if (!response.ok || !data.success) {
+      if (response.status === 401 || data.isAuthError) {
+        saveStoredWorkspaceToken(null);
+      }
       throw new Error(data.error || 'Error al subir a Google Drive');
     }
 
@@ -268,6 +303,9 @@ export async function deleteReceiptFromGoogleDrive(params: {
 
     const data = await response.json();
     if (!response.ok || !data.success) {
+      if (response.status === 401 || data.isAuthError) {
+        saveStoredWorkspaceToken(null);
+      }
       throw new Error(data.error || 'Error al eliminar archivo de Google Drive');
     }
 
@@ -321,7 +359,7 @@ export async function replaceReceiptInGoogleDrive(params: {
   const baseFileName = generateDriveFileName(expense, costCenter ? [costCenter] : []);
   const standardizedFileName = baseFileName.includes('.') ? baseFileName : `${baseFileName}.${fileExt}`;
 
-  const oldFileId = expense.driveFileId;
+  const oldFileId = expense.driveFileId || extractDriveFileId(expense.driveUploadedUrl) || undefined;
   const oldFileName = expense.driveUploadedFileName || (expense.driveUploadedUrl ? standardizedFileName : undefined);
 
   try {
@@ -344,6 +382,9 @@ export async function replaceReceiptInGoogleDrive(params: {
 
     const data = await response.json();
     if (!response.ok || !data.success) {
+      if (response.status === 401 || data.isAuthError) {
+        saveStoredWorkspaceToken(null);
+      }
       throw new Error(data.error || 'Error al reemplazar en Google Drive');
     }
 
@@ -412,6 +453,9 @@ export async function sendGmailMessage(params: {
 
     const data = await response.json();
     if (!response.ok || !data.success) {
+      if (response.status === 401 || data.isAuthError) {
+        saveStoredWorkspaceToken(null);
+      }
       throw new Error(data.error || 'Error al despachar el correo');
     }
 

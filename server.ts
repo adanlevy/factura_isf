@@ -206,6 +206,59 @@ export function formatAiErrorMessage(error: any): string {
   return error.message || "Error al procesar la solicitud con IA.";
 }
 
+export function formatGoogleErrorMessage(error: any, statusCode?: number): { message: string; isAuthError: boolean } {
+  if (!error) return { message: "Error desconocido en los servicios de Google Workspace / Drive.", isAuthError: false };
+  const raw = typeof error === "string" ? error : error.message || JSON.stringify(error);
+
+  let parsed: any = null;
+  try {
+    parsed = typeof error === "object" ? error : JSON.parse(raw);
+  } catch {}
+
+  const reason = parsed?.error?.errors?.[0]?.reason || "";
+  const errMessage = parsed?.error?.message || parsed?.error_description || "";
+  const combined = `${raw} ${reason} ${errMessage}`.toLowerCase();
+
+  const isAuth =
+    statusCode === 401 ||
+    combined.includes("autherror") ||
+    combined.includes("invalid credentials") ||
+    combined.includes("invalid_grant") ||
+    combined.includes("token has been expired or revoked") ||
+    combined.includes("unauthenticated");
+
+  if (isAuth) {
+    return {
+      message: "La sesión o credenciales de Google Workspace han expirado o no son válidas. Por favor, vuelve a iniciar sesión con Google en la aplicación para renovar los permisos.",
+      isAuthError: true,
+    };
+  }
+
+  if (
+    statusCode === 403 ||
+    combined.includes("insufficientpermissions") ||
+    combined.includes("access denied") ||
+    combined.includes("forbidden")
+  ) {
+    return {
+      message: "Permisos insuficientes en la cuenta de Google para esta operación en Drive. Verifica que la cuenta tenga permisos de edición en la carpeta compartida.",
+      isAuthError: false,
+    };
+  }
+
+  if (statusCode === 404 || combined.includes("filenotfound") || combined.includes("not found")) {
+    return {
+      message: "No se encontró el archivo o carpeta especificada en Google Drive.",
+      isAuthError: false,
+    };
+  }
+
+  return {
+    message: errMessage || raw || "Error al procesar la solicitud en Google Drive.",
+    isAuthError: false,
+  };
+}
+
 async function generateContentWithRetry(
   ai: GoogleGenAI,
   params: {
@@ -1663,14 +1716,20 @@ app.post("/api/upload-to-drive", async (req, res) => {
         if (oldFileName) deletedNames.add(oldFileName);
         if (fileName) deletedNames.add(fileName);
 
+        // Delete explicit oldFileId if passed
         if (oldFileId) {
           console.log(`[DRIVE DELETE PREVIOUS ID] Deleting old file ID: ${oldFileId}`);
-          await fetch(`https://www.googleapis.com/drive/v3/files/${oldFileId}?supportsAllDrives=true`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-          });
+          try {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${oldFileId}?supportsAllDrives=true`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${effectiveAccessToken}` },
+            });
+          } catch (delIdErr) {
+            console.warn("[DRIVE DELETE OLD ID WARN]", delIdErr);
+          }
         }
 
+        // Search and delete matching names
         for (const nameToDelete of deletedNames) {
           const cleanName = nameToDelete.replace(/'/g, "\\'");
           let query = `name = '${cleanName}' and trashed = false`;
@@ -1688,6 +1747,40 @@ app.post("/api/upload-to-drive", async (req, res) => {
             if (searchData.files && searchData.files.length > 0) {
               for (const f of searchData.files) {
                 console.log(`[DRIVE DELETE PREVIOUS MATCH] Deleting file ${f.name} (${f.id})`);
+                await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
+                  method: "DELETE",
+                  headers: { Authorization: `Bearer ${effectiveAccessToken}` },
+                });
+              }
+            }
+          }
+        }
+
+        // Special prefix cleanup: if uploading a payment proof or withholding cert, clean older versions with differing extensions/names
+        let prefixPattern = "";
+        if (fileName.includes("-ComprobantePago-")) {
+          prefixPattern = fileName.split("-ComprobantePago-")[0] + "-ComprobantePago-";
+        } else if (fileName.includes("-CertificadoRetencion-")) {
+          prefixPattern = fileName.split("-CertificadoRetencion-")[0] + "-CertificadoRetencion-";
+        }
+
+        if (prefixPattern) {
+          const cleanPrefix = prefixPattern.replace(/'/g, "\\'");
+          let pQuery = `name contains '${cleanPrefix}' and trashed = false`;
+          if (folderId) {
+            pQuery = `'${folderId}' in parents and name contains '${cleanPrefix}' and trashed = false`;
+          }
+          const pSearchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+            pQuery
+          )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
+          const pSearchRes = await fetch(pSearchUrl, {
+            headers: { Authorization: `Bearer ${effectiveAccessToken}` },
+          });
+          if (pSearchRes.ok) {
+            const pData = (await pSearchRes.json()) as any;
+            if (pData.files && pData.files.length > 0) {
+              for (const f of pData.files) {
+                console.log(`[DRIVE DELETE PREVIOUS PREFIX MATCH] Deleting older file ${f.name} (${f.id})`);
                 await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
                   method: "DELETE",
                   headers: { Authorization: `Bearer ${effectiveAccessToken}` },
@@ -1819,16 +1912,21 @@ app.post("/api/upload-to-drive", async (req, res) => {
         } else {
           const errBody = await driveResponse.text();
           console.warn("Drive API upload returned non-200 error:", errBody);
-          return res.status(502).json({
+          const formatted = formatGoogleErrorMessage(errBody, driveResponse.status);
+          return res.status(driveResponse.status === 401 ? 401 : 502).json({
             success: false,
-            error: `Google Drive API rechazó la subida (${driveResponse.status}): ${errBody}`,
+            isAuthError: formatted.isAuthError,
+            error: formatted.message,
+            rawError: errBody,
           });
         }
       } catch (driveErr: any) {
         console.warn("Error calling Google Drive API directly:", driveErr);
+        const formatted = formatGoogleErrorMessage(driveErr);
         return res.status(500).json({
           success: false,
-          error: driveErr.message || "Error al conectar con Google Drive API.",
+          isAuthError: formatted.isAuthError,
+          error: formatted.message,
         });
       }
     }
@@ -1836,12 +1934,14 @@ app.post("/api/upload-to-drive", async (req, res) => {
     // If no credentials configured yet, return clear guidance
     return res.status(401).json({
       success: false,
+      isAuthError: true,
       error:
-        "No se encontraron credenciales de Google configuradas en el servidor (Service Account o Refresh Token) ni sesión de usuario activa.",
+        "No se encontraron credenciales de Google configuradas en el servidor ni sesión de usuario activa. Por favor, inicia sesión con tu cuenta de Google.",
     });
   } catch (error: any) {
     console.error("Error in upload-to-drive:", error);
-    return res.status(500).json({ success: false, error: error.message || "Error al subir al Drive." });
+    const formatted = formatGoogleErrorMessage(error);
+    return res.status(500).json({ success: false, isAuthError: formatted.isAuthError, error: formatted.message });
   }
 });
 

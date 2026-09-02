@@ -67,6 +67,7 @@ export function ReceiptViewerModal({
     } else {
       getCachedReceiptFile(expense.id).then((cached) => {
         if (cached) setResolvedReceiptUrl(cached);
+        else setResolvedReceiptUrl(null);
       });
     }
 
@@ -75,6 +76,7 @@ export function ReceiptViewerModal({
     } else {
       getCachedPaymentProofFile(expense.id).then((cached) => {
         if (cached) setResolvedPaymentProofUrl(cached);
+        else setResolvedPaymentProofUrl(null);
       });
     }
 
@@ -83,9 +85,18 @@ export function ReceiptViewerModal({
     } else {
       getCachedWithholdingCertificateFile(expense.id).then((cached) => {
         if (cached) setResolvedWithholdingUrl(cached);
+        else setResolvedWithholdingUrl(null);
       });
     }
-  }, [expense]);
+  }, [
+    expense?.id,
+    expense?.receiptImage,
+    expense?.paymentProofImage,
+    expense?.withholdingCertificateImage,
+    expense?.updatedAt,
+    expense?.withholdingCertificateUploadedAt,
+    expense?.paymentProofAt,
+  ]);
 
   if (!expense) return null;
 
@@ -323,46 +334,7 @@ export function ReceiptViewerModal({
           {/* Left: Image / SVG / PDF receipt preview */}
           <div className="flex flex-col items-center justify-center bg-slate-50 rounded-2xl p-4 border border-slate-200 min-h-[300px] relative">
             {activeTab === 'WITHHOLDING_CERTIFICATE' ? (
-              driveWithholdingPreviewUrl ? (
-                <div className="w-full">
-                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
-                    <iframe
-                      src={driveWithholdingPreviewUrl}
-                      title={`Certificado de Retenciones: ${expense.vendor}`}
-                      className="w-full h-full border-0"
-                      allow="autoplay"
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <button
-                      onClick={handleDownload}
-                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Descargar</span>
-                    </button>
-                    <a
-                      href={expense.withholdingCertificateDriveUrl || displayWithholdingUrl || '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                      <span>Ver en Drive</span>
-                    </a>
-                    {onOpenWithholdingModal && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenWithholdingModal(expense)}
-                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                        <span>Reemplazar</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : displayWithholdingUrl ? (
+              displayWithholdingUrl ? (
                 <>
                   {displayWithholdingUrl.startsWith('data:application/pdf') ||
                   expense.withholdingCertificateFileName?.toLowerCase().endsWith('.pdf') ? (
@@ -412,6 +384,45 @@ export function ReceiptViewerModal({
                     )}
                   </div>
                 </>
+              ) : driveWithholdingPreviewUrl ? (
+                <div className="w-full">
+                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
+                    <iframe
+                      src={driveWithholdingPreviewUrl}
+                      title={`Certificado de Retenciones: ${expense.vendor}`}
+                      className="w-full h-full border-0"
+                      allow="autoplay"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={handleDownload}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Descargar</span>
+                    </button>
+                    <a
+                      href={expense.withholdingCertificateDriveUrl || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                    {onOpenWithholdingModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWithholdingModal(expense)}
+                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                        <span>Reemplazar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <div className="text-center text-slate-500 space-y-3 p-6 flex flex-col items-center justify-center">
                   <div className="w-14 h-14 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center text-amber-600 shadow-xs">
@@ -436,46 +447,7 @@ export function ReceiptViewerModal({
                 </div>
               )
             ) : activeTab === 'PAYMENT_PROOF' ? (
-              drivePaymentProofPreviewUrl ? (
-                <div className="w-full">
-                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
-                    <iframe
-                      src={drivePaymentProofPreviewUrl}
-                      title={`Comprobante de Pago: ${expense.vendor}`}
-                      className="w-full h-full border-0"
-                      allow="autoplay"
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <button
-                      onClick={handleDownload}
-                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Descargar</span>
-                    </button>
-                    <a
-                      href={expense.paymentProofDriveUrl || displayPaymentProofUrl || '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                      <span>Ver en Drive</span>
-                    </a>
-                    {onProcessPayment && (
-                      <button
-                        type="button"
-                        onClick={() => onProcessPayment(expense)}
-                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                        <span>Reemplazar</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : displayPaymentProofUrl ? (
+              displayPaymentProofUrl ? (
                 <>
                   {displayPaymentProofUrl.startsWith('data:application/pdf') ||
                   expense.paymentProofFileName?.toLowerCase().endsWith('.pdf') ? (
@@ -525,6 +497,45 @@ export function ReceiptViewerModal({
                     )}
                   </div>
                 </>
+              ) : drivePaymentProofPreviewUrl ? (
+                <div className="w-full">
+                  <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
+                    <iframe
+                      src={drivePaymentProofPreviewUrl}
+                      title={`Comprobante de Pago: ${expense.vendor}`}
+                      className="w-full h-full border-0"
+                      allow="autoplay"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      onClick={handleDownload}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Descargar</span>
+                    </button>
+                    <a
+                      href={expense.paymentProofDriveUrl || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                    {onProcessPayment && (
+                      <button
+                        type="button"
+                        onClick={() => onProcessPayment(expense)}
+                        className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                        <span>Reemplazar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <div className="text-center text-slate-400 space-y-3 p-6 flex flex-col items-center justify-center">
                   <CreditCard className="w-12 h-12 mx-auto" />
@@ -541,6 +552,56 @@ export function ReceiptViewerModal({
                   )}
                 </div>
               )
+            ) : displayReceiptUrl ? (
+              <>
+                {displayReceiptUrl.startsWith('data:application/pdf') ||
+                expense.receiptFileName?.toLowerCase().endsWith('.pdf') ? (
+                  <div className="w-full">
+                    <SafePdfViewer
+                      url={displayReceiptUrl}
+                      fileName={standardizedFileName}
+                      title={`Comprobante ${expense.vendor}`}
+                      heightClass="h-80"
+                    />
+                  </div>
+                ) : (
+                  <img
+                    src={displayReceiptUrl}
+                    alt={expense.vendor}
+                    className="max-h-96 object-contain rounded-xl shadow-xs"
+                  />
+                )}
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    onClick={handleDownload}
+                    className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    <span>Descargar</span>
+                  </button>
+                  {expense.driveUploadedUrl && (
+                    <a
+                      href={expense.driveUploadedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                  )}
+                  {onReplaceReceipt && (
+                    <button
+                      type="button"
+                      onClick={() => onReplaceReceipt(expense)}
+                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                      <span>Reemplazar</span>
+                    </button>
+                  )}
+                </div>
+              </>
             ) : driveReceiptPreviewUrl ? (
               <div className="w-full">
                 <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
@@ -580,56 +641,6 @@ export function ReceiptViewerModal({
                   )}
                 </div>
               </div>
-            ) : displayReceiptUrl ? (
-              <>
-                {displayReceiptUrl.startsWith('data:application/pdf') ||
-                expense.receiptFileName?.toLowerCase().endsWith('.pdf') ? (
-                  <div className="w-full">
-                    <SafePdfViewer
-                      url={displayReceiptUrl}
-                      fileName={standardizedFileName}
-                      title={`Comprobante ${expense.vendor}`}
-                      heightClass="h-80"
-                    />
-                  </div>
-                ) : (
-                  <img
-                    src={displayReceiptUrl}
-                    alt={expense.vendor}
-                    className="max-h-96 object-contain rounded-xl shadow-xs"
-                  />
-                )}
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    onClick={handleDownload}
-                    className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5 mr-1.5" />
-                    <span>Descargar</span>
-                  </button>
-                  {(expense.driveUploadedUrl || expense.driveFolderUrl || driveUrl) && (
-                    <a
-                      href={expense.driveUploadedUrl || expense.driveFolderUrl || driveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                      <span>Ver en Drive</span>
-                    </a>
-                  )}
-                  {onReplaceReceipt && (
-                    <button
-                      type="button"
-                      onClick={() => onReplaceReceipt(expense)}
-                      className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Reemplazar</span>
-                    </button>
-                  )}
-                </div>
-              </>
             ) : driveUrl ? (
               <div className="text-center p-6 space-y-3 flex flex-col items-center justify-center">
                 <div className="w-14 h-14 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center justify-center text-indigo-600 shadow-xs">

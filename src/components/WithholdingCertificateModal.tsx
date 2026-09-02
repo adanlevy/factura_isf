@@ -28,7 +28,9 @@ import {
   sendGmailMessage,
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
+  extractDriveFileId,
 } from '../utils/googleWorkspace';
+import { cacheWithholdingCertificateFile } from '../utils/receiptCache';
 import { SafePdfViewer } from './SafePdfViewer';
 
 interface WithholdingCertificateModalProps {
@@ -140,23 +142,37 @@ export function WithholdingCertificateModal({
     const timestamp = new Date().toISOString();
     let finalDriveUrl: string | undefined = expense.withholdingCertificateDriveUrl;
 
-    // 1. Upload to Google Drive in Cost Center folder
+    // 1. Upload to Google Drive in Cost Center folder (deleting previous file if replacing)
     try {
       const certDriveName = `${standardizedBaseName}-CertificadoRetencion-${fileName}`;
       const matchedCenter = costCenters.find(
         (c) => c.name.toLowerCase() === (expense.project || '').toLowerCase()
       );
+      const oldFileId = extractDriveFileId(expense.withholdingCertificateDriveUrl) || undefined;
+      const oldFileName = expense.withholdingCertificateFileName
+        ? (expense.withholdingCertificateFileName.startsWith(standardizedBaseName)
+            ? expense.withholdingCertificateFileName
+            : `${standardizedBaseName}-CertificadoRetencion-${expense.withholdingCertificateFileName}`)
+        : undefined;
+
       const driveRes = await uploadReceiptToGoogleDrive({
         expense,
         costCenter: matchedCenter,
         customFileName: certDriveName,
         fileBase64: fileBase64,
+        oldFileId,
+        oldFileName,
       });
       if (driveRes.success && driveRes.webViewLink) {
         finalDriveUrl = driveRes.webViewLink;
       }
     } catch (err) {
       console.warn('Withholding certificate drive upload notice:', err);
+    }
+
+    // Cache the updated certificate for instant high-res preview
+    if (fileBase64) {
+      cacheWithholdingCertificateFile(expense.id, fileBase64).catch(() => {});
     }
 
     // 2. Send email notification if enabled
@@ -414,61 +430,6 @@ export function WithholdingCertificateModal({
               )}
             </div>
 
-            {/* Email Notification Dispatch Options */}
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
-              <label className="flex items-center space-x-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={sendEmail}
-                  onChange={(e) => setSendEmail(e.target.checked)}
-                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer accent-amber-600"
-                />
-                <span className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-amber-600" />
-                  Enviar email automático con el Certificado al solicitante
-                </span>
-              </label>
-
-              {sendEmail && (
-                <div className="pl-6 space-y-2.5 pt-1 animate-in fade-in duration-150 text-xs">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Destinatario:
-                    </label>
-                    <input
-                      type="email"
-                      value={recipientEmail}
-                      onChange={(e) => setRecipientEmail(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-amber-500 outline-hidden"
-                      placeholder="correo@isf-argentina.org"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Asunto que se enviará:
-                    </label>
-                    <div className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-mono text-[11px] text-slate-800 truncate">
-                      {formatWithholdingEmailSubject(expense.vendor, expense.amount, expense.currency)}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Mensaje / aclaración adicional (opcional):
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={customNotes}
-                      onChange={(e) => setCustomNotes(e.target.value)}
-                      placeholder="Ej: Se adjunta retención de Ganancias/IIBB correspondiente al periodo..."
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-amber-500 outline-hidden"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
             {/* Status Transition Notice */}
             <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-2xl text-xs flex items-center space-x-2 text-emerald-900">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -499,12 +460,12 @@ export function WithholdingCertificateModal({
               {isExecuting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Guardando y Notificando...</span>
+                  <span>Guardando...</span>
                 </>
               ) : (
                 <>
-                  <Send className="w-4 h-4 mr-1" />
-                  <span>Guardar y Enviar Certificado</span>
+                  <FileCheck className="w-4 h-4 mr-1" />
+                  <span>Guardar Certificado</span>
                 </>
               )}
             </button>

@@ -1479,6 +1479,9 @@ export default function App() {
     setExpenses((prev) =>
       prev.map((e) => (e.id === timestamped.id ? timestamped : e))
     );
+    if (viewingReceiptExpense && viewingReceiptExpense.id === timestamped.id) {
+      setViewingReceiptExpense(timestamped);
+    }
     try {
       await upsertCentralExpenses([timestamped]);
       await logAuditEvent({
