@@ -13,6 +13,7 @@ import {
   Sparkles,
   Lock,
   UserCheck,
+  Loader2,
 } from 'lucide-react';
 import { AppUserRecord, UserProfile } from '../types';
 import { matchesSearch } from '../utils/helpers';
@@ -20,10 +21,10 @@ import { matchesSearch } from '../utils/helpers';
 interface AdminUsersViewProps {
   users: AppUserRecord[];
   currentUser: UserProfile;
-  onAddUser: (user: AppUserRecord) => void;
-  onUpdateUserRole: (email: string, newRole: 'admin' | 'user') => void;
-  onToggleCcAllOutgoingEmails?: (email: string, ccAll: boolean) => void;
-  onDeleteUser: (email: string) => void;
+  onAddUser: (user: AppUserRecord) => Promise<void> | void;
+  onUpdateUserRole: (email: string, newRole: 'admin' | 'user') => Promise<void> | void;
+  onToggleCcAllOutgoingEmails?: (email: string, ccAll: boolean) => Promise<void> | void;
+  onDeleteUser: (email: string) => Promise<void> | void;
 }
 
 export function AdminUsersView({
@@ -36,6 +37,8 @@ export function AdminUsersView({
 }: AdminUsersViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'user'>('admin');
@@ -49,7 +52,7 @@ export function AdminUsersView({
     return users.filter((u) => matchesSearch([u.name, u.email, u.notes, u.role], searchTerm));
   }, [users, searchTerm]);
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -66,23 +69,30 @@ export function AdminUsersView({
 
     const calculatedName = newName.trim() || cleanEmail.split('@')[0];
 
-    onAddUser({
-      email: cleanEmail,
-      name: calculatedName,
-      role: newRole,
-      ccAllOutgoingEmails: newCcAllOutgoing,
-      notes: newNotes.trim() || undefined,
-      createdAt: new Date().toISOString(),
-      addedBy: currentUser.email,
-    });
+    setIsSavingUser(true);
+    try {
+      await onAddUser({
+        email: cleanEmail,
+        name: calculatedName,
+        role: newRole,
+        ccAllOutgoingEmails: newCcAllOutgoing,
+        notes: newNotes.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        addedBy: currentUser.email,
+      });
 
-    // Reset form
-    setNewEmail('');
-    setNewName('');
-    setNewRole('admin');
-    setNewCcAllOutgoing(false);
-    setNewNotes('');
-    setIsAddingUser(false);
+      // Reset form
+      setNewEmail('');
+      setNewName('');
+      setNewRole('admin');
+      setNewCcAllOutgoing(false);
+      setNewNotes('');
+      setIsAddingUser(false);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error al guardar el usuario en Firestore.');
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   const adminCount = users.filter((u) => u.role === 'admin').length;
@@ -239,16 +249,25 @@ export function AdminUsersView({
           <div className="flex items-center justify-end space-x-2 pt-2">
             <button
               type="button"
+              disabled={isSavingUser}
               onClick={() => setIsAddingUser(false)}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+              disabled={isSavingUser}
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs disabled:opacity-50 flex items-center space-x-1.5"
             >
-              Guardar Usuario en Firestore
+              {isSavingUser ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Guardando en Firestore...</span>
+                </>
+              ) : (
+                <span>Guardar Usuario en Firestore</span>
+              )}
             </button>
           </div>
         </form>
@@ -468,22 +487,38 @@ export function AdminUsersView({
             <div className="flex items-center space-x-3 pt-2">
               <button
                 type="button"
+                disabled={isDeletingUser}
                 onClick={() => setUserToDelete(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                onClick={() => {
+                disabled={isDeletingUser}
+                onClick={async () => {
                   if (userToDelete) {
-                    onDeleteUser(userToDelete.email);
-                    setUserToDelete(null);
+                    setIsDeletingUser(true);
+                    try {
+                      await onDeleteUser(userToDelete.email);
+                      setUserToDelete(null);
+                    } catch (err: any) {
+                      alert('Error al eliminar usuario en Firestore: ' + (err.message || err));
+                    } finally {
+                      setIsDeletingUser(false);
+                    }
                   }
                 }}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs disabled:opacity-50 flex items-center justify-center space-x-1.5"
               >
-                Sí, Eliminar
+                {isDeletingUser ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Eliminando de Firestore...</span>
+                  </>
+                ) : (
+                  <span>Sí, Eliminar</span>
+                )}
               </button>
             </div>
           </div>

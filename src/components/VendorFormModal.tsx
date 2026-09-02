@@ -21,7 +21,7 @@ import { formatCuit } from '../utils/helpers';
 interface VendorFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (vendorData: Omit<Vendor, 'id' | 'createdAt'>) => void;
+  onSave: (vendorData: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
   initialData?: Partial<Vendor> | null;
   existingVendors?: Vendor[];
   title?: string;
@@ -44,6 +44,7 @@ export function VendorFormModal({
   const [name, setName] = useState('');
   const [cuit, setCuit] = useState('');
   const [notes, setNotes] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [bankDetails, setBankDetails] = useState<UserBankDetails>({
     bankName: '',
     accountType: 'Indefinido',
@@ -129,7 +130,7 @@ export function VendorFormModal({
       setDocFeedback(null);
       setPrevValuesBeforeOcr(null);
       setIsProcessingDoc(false);
-      setIsCuitApproved(false);
+      setIsCuitApproved(Boolean(initialData?.id));
       setShowCuitConfirmDialog(false);
     }
     prevIsOpenRef.current = isOpen;
@@ -261,14 +262,14 @@ export function VendorFormModal({
           } else {
             setDocFeedback({
               type: 'warning',
-              message: '⚠️ La IA no pudo extraer datos claros del documento adjunto.',
+              message: result.error || '⚠️ La IA no pudo extraer datos claros del documento adjunto.',
             });
           }
         } catch (err: any) {
           console.error('Error processing vendor document:', err);
           setDocFeedback({
             type: 'error',
-            message: '❌ Error al comunicarse con el servicio de lectura IA.',
+            message: err?.message || '❌ Error al comunicarse con el servicio de lectura IA.',
           });
         } finally {
           setIsProcessingDoc(false);
@@ -307,7 +308,7 @@ export function VendorFormModal({
 
   if (!isOpen) return null;
 
-  const executeSave = () => {
+  const executeSave = async () => {
     const hasAnyBank = Boolean(
       bankDetails.bankName?.trim() ||
         bankDetails.cbuCvu?.trim() ||
@@ -334,8 +335,15 @@ export function VendorFormModal({
         : undefined,
     };
 
-    onSave(payload);
-    onClose();
+    setIsSaving(true);
+    try {
+      await onSave(payload);
+      onClose();
+    } catch (err: any) {
+      alert('Error al guardar proveedor en Firestore: ' + (err.message || err));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -772,15 +780,16 @@ export function VendorFormModal({
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-3 shrink-0">
           <button
             type="button"
+            disabled={isSaving}
             onClick={onClose}
-            className="px-4.5 py-2.5 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+            className="px-4.5 py-2.5 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
           >
             Cancelar
           </button>
           <button
             type="submit"
             form="vendor-form-modal-form"
-            disabled={validation.hasBlockingError || (Boolean(validation.cuitCollision) && !isCuitApproved)}
+            disabled={isSaving || validation.hasBlockingError || (Boolean(validation.cuitCollision) && !isCuitApproved)}
             className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95 flex items-center space-x-1.5"
             title={
               validation.hasBlockingError
@@ -790,8 +799,17 @@ export function VendorFormModal({
                 : undefined
             }
           >
-            <Check className="w-4 h-4" />
-            <span>{initialData ? 'Guardar Cambios' : 'Crear Proveedor'}</span>
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Guardando en Firestore...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                <span>{initialData ? 'Guardar Cambios' : 'Crear Proveedor'}</span>
+              </>
+            )}
           </button>
         </div>
 

@@ -41,6 +41,7 @@ import {
   exportToCSV,
   generateDriveFileName,
   matchesSearch,
+  findVendorByCuitOrName,
 } from '../utils/helpers';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -108,14 +109,15 @@ export function AdminMovementView({
 
   const handleSaveVendorFromExpense = (expense: Expense) => {
     if (!expense.vendor?.trim() || !onAddVendor) return;
-    const existing = vendors.find(
-      (v) => (v.name || '').toLowerCase() === expense.vendor.trim().toLowerCase() ||
-             (expense.cuit && v.cuit && v.cuit === expense.cuit)
+    const existing = findVendorByCuitOrName(vendors, expense.cuit, expense.vendor, expense.bankDetails);
+    const isSameVendorName = Boolean(
+      existing && (existing.name || '').trim().toLowerCase() === expense.vendor.trim().toLowerCase()
     );
-    if (existing && onUpdateVendor) {
+
+    if (existing && isSameVendorName && onUpdateVendor) {
       onUpdateVendor({
         ...existing,
-        name: expense.vendor.trim(),
+        name: existing.name,
         cuit: expense.cuit || existing.cuit,
         bankDetails: {
           ...existing.bankDetails,
@@ -139,7 +141,7 @@ export function AdminMovementView({
       });
       setVendorSavedToast(`Proveedor "${expense.vendor}" guardado en el catálogo.`);
     }
-    setTimeout(() => setVendorSavedToast(null), 3500);
+    setTimeout(() => setVendorSavedToast(null), 3000);
   };
 
   // Selected Row IDs
@@ -562,10 +564,7 @@ export function AdminMovementView({
                   const hasBankData = Boolean(expense.bankDetails?.cbuCvu || expense.bankDetails?.alias);
                   const isVendorInCatalog = Boolean(
                     expense.vendor?.trim() &&
-                    vendors.some(
-                      (v) => (v.name || '').toLowerCase() === expense.vendor.trim().toLowerCase() ||
-                             (expense.cuit && v.cuit && v.cuit === expense.cuit)
-                    )
+                    findVendorByCuitOrName(vendors, expense.cuit, expense.vendor)
                   );
                   const uploadDt = formatUploadDateTime(expense.createdAt, expense.date);
                   const paymentDateRaw = expense.reimbursedAt || expense.paymentConfirmedAt || expense.paymentProofAt;
@@ -900,11 +899,7 @@ export function AdminMovementView({
             const hasBankData = Boolean(expense.bankDetails?.cbuCvu || expense.bankDetails?.alias);
             const isVendorInCatalog = Boolean(
               expense.vendor &&
-                vendors.some(
-                  (v) =>
-                    (v.name && v.name.toLowerCase().trim() === expense.vendor.toLowerCase().trim()) ||
-                    (expense.cuit && v.cuit && v.cuit === expense.cuit)
-                )
+              findVendorByCuitOrName(vendors, expense.cuit, expense.vendor)
             );
             const uploadDt = formatUploadDateTime(expense.createdAt, expense.date);
             const paymentDateRaw = expense.reimbursedAt || expense.paymentConfirmedAt || expense.paymentProofAt;

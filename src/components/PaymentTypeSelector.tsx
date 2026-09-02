@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
-import { matchesSearch } from '../utils/helpers';
+import { matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { AccountSelector } from './AccountSelector';
 
 interface PaymentTypeSelectorProps {
@@ -96,11 +96,9 @@ export function PaymentTypeSelector({
 
     // 1. If PAGO_PROVEEDOR: ONLY suggest from the official Vendors catalog (strictly 1:1 with Proveedores tab)
     if (paymentType === 'PAGO_PROVEEDOR') {
-      const seen = new Set<string>();
       vendors.forEach((v) => {
         const vName = (v.name || '').trim();
-        if (vName && !seen.has(vName.toLowerCase())) {
-          seen.add(vName.toLowerCase());
+        if (vName) {
           list.push({
             source: 'vendor',
             name: vName,
@@ -196,21 +194,11 @@ export function PaymentTypeSelector({
 
   // Matched vendor from catalog (to show observations/notes)
   const matchedVendor = useMemo(() => {
-    const query = (searchQuery || bankDetails.accountHolder || '').trim().toLowerCase();
+    const query = (searchQuery || bankDetails.accountHolder || '').trim();
     const cuit = (bankDetails.cuitCuil || '').trim();
     if (!query && !cuit) return null;
 
-    return (
-      vendors.find((v) => {
-        const vName = (v.name || '').trim().toLowerCase();
-        const vCuit = (v.cuit || v.bankDetails?.cuitCuil || '').trim();
-        const vHolder = (v.bankDetails?.accountHolder || '').trim().toLowerCase();
-
-        if (cuit && vCuit && vCuit === cuit) return true;
-        if (query && (vName === query || vHolder === query)) return true;
-        return false;
-      }) || null
-    );
+    return findVendorByCuitOrName(vendors, cuit, query) || null;
   }, [vendors, searchQuery, bankDetails.accountHolder, bankDetails.cuitCuil]);
 
   const options: {
@@ -544,12 +532,9 @@ export function PaymentTypeSelector({
               onAddVendor={onAddVendor}
               onUpdateVendor={onUpdateVendor}
               placeholder="Seleccionar cuenta..."
-              onSelectAccount={({ bankDetails: newBank, vendorName: newVendor, cuit: newCuit, notes: newNotes }) => {
+              onSelectAccount={({ bankDetails: newBank, cuit: newCuit, notes: newNotes }) => {
                 onChangeBankDetails(newBank);
-                if (newVendor && onSelectVendorName) {
-                  onSelectVendorName(newVendor);
-                }
-                if (newCuit !== undefined && onChangeCuit) {
+                if (newCuit !== undefined && !cuit && onChangeCuit) {
                   onChangeCuit(newCuit);
                 }
                 if (newNotes !== undefined && onChangeVendorNotes) {
@@ -575,7 +560,7 @@ export function PaymentTypeSelector({
           {/* Account Detail Fields - Read Only taking data from selected account */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
             <div className="sm:col-span-2">
-              <label className="text-[10px] font-bold text-slate-600 block mb-1">Nombre o Razón Social</label>
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">Titular de Cuenta Bancaria</label>
               <input
                 type="text"
                 readOnly
@@ -630,7 +615,7 @@ export function PaymentTypeSelector({
               />
             </div>
             <div className="sm:col-span-2">
-              <label className="text-[10px] font-bold text-slate-600 block mb-1">CUIT Proveedor</label>
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">CUIT de la Cuenta Bancaria</label>
               <input
                 type="text"
                 readOnly

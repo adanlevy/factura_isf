@@ -21,6 +21,7 @@ import {
   BookmarkCheck,
   Edit2,
   Plus,
+  Loader2,
 } from 'lucide-react';
 import { Expense, ReimbursementStatus, PaymentMethod, UserBankDetails, UserProfile, Vendor, ExpensePaymentType, CostCenter } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
@@ -28,7 +29,7 @@ import {
   getSmartSortedCostCenters,
   recordCategoryCostCenterUsage,
 } from '../utils/sorting';
-import { generateDriveFileName } from '../utils/helpers';
+import { generateDriveFileName, findVendorByCuitOrName, cleanCuit } from '../utils/helpers';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { PaymentTypeSelector } from './PaymentTypeSelector';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -38,7 +39,7 @@ interface EditExpenseModalProps {
   expense: Expense | null;
   isOpen: boolean;
   onClose: () => void;
-  onUpdate: (updatedExpense: Expense) => void;
+  onUpdate: (updatedExpense: Expense) => Promise<void> | void;
   onProcessPayment?: (expense: Expense) => void;
   allowStatusChange?: boolean;
   availableProjects: string[];
@@ -47,8 +48,8 @@ interface EditExpenseModalProps {
   existingExpenses?: Expense[];
   vendors?: Vendor[];
   costCenters?: CostCenter[];
-  onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onUpdateVendor?: (vendor: Vendor) => Promise<void> | void;
 }
 
 export function EditExpenseModal({
@@ -88,22 +89,15 @@ export function EditExpenseModal({
       reimbursementStatus: initialStatus,
     };
   });
+  const [isSaving, setIsSaving] = useState(false);
   const [vendorSavedToast, setVendorSavedToast] = useState<string | null>(null);
   const [vendorNotes, setVendorNotes] = useState<string>('');
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const [vendorModalInitialData, setVendorModalInitialData] = useState<Vendor | undefined>(undefined);
 
   const matchedCatalogVendor = useMemo(() => {
-    if (!formData?.vendor?.trim()) return null;
-    const vName = formData.vendor.trim().toLowerCase();
-    const vCuit = (formData.cuit || '').trim();
-    return (
-      vendors.find((v) => {
-        const nameMatch = (v.name || '').trim().toLowerCase() === vName;
-        const cuitMatch = Boolean(vCuit && v.cuit && v.cuit.trim() === vCuit);
-        return nameMatch || cuitMatch;
-      }) || null
-    );
+    if (!formData?.vendor?.trim() && !formData?.cuit?.trim()) return null;
+    return findVendorByCuitOrName(vendors, formData?.cuit, formData?.vendor) || null;
   }, [vendors, formData?.vendor, formData?.cuit]);
 
   const [paymentType, setPaymentType] = useState<ExpensePaymentType>(() => {
@@ -213,11 +207,7 @@ export function EditExpenseModal({
         reimbursementStatus: initialReimbursementStatus,
       });
 
-      const matchedVendor = vendors.find(
-        (v) =>
-          (v.name || '').trim().toLowerCase() === (expense.vendor || '').trim().toLowerCase() ||
-          (expense.cuit && v.cuit && v.cuit === expense.cuit)
-      );
+      const matchedVendor = findVendorByCuitOrName(vendors, expense.cuit, expense.vendor);
       setVendorNotes(matchedVendor?.notes || '');
 
       if (expense.bankDetails && (expense.bankDetails.cbuCvu || expense.bankDetails.alias || expense.bankDetails.bankName || expense.bankDetails.accountHolder)) {
@@ -306,7 +296,7 @@ export function EditExpenseModal({
     }
   };
 
-  const handleReimbursementStatusChange = (newStatus: ReimbursementStatus) => {
+  const handleReimbursementStatusChange = async (newStatus: ReimbursementStatus) => {
     if (!formData) return;
 
     if (newStatus === 'REIMBURSED') {
@@ -336,11 +326,18 @@ export function EditExpenseModal({
         updatedAt: new Date().toISOString(),
       };
 
-      onUpdate(updatedExpense);
-      onClose();
+      setIsSaving(true);
+      try {
+        await onUpdate(updatedExpense);
+        onClose();
 
-      if (onProcessPayment) {
-        onProcessPayment(updatedExpense);
+        if (onProcessPayment) {
+          onProcessPayment(updatedExpense);
+        }
+      } catch (err: any) {
+        alert('Error al actualizar comprobante en Firestore: ' + (err.message || err));
+      } finally {
+        setIsSaving(false);
       }
     } else {
       setFormData((prev) => (prev ? { ...prev, reimbursementStatus: newStatus } : prev));
@@ -349,7 +346,7 @@ export function EditExpenseModal({
 
   if (!isOpen || !formData) return null;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.amount || formData.amount <= 0) {
       alert('El Monto Total es obligatorio y debe ser mayor a 0.');
@@ -378,42 +375,6 @@ export function EditExpenseModal({
       }).catch((err) => console.warn('Bank details notification error:', err));
     }
 
-    const existingVendor = vendors.find(
-      (v) =>
-        (v.name || '').trim().toLowerCase() === (formData.vendor || '').trim().toLowerCase() ||
-        (formData.cuit && v.cuit && v.cuit === formData.cuit)
-    );
-
-    if (hasBank && existingVendor && onUpdateVendor) {
-      const nameDiff = existingVendor.name.trim() !== (formData.vendor || '').trim();
-      const cuitDiff = (existingVendor.cuit || '').trim() !== (formData.cuit || '').trim();
-      const notesDiff = (existingVendor.notes || '').trim() !== vendorNotes.trim();
-
-      const curBank = bankData || { bankName: '', accountType: 'Indefinido', cbuCvu: '', alias: '', accountHolder: '' };
-      const prevBank = existingVendor.bankDetails || { bankName: '', accountType: 'Indefinido', cbuCvu: '', alias: '', accountHolder: '' };
-
-      const bankDiff =
-        (curBank.bankName || '').trim() !== (prevBank.bankName || '').trim() ||
-        (curBank.accountType || '') !== (prevBank.accountType || '') ||
-        (curBank.cbuCvu || '').trim() !== (prevBank.cbuCvu || '').trim() ||
-        (curBank.alias || '').trim() !== (prevBank.alias || '').trim() ||
-        (curBank.accountHolder || '').trim() !== (prevBank.accountHolder || '').trim();
-
-      if (nameDiff || cuitDiff || notesDiff || bankDiff) {
-        onUpdateVendor({
-          ...existingVendor,
-          name: (formData.vendor || '').trim(),
-          cuit: (formData.cuit || '').trim() || existingVendor.cuit,
-          notes: vendorNotes.trim(),
-          bankDetails: {
-            ...existingVendor.bankDetails,
-            ...bankData,
-            accountHolder: bankData.accountHolder || (formData.vendor || '').trim(),
-          },
-        });
-      }
-    }
-
     const isPendingType = paymentType === 'REINTEGRO' || paymentType === 'PAGO_PROVEEDOR';
     const computedStatus: ReimbursementStatus = allowStatusChange
       ? (isPendingType
@@ -423,30 +384,37 @@ export function EditExpenseModal({
           ? (expense?.reimbursementStatus === 'REIMBURSED' ? 'REIMBURSED' : 'PENDING')
           : 'NOT_APPLICABLE');
 
-    onUpdate({
-      ...formData,
-      amount: Number(formData.amount),
-      project: formData.project.trim(),
-      paymentType: paymentType,
-      reimbursable: isPendingType,
-      reimbursementStatus: computedStatus,
-      paymentMethod:
-        paymentType === 'REINTEGRO'
-          ? 'Reintegro'
-          : paymentType === 'PAGO_PROVEEDOR'
-          ? 'Pago a Proveedor'
-          : paymentType === 'TARJETA_CORPORATIVA'
-          ? 'Tarjeta Corporativa'
-          : 'Tarjeta Débito Galicia',
-      bankDetails: hasBank ? bankData : undefined,
-      accountingNotes: formData.accountingNotes || formData.notes || '',
-      reimbursedAt:
-        computedStatus === 'REIMBURSED'
-          ? (formData.reimbursedAt || expense?.reimbursedAt || new Date().toISOString().slice(0, 10))
-          : undefined,
-      updatedAt: new Date().toISOString(),
-    });
-    onClose();
+    setIsSaving(true);
+    try {
+      await onUpdate({
+        ...formData,
+        amount: Number(formData.amount),
+        project: formData.project.trim(),
+        paymentType: paymentType,
+        reimbursable: isPendingType,
+        reimbursementStatus: computedStatus,
+        paymentMethod:
+          paymentType === 'REINTEGRO'
+            ? 'Reintegro'
+            : paymentType === 'PAGO_PROVEEDOR'
+            ? 'Pago a Proveedor'
+            : paymentType === 'TARJETA_CORPORATIVA'
+            ? 'Tarjeta Corporativa'
+            : 'Tarjeta Débito Galicia',
+        bankDetails: hasBank ? bankData : undefined,
+        accountingNotes: formData.accountingNotes || formData.notes || '',
+        reimbursedAt:
+          computedStatus === 'REIMBURSED'
+            ? (formData.reimbursedAt || expense?.reimbursedAt || new Date().toISOString().slice(0, 10))
+            : undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      onClose();
+    } catch (err: any) {
+      alert('Error al guardar comprobante en Firestore: ' + (err.message || err));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const modalContent = (
@@ -470,8 +438,9 @@ export function EditExpenseModal({
             </div>
           </div>
           <button
+            disabled={isSaving}
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -713,11 +682,10 @@ export function EditExpenseModal({
             onUpdateVendor={onUpdateVendor}
             vendorName={formData.vendor}
             cuit={formData.cuit}
-            onSelectVendorName={(newName) => {
-              setFormData((prev) => (prev ? { ...prev, vendor: newName } : prev));
-            }}
             onChangeCuit={(newCuit) => {
-              setFormData((prev) => (prev ? { ...prev, cuit: newCuit } : prev));
+              if (!formData.cuit) {
+                setFormData((prev) => (prev ? { ...prev, cuit: newCuit } : prev));
+              }
             }}
             existingExpenses={existingExpenses}
             reimbursementStatus={formData.reimbursementStatus}
@@ -780,16 +748,25 @@ export function EditExpenseModal({
           <div className="flex justify-end space-x-3 pt-4 border-t border-slate-200">
             <button
               type="button"
+              disabled={isSaving}
               onClick={onClose}
-              className="px-4.5 py-2.5 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer transition"
+              className="px-4.5 py-2.5 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer transition disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95"
+              disabled={isSaving}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95 disabled:opacity-50 flex items-center space-x-2"
             >
-              Guardar Todos los Cambios
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Guardando en Firestore...</span>
+                </>
+              ) : (
+                <span>Guardar Todos los Cambios</span>
+              )}
             </button>
           </div>
         </form>

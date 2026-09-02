@@ -15,9 +15,10 @@ import {
   ArrowUpDown,
   Clock,
   Receipt,
+  Loader2,
 } from 'lucide-react';
 import { Vendor, Expense } from '../types';
-import { formatCurrency, formatDate, formatTransferDetails, matchesSearch } from '../utils/helpers';
+import { formatCurrency, formatDate, formatTransferDetails, matchesSearch, cleanCuit } from '../utils/helpers';
 import { normalizeVendorBankDetails } from '../utils/cloudSync';
 import { VendorFormModal } from './VendorFormModal';
 
@@ -33,10 +34,10 @@ interface VendorsViewProps {
   vendors: Vendor[];
   expenses: Expense[];
   availableCategories?: string[];
-  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => void;
-  onUpdateVendor: (vendor: Vendor) => void;
-  onDeleteVendor: (id: string) => void;
+  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
+  onUpdateVendor: (vendor: Vendor) => Promise<void> | void;
+  onDeleteVendor: (id: string) => Promise<void> | void;
   onViewVendorExpenses: (vendorName: string) => void;
 }
 
@@ -55,6 +56,7 @@ export function VendorsView({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [vendorToDelete, setVendorToDelete] = useState<Vendor | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Stats calculation per vendor
   const vendorStats = useMemo(() => {
@@ -132,17 +134,24 @@ export function VendorsView({
   const matchingExpensesForDelete = useMemo(() => {
     if (!vendorToDelete) return [];
     const vName = (vendorToDelete.name || '').trim().toLowerCase();
-    const vCuitRaw = (vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil || '').trim();
-    const vCuitDigits = vCuitRaw.replace(/[^0-9]/g, '');
+    const vCuitDigits = cleanCuit(vendorToDelete.cuit || vendorToDelete.bankDetails?.cuitCuil);
     const vCbu = (vendorToDelete.bankDetails?.cbuCvu || '').trim();
     const vAlias = (vendorToDelete.bankDetails?.alias || '').trim().toLowerCase();
     const vHolder = (vendorToDelete.bankDetails?.accountHolder || '').trim().toLowerCase();
 
+    const otherVendorsWithSameCuit = vendors.filter(
+      (v) => v.id !== vendorToDelete.id && cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === vCuitDigits
+    );
+    const otherVendorNames = new Set(
+      otherVendorsWithSameCuit.map((v) => (v.name || '').trim().toLowerCase()).filter(Boolean)
+    );
+
     return expenses.filter((e) => {
       if (!e.bankDetails) return false;
       const expVendor = (e.vendor || '').trim().toLowerCase();
-      const expCuitRaw = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
-      const expCuitDigits = expCuitRaw.replace(/[^0-9]/g, '');
+      if (otherVendorNames.has(expVendor)) return false;
+
+      const expCuitDigits = cleanCuit(e.cuit || e.bankDetails?.cuitCuil);
       const expCbu = (e.bankDetails?.cbuCvu || '').trim();
       const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
       const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
@@ -150,13 +159,13 @@ export function VendorsView({
       return Boolean(
         (vName && expVendor === vName) ||
         (vName && expHolder && expHolder === vName) ||
-        (vCuitDigits && expCuitDigits && vCuitDigits === expCuitDigits) ||
         (vCbu && expCbu && vCbu === expCbu) ||
         (vAlias && expAlias && vAlias === expAlias) ||
-        (vHolder && expHolder && vHolder === expHolder)
+        (vHolder && expHolder && vHolder === expHolder) ||
+        (otherVendorNames.size === 0 && vCuitDigits && expCuitDigits && vCuitDigits === expCuitDigits)
       );
     });
-  }, [vendorToDelete, expenses]);
+  }, [vendorToDelete, expenses, vendors]);
 
   return (
     <div className="space-y-6">
@@ -403,8 +412,8 @@ export function VendorsView({
           subtitle="Carga los datos del proveedor y datos de transferencia bancaria"
           existingVendors={vendors}
           onClose={() => setIsCreateModalOpen(false)}
-          onSave={(data) => {
-            onAddVendor(data);
+          onSave={async (data) => {
+            await onAddVendor(data);
             setIsCreateModalOpen(false);
           }}
         />
@@ -419,8 +428,8 @@ export function VendorsView({
           title="Editar Datos de Proveedor"
           subtitle="Modifica datos contables o cuentas bancarias del proveedor"
           onClose={() => setEditingVendor(null)}
-          onSave={(data) => {
-            onUpdateVendor({ ...editingVendor, ...data });
+          onSave={async (data) => {
+            await onUpdateVendor({ ...editingVendor, ...data });
             setEditingVendor(null);
           }}
         />
@@ -493,28 +502,46 @@ export function VendorsView({
             <div className="flex items-center space-x-3 pt-2">
               <button
                 type="button"
+                disabled={isDeleting}
                 onClick={() => setVendorToDelete(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                onClick={() => {
+                disabled={isDeleting}
+                onClick={async () => {
                   if (vendorToDelete) {
-                    onDeleteVendor(vendorToDelete.id);
-                    setVendorToDelete(null);
+                    setIsDeleting(true);
+                    try {
+                      await onDeleteVendor(vendorToDelete.id);
+                      setVendorToDelete(null);
+                    } catch (err: any) {
+                      alert('Error al eliminar proveedor: ' + (err.message || err));
+                    } finally {
+                      setIsDeleting(false);
+                    }
                   }
                 }}
-                className={`flex-1 py-2.5 text-white text-xs font-bold rounded-2xl transition cursor-pointer shadow-md active:scale-95 ${
+                className={`flex-1 py-2.5 text-white text-xs font-bold rounded-2xl transition cursor-pointer shadow-md active:scale-95 disabled:opacity-50 flex items-center justify-center space-x-1.5 ${
                   matchingExpensesForDelete.length > 0
                     ? 'bg-amber-600 hover:bg-amber-700'
                     : 'bg-rose-600 hover:bg-rose-700'
                 }`}
               >
-                {matchingExpensesForDelete.length > 0
-                  ? `Sí, Eliminar y Desvincular Cuentas (${matchingExpensesForDelete.length})`
-                  : 'Sí, Eliminar Proveedor'}
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Eliminando de Firestore...</span>
+                  </>
+                ) : (
+                  <span>
+                    {matchingExpensesForDelete.length > 0
+                      ? `Sí, Eliminar y Desvincular Cuentas (${matchingExpensesForDelete.length})`
+                      : 'Sí, Eliminar Proveedor'}
+                  </span>
+                )}
               </button>
             </div>
           </div>
@@ -528,7 +555,7 @@ interface VendorImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingVendors: Vendor[];
-  onImport: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => void;
+  onImport: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
 }
 
 function VendorImportModal({
@@ -539,6 +566,7 @@ function VendorImportModal({
 }: VendorImportModalProps) {
   const [rawText, setRawText] = useState('');
   const [parsedItems, setParsedItems] = useState<Omit<Vendor, 'id' | 'createdAt'>[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -694,9 +722,17 @@ function VendorImportModal({
     reader.readAsText(file);
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     if (parsedItems.length === 0) return;
-    onImport(parsedItems);
+    setIsImporting(true);
+    try {
+      await onImport(parsedItems);
+      onClose();
+    } catch (err: any) {
+      alert('Error al importar proveedores en Firestore: ' + (err.message || err));
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   return (
@@ -801,19 +837,29 @@ function VendorImportModal({
         <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
           <button
             type="button"
+            disabled={isImporting}
             onClick={onClose}
-            className="px-4 py-2 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+            className="px-4 py-2 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer disabled:opacity-50"
           >
             Cancelar
           </button>
           <button
             type="button"
-            disabled={parsedItems.length === 0}
+            disabled={parsedItems.length === 0 || isImporting}
             onClick={handleConfirmImport}
             className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-2xl text-xs font-bold shadow-md cursor-pointer transition active:scale-95 flex items-center space-x-1.5"
           >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>Importar {parsedItems.length > 0 ? `${parsedItems.length} Proveedores` : ''}</span>
+            {isImporting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Importando a Firestore...</span>
+              </>
+            ) : (
+              <>
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Importar {parsedItems.length > 0 ? `${parsedItems.length} Proveedores` : ''}</span>
+              </>
+            )}
           </button>
         </div>
       </div>

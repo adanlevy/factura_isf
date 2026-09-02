@@ -1314,15 +1314,14 @@ export function SmartScannerModal({
                                   prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                                 );
                               }}
-                              onSelectAccount={({ bankDetails, vendorName, cuit }) => {
+                              onSelectAccount={({ bankDetails, cuit }) => {
                                 setQueue((prev) =>
                                   prev.map((q) =>
                                     q.id === item.id
                                       ? {
                                           ...q,
                                           bankDetails,
-                                          vendor: vendorName || q.vendor,
-                                          cuit: cuit || q.cuit,
+                                          cuit: q.cuit || cuit,
                                         }
                                       : q
                                   )
@@ -1661,15 +1660,14 @@ export function SmartScannerModal({
                                 prev.map((q) => (q.id === item.id ? { ...q, bankDetails: newBank } : q))
                               );
                             }}
-                            onSelectAccount={({ bankDetails, vendorName, cuit }) => {
+                            onSelectAccount={({ bankDetails, cuit }) => {
                               setQueue((prev) =>
                                 prev.map((q) =>
                                   q.id === item.id
                                     ? {
                                         ...q,
                                         bankDetails,
-                                        vendor: vendorName || q.vendor,
-                                        cuit: cuit || q.cuit,
+                                        cuit: q.cuit || cuit,
                                       }
                                     : q
                                 )

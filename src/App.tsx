@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord } from './types';
+import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry } from './types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_COST_CENTERS_DATA,
@@ -17,6 +17,7 @@ import { AdminMovementView } from './components/AdminMovementView';
 import { VendorsView } from './components/VendorsView';
 import { AdminUsersView } from './components/AdminUsersView';
 import { SystemAdminView } from './components/SystemAdminView';
+import { AuditLogsView } from './components/AuditLogsView';
 import { AuthProfileModal } from './components/AuthProfileModal';
 import { UserLoginGate } from './components/UserLoginGate';
 import { LegalPagesModal } from './components/LegalPagesModal';
@@ -24,7 +25,7 @@ import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
-import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails } from './utils/helpers';
+import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
@@ -33,6 +34,13 @@ import {
   sendReceiptUploadConfirmationEmail,
   sendNewUserWelcomeEmail,
 } from './utils/googleWorkspace';
+import {
+  subscribeToAuditLogs,
+  fetchCentralAuditLogs,
+  clearCentralAuditLogs,
+  logAuditEvent,
+  computeObjectDiff,
+} from './utils/auditLogger';
 import {
   fetchCentralSync,
   saveCentralExpenses,
@@ -92,6 +100,8 @@ export default function App() {
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(DEFAULT_APP_USERS);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
   // Modal States
   const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
@@ -231,6 +241,11 @@ export default function App() {
       }
     });
 
+    const unsubscribeAuditLogs = subscribeToAuditLogs((incomingLogs) => {
+      if (!isMounted) return;
+      setAuditLogs(incomingLogs);
+    });
+
     // Periodic cloud poll interval to ensure 100% freshness across background tabs
     const pollInterval = setInterval(() => {
       if (!isMounted) return;
@@ -251,6 +266,7 @@ export default function App() {
       clearInterval(pollInterval);
       unsubscribeRealtime();
       unsubscribeUsers();
+      unsubscribeAuditLogs();
     };
   }, [currentUser?.email]);
 
@@ -267,32 +283,52 @@ export default function App() {
   };
 
   // --- VENDOR MANAGEMENT ACTIONS ---
-  const handleAddVendor = (newVendorData: Omit<Vendor, 'id' | 'createdAt'>) => {
+  const handleAddVendor = async (newVendorData: Omit<Vendor, 'id' | 'createdAt'>) => {
     const newVendor: Vendor = {
       ...newVendorData,
       id: `v-${Date.now()}`,
       createdAt: new Date().toISOString(),
     };
-    setVendors((prev) => {
-      const next = [newVendor, ...prev];
-      saveCentralVendors(next);
-      return next;
+    const next = [newVendor, ...vendors];
+    setVendors(next);
+    await saveCentralVendors(next);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'VENDOR_CREATE',
+      actionLabel: 'Creación de Proveedor',
+      entityType: 'vendor',
+      entityId: newVendor.id,
+      entityName: newVendor.name,
+      summary: `Se agregó el proveedor "${newVendor.name}" (${newVendor.cuit || 'Sin CUIT'}) al catálogo.`,
     });
+
     showToast(`✅ Proveedor "${newVendor.name}" añadido al catálogo.`);
   };
 
-  const handleBatchAddVendors = (newVendorsList: Omit<Vendor, 'id' | 'createdAt'>[]) => {
+  const handleBatchAddVendors = async (newVendorsList: Omit<Vendor, 'id' | 'createdAt'>[]) => {
     if (!newVendorsList || newVendorsList.length === 0) return;
     const initialized: Vendor[] = newVendorsList.map((v, idx) => ({
       ...v,
       id: `v-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       createdAt: new Date().toISOString(),
     }));
-    setVendors((prev) => {
-      const next = [...initialized, ...prev];
-      saveCentralVendors(next);
-      return next;
+    const next = [...initialized, ...vendors];
+    setVendors(next);
+    await saveCentralVendors(next);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'VENDOR_CREATE',
+      actionLabel: 'Importación de Proveedores',
+      entityType: 'vendor',
+      entityId: 'batch-import',
+      entityName: `${initialized.length} proveedores`,
+      summary: `Se importaron ${initialized.length} proveedores en lote.`,
     });
+
     showToast(`✅ Se importaron ${initialized.length} proveedores exitosamente.`);
   };
 
@@ -308,13 +344,52 @@ export default function App() {
     const newCuitDigits = newCuit.replace(/[^0-9]/g, '');
 
     // 1. Update vendors state and central persistence
-    setVendors((prev) => {
-      const next = prev.map((v) => (v.id === updatedVendor.id ? updatedVendor : v));
-      saveCentralVendors(next);
-      return next;
+    const nextVendors = vendors.map((v) => (v.id === updatedVendor.id ? updatedVendor : v));
+    setVendors(nextVendors);
+    await saveCentralVendors(nextVendors);
+
+    // Compute diff and audit log
+    const diffs = computeObjectDiff(prevVendor, updatedVendor, {
+      name: 'Razón Social / Nombre',
+      cuit: 'CUIT / CUIL',
+      notes: 'Notas',
+      contactEmail: 'Email de Contacto',
+      phone: 'Teléfono',
+      address: 'Dirección',
+    });
+
+    if (prevVendor?.bankDetails || updatedVendor.bankDetails) {
+      const bankDiffs = computeObjectDiff(prevVendor?.bankDetails, updatedVendor.bankDetails, {
+        bankName: 'Banco',
+        cbuCvu: 'CBU / CVU',
+        alias: 'Alias Bancario',
+        accountHolder: 'Titular de Cuenta',
+        cuitCuil: 'CUIT del Titular',
+        accountType: 'Tipo de Cuenta',
+      });
+      diffs.push(...bankDiffs);
+    }
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'VENDOR_UPDATE',
+      actionLabel: 'Edición de Proveedor',
+      entityType: 'vendor',
+      entityId: updatedVendor.id,
+      entityName: updatedVendor.name,
+      summary: `Se actualizaron los datos del proveedor "${updatedVendor.name}".`,
+      changes: diffs.length > 0 ? diffs : undefined,
     });
 
     // 2. Cascade update matching expenses
+    const otherVendorsWithSameCuit = vendors.filter(
+      (v) => v.id !== updatedVendor.id && cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === (newCuitDigits || prevCuitDigits)
+    );
+    const otherVendorNames = new Set(
+      otherVendorsWithSameCuit.map((v) => (v.name || '').trim().toLowerCase()).filter(Boolean)
+    );
+
     const updatedExpensesList: Expense[] = [];
     const updatedExpenses = expenses.map((e) => {
       const isPersonalReimbursement = Boolean(
@@ -324,20 +399,35 @@ export default function App() {
       if (isPersonalReimbursement) return e;
 
       const expVendor = (e.vendor || '').trim().toLowerCase();
+      // Guard: If this expense belongs to another distinct vendor that shares this CUIT, do not touch it
+      if (otherVendorNames.has(expVendor)) {
+        return e;
+      }
+
       const expCuitDigits = (e.cuit || e.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
       const expCbu = (e.bankDetails?.cbuCvu || '').trim();
       const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
       const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
 
-      const isMatch = Boolean(
+      const isDirectNameMatch = Boolean(
         (prevName && expVendor === prevName) ||
         (newName && expVendor === newName.toLowerCase()) ||
-        (prevName && expHolder && expHolder === prevName) ||
-        (prevCuitDigits && expCuitDigits && prevCuitDigits === expCuitDigits) ||
-        (newCuitDigits && expCuitDigits && newCuitDigits === expCuitDigits) ||
+        (prevName && expHolder && expHolder === prevName)
+      );
+
+      const isDirectBankMatch = Boolean(
         (prevCbu && expCbu && prevCbu === expCbu) ||
         (prevAlias && expAlias && prevAlias === expAlias)
       );
+
+      // Only match by CUIT if no other vendor shares this CUIT or if name also aligns
+      const isCuitOnlyMatch = Boolean(
+        otherVendorNames.size === 0 &&
+        ((prevCuitDigits && expCuitDigits && prevCuitDigits === expCuitDigits) ||
+         (newCuitDigits && expCuitDigits && newCuitDigits === expCuitDigits))
+      );
+
+      const isMatch = isDirectNameMatch || isDirectBankMatch || isCuitOnlyMatch;
 
       if (isMatch) {
         const updated: Expense = {
@@ -387,7 +477,18 @@ export default function App() {
   const handleDeleteVendor = async (id: string) => {
     const vendorToDelete = vendors.find((v) => v.id === id);
     setVendors((prev) => prev.filter((v) => v.id !== id));
-    deleteCentralVendors([id]);
+    await deleteCentralVendors([id]);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'VENDOR_DELETE',
+      actionLabel: 'Eliminación de Proveedor',
+      entityType: 'vendor',
+      entityId: id,
+      entityName: vendorToDelete?.name || id,
+      summary: `Se eliminó el proveedor "${vendorToDelete?.name || id}" del catálogo.`,
+    });
 
     if (vendorToDelete) {
       const vName = (vendorToDelete.name || '').trim().toLowerCase();
@@ -397,23 +498,41 @@ export default function App() {
       const vAlias = (vendorToDelete.bankDetails?.alias || '').trim().toLowerCase();
       const vHolder = (vendorToDelete.bankDetails?.accountHolder || '').trim().toLowerCase();
 
+      const otherVendorsWithSameCuit = vendors.filter(
+        (v) => v.id !== id && cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === vCuitDigits
+      );
+      const otherVendorNames = new Set(
+        otherVendorsWithSameCuit.map((v) => (v.name || '').trim().toLowerCase()).filter(Boolean)
+      );
+
       const updatedExpensesList: Expense[] = [];
       const updatedExpenses = expenses.map((e) => {
         const expVendor = (e.vendor || '').trim().toLowerCase();
+        if (otherVendorNames.has(expVendor)) {
+          return e;
+        }
+
         const expCuitRaw = (e.cuit || e.bankDetails?.cuitCuil || '').trim();
         const expCuitDigits = expCuitRaw.replace(/[^0-9]/g, '');
         const expCbu = (e.bankDetails?.cbuCvu || '').trim();
         const expAlias = (e.bankDetails?.alias || '').trim().toLowerCase();
         const expHolder = (e.bankDetails?.accountHolder || '').trim().toLowerCase();
 
-        const isMatch = Boolean(
+        const isDirectNameMatch = Boolean(
           (vName && expVendor === vName) ||
-          (vName && expHolder && expHolder === vName) ||
-          (vCuitDigits && expCuitDigits && vCuitDigits === expCuitDigits) ||
+          (vName && expHolder && expHolder === vName)
+        );
+        const isDirectBankMatch = Boolean(
           (vCbu && expCbu && vCbu === expCbu) ||
           (vAlias && expAlias && vAlias === expAlias) ||
           (vHolder && expHolder && vHolder === expHolder)
         );
+        const isCuitOnlyMatch = Boolean(
+          otherVendorNames.size === 0 &&
+          vCuitDigits && expCuitDigits && vCuitDigits === expCuitDigits
+        );
+
+        const isMatch = isDirectNameMatch || isDirectBankMatch || isCuitOnlyMatch;
 
         if (isMatch && e.bankDetails) {
           const updated: Expense = {
@@ -801,17 +920,42 @@ export default function App() {
     showToast('✅ Foto reemplazada en Google Drive y plataforma sin alterar los datos contables.');
   };
 
-  const handleDeleteExpense = (id: string) => {
+  const handleDeleteExpense = async (id: string) => {
+    const toDelete = expenses.find((e) => e.id === id);
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    deleteCentralExpenses([id]);
+    await deleteCentralExpenses([id]);
     removeCachedReceiptFile(id).catch(() => {});
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'EXPENSE_DELETE',
+      actionLabel: 'Eliminación de Comprobante',
+      entityType: 'expense',
+      entityId: id,
+      entityName: toDelete ? `${toDelete.vendor} ($${toDelete.amount})` : id,
+      summary: `Se eliminó el comprobante de "${toDelete?.vendor || id}" por ${toDelete ? formatCurrency(toDelete.amount, toDelete.currency) : ''}.`,
+    });
+
     showToast('🗑️ Comprobante eliminado.');
   };
 
-  const handleBatchDeleteExpenses = (ids: string[]) => {
+  const handleBatchDeleteExpenses = async (ids: string[]) => {
     setExpenses((prev) => prev.filter((e) => !ids.includes(e.id)));
-    deleteCentralExpenses(ids);
+    await deleteCentralExpenses(ids);
     ids.forEach((id) => removeCachedReceiptFile(id).catch(() => {}));
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'EXPENSE_DELETE',
+      actionLabel: 'Eliminación en Lote de Comprobantes',
+      entityType: 'expense',
+      entityId: 'batch-delete',
+      entityName: `${ids.length} comprobantes`,
+      summary: `Se eliminaron ${ids.length} comprobantes en lote.`,
+    });
+
     showToast(`🗑️ ${ids.length} comprobante(s) eliminados.`);
   };
 
@@ -837,6 +981,16 @@ export default function App() {
       setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
       try {
         await upsertCentralExpenses([updated]);
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'EXPENSE_STATUS_CHANGE',
+          actionLabel: 'Cambio de Estado',
+          entityType: 'expense',
+          entityId: id,
+          entityName: `${exp.vendor} ($${exp.amount})`,
+          summary: `Se revirtió el estado del comprobante de "${exp.vendor}" a Pendiente de Rendición.`,
+        });
         showToast(`ℹ️ Comprobante de "${exp.vendor}" revertido a estado Pendiente.`);
       } catch (err) {
         console.error('Error updating status in cloud:', err);
@@ -867,6 +1021,16 @@ export default function App() {
     if (modified.length > 0) {
       try {
         await upsertCentralExpenses(modified);
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'EXPENSE_STATUS_CHANGE',
+          actionLabel: 'Liquidación en Lote',
+          entityType: 'expense',
+          entityId: 'batch-settle',
+          entityName: `${modified.length} comprobantes`,
+          summary: `Se liquidaron y marcaron como reintegrados ${modified.length} comprobantes.`,
+        });
         showToast(`✅ Se marcaron ${ids.length} gastos como Reintegrados / Liquidados.`);
       } catch (err) {
         console.error('Error batch updating status in cloud:', err);
@@ -874,29 +1038,60 @@ export default function App() {
     }
   };
 
-  const handleAddNewCostCenter = (newCc: Omit<CostCenter, 'id'>) => {
+  const handleAddNewCostCenter = async (newCc: Omit<CostCenter, 'id'>) => {
     const item = sanitizeCostCenter({
       ...newCc,
       id: `cc-${Date.now()}`,
     });
-    setCostCenters((prev) => {
-      const updated = [...prev, item];
-      saveCentralCostCenters(updated);
-      return updated;
+    const updated = [...costCenters, item];
+    setCostCenters(updated);
+    await saveCentralCostCenters(updated);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'COST_CENTER_CREATE',
+      actionLabel: 'Creación de Centro de Costos',
+      entityType: 'cost_center',
+      entityId: item.id,
+      entityName: item.name,
+      summary: `Se creó el centro de costos "${item.name}" (${item.code}).`,
     });
+
     showToast(`✅ Centro de costos "${item.name}" (${item.code}) creado.`);
   };
 
-  const handleUpdateCostCenter = (updatedCc: CostCenter) => {
+  const handleUpdateCostCenter = async (updatedCc: CostCenter) => {
     const sanitized = sanitizeCostCenter(updatedCc);
     const oldItem = costCenters.find((c) => c.id === sanitized.id);
     const oldName = oldItem ? oldItem.name : sanitized.name;
 
-    setCostCenters((prev) => {
-      const updated = prev.map((cc) => (cc.id === sanitized.id ? sanitized : cc));
-      saveCentralCostCenters(updated);
-      return updated;
+    const updated = costCenters.map((cc) => (cc.id === sanitized.id ? sanitized : cc));
+    setCostCenters(updated);
+    await saveCentralCostCenters(updated);
+
+    const diffs = computeObjectDiff(oldItem, sanitized, {
+      name: 'Nombre del Centro de Costos',
+      code: 'Código / Abreviatura',
+      driveFolder: 'Carpeta en Drive',
+      driveUrl: 'Enlace a Drive',
+      notificationEmails: 'Emails en Copia / Notificaciones',
+      responsibleName: 'Responsable',
+      description: 'Descripción',
     });
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'COST_CENTER_UPDATE',
+      actionLabel: 'Edición de Centro de Costos',
+      entityType: 'cost_center',
+      entityId: sanitized.id,
+      entityName: sanitized.name,
+      summary: `Se actualizó el centro de costos "${sanitized.name}" (${sanitized.code}).`,
+      changes: diffs.length > 0 ? diffs : undefined,
+    });
+
     if (oldName !== sanitized.name) {
       setExpenses((prev) =>
         prev.map((e) => (e.project === oldName ? { ...e, project: sanitized.name } : e))
@@ -905,17 +1100,27 @@ export default function App() {
     showToast(`✅ Centro de costos "${sanitized.name}" (${sanitized.code}) actualizado.`);
   };
 
-  const handleDeleteCostCenter = (id: string) => {
+  const handleDeleteCostCenter = async (id: string) => {
     const toDelete = costCenters.find((c) => c.id === id);
-    setCostCenters((prev) => {
-      const updated = prev.filter((cc) => cc.id !== id);
-      saveCentralCostCenters(updated);
-      return updated;
+    const updated = costCenters.filter((cc) => cc.id !== id);
+    setCostCenters(updated);
+    await saveCentralCostCenters(updated);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'COST_CENTER_DELETE',
+      actionLabel: 'Eliminación de Centro de Costos',
+      entityType: 'cost_center',
+      entityId: id,
+      entityName: toDelete?.name || id,
+      summary: `Se eliminó el centro de costos "${toDelete?.name || id}".`,
     });
+
     showToast(`🗑️ Centro de costos "${toDelete?.name || id}" eliminado.`);
   };
 
-  const handleQuickAddCostCenterName = (costCenterName: string) => {
+  const handleQuickAddCostCenterName = async (costCenterName: string) => {
     if (!costCenters.some((c) => c.name.toLowerCase() === costCenterName.toLowerCase())) {
       const acronym = costCenterName.slice(0, 4).toUpperCase();
       const item: CostCenter = {
@@ -925,51 +1130,112 @@ export default function App() {
         driveFolder: `Carpeta ${costCenterName}`,
         driveUrl: `https://drive.google.com/drive/search?q=${encodeURIComponent(costCenterName)}`,
       };
-      setCostCenters((prev) => {
-        const updated = [...prev, item];
-        saveCentralCostCenters(updated);
-        return updated;
+      const updated = [...costCenters, item];
+      setCostCenters(updated);
+      await saveCentralCostCenters(updated);
+
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'COST_CENTER_CREATE',
+        actionLabel: 'Creación Rápida de Centro de Costos',
+        entityType: 'cost_center',
+        entityId: item.id,
+        entityName: item.name,
+        summary: `Se creó automáticamente el centro de costos "${item.name}" (${item.code}).`,
       });
+
       showToast(`✅ Centro de costos "${costCenterName}" creado.`);
     }
   };
 
-  const handleAddNewCategory = (category: string) => {
+  const handleAddNewCategory = async (category: string) => {
     if (!availableCategories.includes(category)) {
-      setAvailableCategories((prev) => {
-        const updated = [...prev, category];
-        saveCentralCategories(updated);
-        return updated;
+      const updated = [...availableCategories, category];
+      setAvailableCategories(updated);
+      await saveCentralCategories(updated);
+
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'CATEGORY_CREATE',
+        actionLabel: 'Creación de Categoría',
+        entityType: 'category',
+        entityId: category,
+        entityName: category,
+        summary: `Se creó la categoría de gasto "${category}".`,
       });
+
       showToast(`✅ Categoría "${category}" creada.`);
     }
   };
 
-  const handleUpdateCategory = (oldName: string, newName: string) => {
-    setAvailableCategories((prev) => {
-      const updated = prev.map((c) => (c === oldName ? newName : c));
-      saveCentralCategories(updated);
-      return updated;
-    });
+  const handleUpdateCategory = async (oldName: string, newName: string) => {
+    const updated = availableCategories.map((c) => (c === oldName ? newName : c));
+    setAvailableCategories(updated);
+    await saveCentralCategories(updated);
+
     setExpenses((prev) =>
       prev.map((e) => (e.category === oldName ? { ...e, category: newName } : e))
     );
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'CATEGORY_UPDATE',
+      actionLabel: 'Modificación de Categoría',
+      entityType: 'category',
+      entityId: newName,
+      entityName: newName,
+      summary: `Se renombró la categoría "${oldName}" a "${newName}".`,
+      changes: [
+        {
+          field: 'name',
+          label: 'Nombre de Categoría',
+          oldValue: oldName,
+          newValue: newName,
+        },
+      ],
+    });
+
     showToast(`✅ Categoría "${oldName}" modificada a "${newName}".`);
   };
 
-  const handleDeleteCategory = (category: string) => {
-    setAvailableCategories((prev) => {
-      const updated = prev.filter((c) => c !== category);
-      saveCentralCategories(updated);
-      return updated;
+  const handleDeleteCategory = async (category: string) => {
+    const updated = availableCategories.filter((c) => c !== category);
+    setAvailableCategories(updated);
+    await saveCentralCategories(updated);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'CATEGORY_DELETE',
+      actionLabel: 'Eliminación de Categoría',
+      entityType: 'category',
+      entityId: category,
+      entityName: category,
+      summary: `Se eliminó la categoría de gasto "${category}".`,
     });
+
     showToast(`🗑️ Categoría "${category}" eliminada.`);
   };
 
   // --- USER / ROLE MANAGEMENT ACTIONS ---
-  const handleAddAppUser = (newUser: AppUserRecord) => {
-    setAppUsers((prev) => [newUser, ...prev.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase())]);
-    saveCentralUser(newUser);
+  const handleAddAppUser = async (newUser: AppUserRecord) => {
+    const updatedUsers = [newUser, ...appUsers.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase())];
+    setAppUsers(updatedUsers);
+    await saveCentralUser(newUser);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'USER_ROLE_CHANGE',
+      actionLabel: 'Alta de Usuario',
+      entityType: 'user',
+      entityId: newUser.email,
+      entityName: newUser.name || newUser.email,
+      summary: `Se registró al usuario "${newUser.email}" con rol ${newUser.role === 'admin' ? 'Administrador' : 'Colaborador'}.`,
+    });
     
     // Automatically trigger welcome email with system explanations and direct link
     sendNewUserWelcomeEmail({
@@ -978,31 +1244,41 @@ export default function App() {
         name: newUser.name,
         role: newUser.role,
       },
-    })
-      .then((res) => {
-        if (res.success) {
-          showToast(`📧 Email de bienvenida enviado a ${newUser.email}.`);
-        } else {
-          console.warn('Welcome email note:', res.error);
-        }
-      })
-      .catch((err) => {
-        console.warn('Could not send welcome email:', err);
-      });
+    }).catch((err) => {
+      console.warn('Could not send welcome email:', err);
+    });
 
     showToast(`✅ Usuario "${newUser.email}" registrado en Firestore.`);
   };
 
-  const handleUpdateUserRole = (email: string, newRole: 'admin' | 'user') => {
+  const handleUpdateUserRole = async (email: string, newRole: 'admin' | 'user') => {
+    const existing = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const oldRole = existing?.role || 'user';
+
     setAppUsers((prev) =>
       prev.map((u) => (u.email.toLowerCase() === email.toLowerCase() ? { ...u, role: newRole } : u))
     );
-    const existing = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) {
-      saveCentralUser({ ...existing, role: newRole });
-    } else {
-      saveCentralUser({ email, name: email.split('@')[0], role: newRole });
-    }
+    const userToSave = existing ? { ...existing, role: newRole } : { email, name: email.split('@')[0], role: newRole };
+    await saveCentralUser(userToSave);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'USER_ROLE_CHANGE',
+      actionLabel: 'Cambio de Rol de Usuario',
+      entityType: 'user',
+      entityId: email,
+      entityName: userToSave.name || email,
+      summary: `Se actualizó el rol de "${email}" de ${oldRole === 'admin' ? 'Administrador' : 'Colaborador'} a ${newRole === 'admin' ? 'Administrador' : 'Colaborador'}.`,
+      changes: [
+        {
+          field: 'role',
+          label: 'Rol de Acceso',
+          oldValue: oldRole === 'admin' ? 'Administrador' : 'Colaborador',
+          newValue: newRole === 'admin' ? 'Administrador' : 'Colaborador',
+        },
+      ],
+    });
 
     if (currentUser && currentUser.email.toLowerCase() === email.toLowerCase()) {
       setCurrentUser({ ...currentUser, role: newRole });
@@ -1010,16 +1286,35 @@ export default function App() {
     showToast(`✅ Rol de "${email}" actualizado a ${newRole === 'admin' ? 'Administrador' : 'Colaborador'}.`);
   };
 
-  const handleToggleCcAllOutgoingEmails = (email: string, ccAll: boolean) => {
+  const handleToggleCcAllOutgoingEmails = async (email: string, ccAll: boolean) => {
     setAppUsers((prev) =>
       prev.map((u) => (u.email.toLowerCase() === email.toLowerCase() ? { ...u, ccAllOutgoingEmails: ccAll } : u))
     );
     const existing = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) {
-      saveCentralUser({ ...existing, ccAllOutgoingEmails: ccAll });
-    } else {
-      saveCentralUser({ email, name: email.split('@')[0], role: 'admin', ccAllOutgoingEmails: ccAll });
-    }
+    const userToSave = existing ? { ...existing, ccAllOutgoingEmails: ccAll } : { email, name: email.split('@')[0], role: 'admin' as const, ccAllOutgoingEmails: ccAll };
+    await saveCentralUser(userToSave);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'USER_ROLE_CHANGE',
+      actionLabel: 'Configuración CC Emails',
+      entityType: 'user',
+      entityId: email,
+      entityName: userToSave.name || email,
+      summary: ccAll
+        ? `Se activó la copia global (CC) en emails salientes para "${email}".`
+        : `Se desactivó la copia global (CC) en emails salientes para "${email}".`,
+      changes: [
+        {
+          field: 'ccAllOutgoingEmails',
+          label: 'Copia en todos los emails salientes',
+          oldValue: ccAll ? 'Desactivado' : 'Activado',
+          newValue: ccAll ? 'Activado' : 'Desactivado',
+        },
+      ],
+    });
+
     showToast(
       ccAll
         ? `📧 Usuario "${email}" agregado en copia (CC) de todos los correos salientes.`
@@ -1027,9 +1322,21 @@ export default function App() {
     );
   };
 
-  const handleDeleteAppUser = (email: string) => {
+  const handleDeleteAppUser = async (email: string) => {
     setAppUsers((prev) => prev.filter((u) => u.email.toLowerCase() !== email.toLowerCase()));
-    deleteCentralUser(email);
+    await deleteCentralUser(email);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'USER_ROLE_CHANGE',
+      actionLabel: 'Eliminación de Usuario',
+      entityType: 'user',
+      entityId: email,
+      entityName: email,
+      summary: `Se eliminó el usuario "${email}" del sistema.`,
+    });
+
     showToast(`🗑️ Usuario "${email}" eliminado.`);
   };
 
@@ -1116,6 +1423,7 @@ export default function App() {
   const handleEmailSentSuccess = async (expenseId: string, mode: 'request_bank_details' | 'confirm_payment') => {
     const timestamp = new Date().toISOString();
     let updatedItem: Expense | null = null;
+    const targetExpense = expenses.find((e) => e.id === expenseId);
 
     setExpenses((prev) =>
       prev.map((e) => {
@@ -1138,6 +1446,19 @@ export default function App() {
     if (updatedItem) {
       try {
         await upsertCentralExpenses([updatedItem]);
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'EXPENSE_STATUS_CHANGE',
+          actionLabel: mode === 'request_bank_details' ? 'Solicitud de Datos Bancarios' : 'Confirmación de Pago',
+          entityType: 'expense',
+          entityId: expenseId,
+          entityName: targetExpense ? `${targetExpense.vendor} ($${targetExpense.amount})` : expenseId,
+          summary:
+            mode === 'request_bank_details'
+              ? `Se envió solicitud de datos bancarios para el comprobante de "${targetExpense?.vendor}".`
+              : `Se envió confirmación de pago y liquidación de comprobante para "${targetExpense?.vendor}".`,
+        });
       } catch (err) {
         console.error('Error persisting email status update:', err);
       }
@@ -1160,6 +1481,16 @@ export default function App() {
     );
     try {
       await upsertCentralExpenses([timestamped]);
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'EXPENSE_STATUS_CHANGE',
+        actionLabel: 'Pago y Liquidación',
+        entityType: 'expense',
+        entityId: timestamped.id,
+        entityName: `${timestamped.vendor} ($${timestamped.amount})`,
+        summary: `Se procesó y confirmó el pago del gasto de "${timestamped.vendor}" por ${formatCurrency(timestamped.amount, timestamped.currency)}.`,
+      });
       showToast(`✅ Pago y comprobante registrados exitosamente para ${timestamped.submittedByName || timestamped.vendor}`);
     } catch (err) {
       console.error('Error persisting payment in cloud:', err);
@@ -1353,6 +1684,22 @@ export default function App() {
               costCenters={costCenters}
               categories={availableCategories}
               appUsers={appUsers}
+            />
+          )}
+
+          {/* 8. Log de Cambios y Auditoría (Accounting profile only) */}
+          {activeTab === 'audit_logs' && currentUser.role === 'admin' && (
+            <AuditLogsView
+              logs={auditLogs}
+              currentUser={currentUser}
+              onClearLogs={async () => {
+                const ok = await clearCentralAuditLogs({ email: currentUser.email, name: currentUser.name });
+                if (ok) {
+                  setAuditLogs([]);
+                  showToast('🗑️ Registro de auditoría inicializado y borrado.');
+                }
+                return ok;
+              }}
             />
           )}
 

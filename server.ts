@@ -173,6 +173,39 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // Resilient Gemini generateContent helper with automatic retry and model fallback on transient 503/429 spikes
+export function formatAiErrorMessage(error: any): string {
+  if (!error) return "Error desconocido al procesar con IA.";
+  const msg = error.message || (typeof error === "string" ? error : JSON.stringify(error));
+
+  if (
+    msg.includes("prepayment credits are depleted") ||
+    (msg.includes("429") && msg.includes("billing")) ||
+    msg.includes("billing#prepay")
+  ) {
+    return "Los créditos de prepago de la API de Gemini se han agotado. Por favor, verifica el saldo o facturación del proyecto en Google AI Studio (https://ai.studio/projects).";
+  }
+  if (
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes("Quota exceeded") ||
+    msg.includes("rate-limits") ||
+    msg.includes("429")
+  ) {
+    return "Límite de solicitudes o cuota excedida en la API de Gemini. Por favor, aguarda unos instantes y vuelve a intentar.";
+  }
+  if (msg.includes("503") || msg.includes("high demand") || msg.includes("UNAVAILABLE")) {
+    return "El servicio de IA está experimentando alta demanda temporalmente. Por favor, reintenta en unos segundos.";
+  }
+  if (
+    msg.includes("API_KEY_INVALID") ||
+    msg.includes("API key not valid") ||
+    msg.includes("authError") ||
+    msg.includes("API_KEY")
+  ) {
+    return "La clave de API de Gemini es inválida o no tiene los permisos necesarios configurados.";
+  }
+  return error.message || "Error al procesar la solicitud con IA.";
+}
+
 async function generateContentWithRetry(
   ai: GoogleGenAI,
   params: {
@@ -821,6 +854,7 @@ app.get("/api/drive/status", async (_req, res) => {
 
 // Endpoint 1: Extract data from Invoice / Receipt Photo
 app.post("/api/extract-invoice", async (req, res) => {
+  const startTime = Date.now();
   try {
     const { imageBase64, mimeType = "image/jpeg", availableCategories = [] } = req.body;
     if (!imageBase64) {
@@ -968,9 +1002,21 @@ Devuelve los datos en JSON conforme al esquema.`;
     });
   } catch (error: any) {
     console.error("Error extracting invoice:", error);
+    const friendlyMsg = formatAiErrorMessage(error);
+    logApiUsage({
+      service: 'gemini_ai',
+      serviceName: 'Google Gemini AI',
+      endpoint: '/api/extract-invoice',
+      actionName: 'Escaneo Inteligente de Factura (OCR)',
+      model: 'gemini-3.7-flash',
+      estimatedCostUsd: 0,
+      status: 'error',
+      durationMs: Date.now() - startTime,
+      details: friendlyMsg,
+    });
     return res.status(500).json({
       success: false,
-      error: error.message || "Error al procesar la imagen de la factura con IA.",
+      error: friendlyMsg,
     });
   }
 });
@@ -1148,9 +1194,21 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
     });
   } catch (error: any) {
     console.error("Error scanning vendor document:", error);
+    const friendlyMsg = formatAiErrorMessage(error);
+    logApiUsage({
+      service: 'gemini_ai',
+      serviceName: 'Google Gemini AI',
+      endpoint: '/api/process-vendor-doc',
+      actionName: 'Extracción Constancia CBU / Proveedor',
+      model: 'gemini-3.7-flash',
+      estimatedCostUsd: 0,
+      status: 'error',
+      durationMs: 500,
+      details: friendlyMsg,
+    });
     return res.status(500).json({
       success: false,
-      error: error.message || "Error al procesar el archivo del proveedor con IA.",
+      error: friendlyMsg,
     });
   }
 });
@@ -1285,9 +1343,21 @@ Tu misión es extraer y completar con total fidelidad:
     });
   } catch (error: any) {
     console.error("Error processing audio:", error);
+    const friendlyMsg = formatAiErrorMessage(error);
+    logApiUsage({
+      service: 'gemini_ai',
+      serviceName: 'Google Gemini AI',
+      endpoint: '/api/process-audio',
+      actionName: 'Transcripción y Clasificación por Voz',
+      model: 'gemini-3.7-flash',
+      estimatedCostUsd: 0,
+      status: 'error',
+      durationMs: 500,
+      details: friendlyMsg,
+    });
     return res.status(500).json({
       success: false,
-      error: error.message || "Error al procesar el audio con IA.",
+      error: friendlyMsg,
     });
   }
 });
@@ -1359,7 +1429,19 @@ Extrae estructuradamente:
     });
   } catch (error: any) {
     console.error("Error in text extraction:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    const friendlyMsg = formatAiErrorMessage(error);
+    logApiUsage({
+      service: 'gemini_ai',
+      serviceName: 'Google Gemini AI',
+      endpoint: '/api/process-text-prompt',
+      actionName: 'Interpretación de Prompt de Texto',
+      model: 'gemini-3.7-flash',
+      estimatedCostUsd: 0,
+      status: 'error',
+      durationMs: 500,
+      details: friendlyMsg,
+    });
+    return res.status(500).json({ success: false, error: friendlyMsg });
   }
 });
 

@@ -462,36 +462,124 @@ export function formatCuit(cuit?: string): string {
 }
 
 /**
- * Busca un proveedor en el catálogo por CUIT exacto o por coincidencia de nombre
+ * Busca un proveedor en el catálogo con desambiguación precisa por CBU/Alias, nombre y/o CUIT.
+ * Da máxima prioridad al CBU/Alias y a la coincidencia de nombre exacto para evitar colisiones entre
+ * múltiples proveedores registrados bajo el mismo CUIT o nombre.
  */
 export function findVendorByCuitOrName(
   vendors: Vendor[] = [],
   cuit?: string,
-  vendorName?: string
+  vendorName?: string,
+  bankDetails?: { cbuCvu?: string; alias?: string; accountHolder?: string }
 ): Vendor | undefined {
+  if (!vendors || vendors.length === 0) return undefined;
+
   const clean = cleanCuit(cuit);
-  if (clean && clean.length >= 10) {
-    const foundByCuit = vendors.find(
-      (v) =>
-        cleanCuit(v.cuit) === clean ||
-        cleanCuit(v.bankDetails?.cuitCuil) === clean
-    );
-    if (foundByCuit) return foundByCuit;
+  const normName = (vendorName || '').trim().toLowerCase();
+  const cbu = (bankDetails?.cbuCvu || '').trim();
+  const alias = (bankDetails?.alias || '').trim().toLowerCase();
+  const holder = (bankDetails?.accountHolder || '').trim().toLowerCase();
+
+  // 0. Coincidencia directa por CBU o Alias bancario si fue provisto
+  if (cbu || alias) {
+    const directBank = vendors.find((v) => {
+      const vCbu = (v.bankDetails?.cbuCvu || '').trim();
+      const vAlias = (v.bankDetails?.alias || '').trim().toLowerCase();
+      return (cbu && vCbu && vCbu === cbu) || (alias && vAlias && vAlias === alias);
+    });
+    if (directBank) return directBank;
   }
 
-  if (vendorName && vendorName.trim()) {
-    const norm = vendorName.trim().toLowerCase();
-    const foundExact = vendors.find(
-      (v) => v.name.trim().toLowerCase() === norm
-    );
-    if (foundExact) return foundExact;
+  // 1. Coincidencia exacta de Nombre Y CUIT
+  if (normName && clean && clean.length >= 8) {
+    const candidates = vendors.filter((v) => {
+      const vName = (v.name || '').trim().toLowerCase();
+      const vCuit = cleanCuit(v.cuit || v.bankDetails?.cuitCuil);
+      return vName === normName && vCuit === clean;
+    });
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      if (cbu || alias || holder) {
+        const bankMatch = candidates.find((v) => {
+          const vCbu = (v.bankDetails?.cbuCvu || '').trim();
+          const vAlias = (v.bankDetails?.alias || '').trim().toLowerCase();
+          const vHolder = (v.bankDetails?.accountHolder || '').trim().toLowerCase();
+          return (
+            (cbu && vCbu && vCbu === cbu) ||
+            (alias && vAlias && vAlias === alias) ||
+            (holder && vHolder && vHolder === holder)
+          );
+        });
+        if (bankMatch) return bankMatch;
+      }
+      return candidates[0];
+    }
+  }
 
-    const foundPartial = vendors.find(
-      (v) =>
-        v.name.toLowerCase().includes(norm) ||
-        norm.includes(v.name.toLowerCase())
-    );
-    if (foundPartial) return foundPartial;
+  // 2. Coincidencia exacta de Nombre
+  if (normName) {
+    const candidates = vendors.filter((v) => (v.name || '').trim().toLowerCase() === normName);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      if (clean && clean.length >= 8) {
+        const withCuit = candidates.find((v) => cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === clean);
+        if (withCuit) return withCuit;
+      }
+      if (cbu || alias) {
+        const bankMatch = candidates.find((v) => {
+          const vCbu = (v.bankDetails?.cbuCvu || '').trim();
+          const vAlias = (v.bankDetails?.alias || '').trim().toLowerCase();
+          return (cbu && vCbu && vCbu === cbu) || (alias && vAlias && vAlias === alias);
+        });
+        if (bankMatch) return bankMatch;
+      }
+      return candidates[0];
+    }
+  }
+
+  // 3. Si no hubo coincidencia exacta de nombre, buscar por CUIT
+  if (clean && clean.length >= 8) {
+    const matchingVendors = vendors.filter((v) => {
+      const vCuit = cleanCuit(v.cuit || v.bankDetails?.cuitCuil);
+      return vCuit === clean;
+    });
+
+    if (matchingVendors.length === 1) {
+      return matchingVendors[0];
+    }
+
+    if (matchingVendors.length > 1) {
+      if (cbu || alias) {
+        const bankMatch = matchingVendors.find((v) => {
+          const vCbu = (v.bankDetails?.cbuCvu || '').trim();
+          const vAlias = (v.bankDetails?.alias || '').trim().toLowerCase();
+          return (cbu && vCbu && vCbu === cbu) || (alias && vAlias && vAlias === alias);
+        });
+        if (bankMatch) return bankMatch;
+      }
+
+      if (normName) {
+        const partial = matchingVendors.find((v) => {
+          const vName = (v.name || '').trim().toLowerCase();
+          const vHolder = (v.bankDetails?.accountHolder || '').trim().toLowerCase();
+          return (
+            vName.includes(normName) ||
+            normName.includes(vName) ||
+            (vHolder && (vHolder.includes(normName) || normName.includes(vHolder)))
+          );
+        });
+        if (partial) return partial;
+      }
+    }
+  }
+
+  // 4. Coincidencia parcial de nombre (si no hubo conflicto)
+  if (normName) {
+    const partial = vendors.find((v) => {
+      const vName = (v.name || '').trim().toLowerCase();
+      return vName.includes(normName) || normName.includes(vName);
+    });
+    if (partial) return partial;
   }
 
   return undefined;
@@ -536,8 +624,8 @@ export function sanitizeCostCenter(cc: CostCenter): CostCenter {
     code,
     driveFolder,
     driveUrl: driveUrl || `https://drive.google.com/drive/search?q=${encodeURIComponent(driveFolder)}`,
-    notifyEmails: notifyEmails || undefined,
-    ccEmails: notifyEmails || undefined,
+    notifyEmails: notifyEmails || '',
+    ccEmails: notifyEmails || '',
     active: cc.active !== false,
   };
 }

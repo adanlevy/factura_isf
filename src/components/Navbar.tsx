@@ -13,11 +13,12 @@ import {
   Cloud,
   RefreshCw,
   Server,
+  History,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { FacturaAppIcon } from './FacturaIcon';
 
-export type NavigationTab = 'expenses' | 'admin_movements' | 'vendors' | 'cost_centers' | 'admin_users' | 'system';
+export type NavigationTab = 'expenses' | 'admin_movements' | 'vendors' | 'cost_centers' | 'admin_users' | 'system' | 'audit_logs';
 
 interface NavbarProps {
   activeTab: NavigationTab;
@@ -233,6 +234,22 @@ export function Navbar({
             >
               <Server className="w-4 h-4" />
               <span>Sistema</span>
+            </button>
+          )}
+
+          {/* 8. Log de Cambios & Auditoría (Accounting profile only) */}
+          {isAccountingProfile && (
+            <button
+              id="nav-tab-audit-logs"
+              onClick={() => setActiveTab('audit_logs')}
+              className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-2 ${
+                activeTab === 'audit_logs'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              <span>Log de Cambios</span>
             </button>
           )}
 

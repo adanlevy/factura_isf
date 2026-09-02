@@ -1,6 +1,6 @@
 import React from 'react';
 import { Expense, Vendor } from '../types';
-import { formatCuit } from '../utils/helpers';
+import { formatCuit, findVendorByCuitOrName } from '../utils/helpers';
 
 interface AccountDetailsDisplayProps {
   expense: Expense;
@@ -28,34 +28,18 @@ export function AccountDetailsDisplay({ expense, vendors = [], className = '' }:
     expense.submittedByName?.trim()
   );
 
-  // 2. Resolve matching vendor from vendors catalog (if available)
-  let matchedVendor: Vendor | null = null;
-  if (vendors.length > 0 && !isPersonalReimbursement) {
-    const expVendorName = (expense.vendor || '').trim().toLowerCase();
-    const expCuitClean = (expense.cuit || expense.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
-    const expAliasClean = (expense.bankDetails?.alias || '').trim().toLowerCase();
-    const expCbuClean = (expense.bankDetails?.cbuCvu || '').replace(/[^0-9]/g, '');
-
-    matchedVendor =
-      vendors.find((v) => {
-        const vName = (v.name || '').trim().toLowerCase();
-        const vCuitClean = (v.cuit || v.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
-        const vAliasClean = (v.bankDetails?.alias || '').trim().toLowerCase();
-        const vCbuClean = (v.bankDetails?.cbuCvu || '').replace(/[^0-9]/g, '');
-
-        if (expCuitClean && vCuitClean && expCuitClean === vCuitClean) return true;
-        if (expVendorName && vName && expVendorName === vName) return true;
-        if (expAliasClean && vAliasClean && expAliasClean === vAliasClean) return true;
-        if (expCbuClean && vCbuClean && expCbuClean === vCbuClean) return true;
-        return false;
-      }) || null;
-  }
-
-  // Active bank details: prioritize live matching vendor from catalog
-  const effectiveBank = matchedVendor?.bankDetails || expense.bankDetails;
+  // 2. Check if this expense explicitly has bank details assigned
+  const hasDirectBankDetails = Boolean(
+    expense.bankDetails &&
+    (expense.bankDetails.cbuCvu?.trim() ||
+      expense.bankDetails.alias?.trim() ||
+      expense.bankDetails.bankName?.trim() ||
+      expense.bankDetails.accountHolder?.trim() ||
+      expense.bankDetails.cuitCuil?.trim())
+  );
 
   // If no bank details are linked to this expense
-  if (!effectiveBank) {
+  if (!hasDirectBankDetails) {
     // For reimbursements without formal bank details, show submittedByName if available
     if (isPersonalReimbursement) {
       return (
@@ -71,6 +55,24 @@ export function AccountDetailsDisplay({ expense, vendors = [], className = '' }:
     }
     return <span className="text-slate-300 text-xs">—</span>;
   }
+
+  // 3. Resolve matching vendor from vendors catalog to sync live updates if linked
+  let matchedVendor: Vendor | null = null;
+  if (vendors.length > 0 && !isPersonalReimbursement) {
+    matchedVendor = findVendorByCuitOrName(
+      vendors,
+      expense.cuit || expense.bankDetails?.cuitCuil,
+      expense.vendor,
+      expense.bankDetails
+    ) || null;
+  }
+
+  // Active bank details: use live vendor bank data if valid or the expense's direct bank data
+  const hasMatchedVendorBank = Boolean(
+    matchedVendor?.bankDetails &&
+    (matchedVendor.bankDetails.cbuCvu?.trim() || matchedVendor.bankDetails.alias?.trim())
+  );
+  const effectiveBank = (hasMatchedVendorBank ? matchedVendor?.bankDetails : expense.bankDetails) || expense.bankDetails!;
 
   // 1. Nombre / Titular de la cuenta
   const rawName =

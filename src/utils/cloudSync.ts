@@ -673,13 +673,88 @@ export async function deleteCentralVendors(ids: string[]): Promise<boolean> {
   }
 }
 
+export async function saveSingleVendor(vendor: Vendor): Promise<boolean> {
+  if (!vendor || !vendor.id) return false;
+  try {
+    sessionDeletedVendorIds.delete(vendor.id);
+    const normalized = normalizeVendorBankDetails(vendor);
+    const docRef = doc(db, 'vendors', vendor.id);
+    await setDoc(docRef, sanitizeForFirestore(normalized));
+
+    fetch('/api/data/vendors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vendors: [normalized] }),
+    }).catch(() => {});
+
+    return true;
+  } catch (e) {
+    console.error(`[Firestore] Error saving single vendor ${vendor.id}:`, e);
+    return false;
+  }
+}
+
+export async function deleteCentralVendor(id: string): Promise<boolean> {
+  if (!id) return false;
+  return deleteCentralVendors([id]);
+}
+
+export async function saveSingleCostCenter(costCenter: CostCenter): Promise<boolean> {
+  if (!costCenter || !costCenter.id) return false;
+  try {
+    const cleanCc = sanitizeCostCenter(costCenter);
+    const docRef = doc(db, 'cost_centers', cleanCc.id);
+    // Overwrite cleanly so removed fields like notifyEmails are completely wiped
+    await setDoc(docRef, sanitizeForFirestore({
+      ...cleanCc,
+      notifyEmails: cleanCc.notifyEmails ?? '',
+      ccEmails: cleanCc.ccEmails ?? '',
+    }));
+
+    fetch('/api/data/cost-centers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ costCenters: [cleanCc] }),
+    }).catch(() => {});
+
+    return true;
+  } catch (e) {
+    console.error(`[Firestore] Error saving single cost center ${costCenter.id}:`, e);
+    return false;
+  }
+}
+
+export async function deleteCentralCostCenter(id: string): Promise<boolean> {
+  if (!id) return false;
+  try {
+    const docRef = doc(db, 'cost_centers', id);
+    await deleteDoc(docRef);
+
+    fetch('/api/data/cost-centers/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id] }),
+    }).catch(() => {});
+
+    return true;
+  } catch (e) {
+    console.error(`[Firestore] Error deleting cost center ${id}:`, e);
+    return false;
+  }
+}
+
 export async function saveCentralCostCenters(costCenters: CostCenter[]): Promise<boolean> {
   try {
     const batch = writeBatch(db);
     for (const cc of costCenters) {
       if (cc && cc.id) {
-        const docRef = doc(db, 'cost_centers', cc.id);
-        batch.set(docRef, sanitizeForFirestore(cc), { merge: true });
+        const cleanCc = sanitizeCostCenter(cc);
+        const docRef = doc(db, 'cost_centers', cleanCc.id);
+        batch.set(docRef, sanitizeForFirestore({
+          ...cleanCc,
+          notifyEmails: cleanCc.notifyEmails ?? '',
+          ccEmails: cleanCc.ccEmails ?? '',
+        }));
       }
     }
     await batch.commit();
@@ -692,8 +767,15 @@ export async function saveCentralCostCenters(costCenters: CostCenter[]): Promise
 
     return true;
   } catch (e) {
-    console.warn('[Firestore] Error saving cost centers:', e);
-    return false;
+    console.warn('[Firestore] Error saving cost centers batch, retrying individually:', e);
+    let allOk = true;
+    for (const cc of costCenters) {
+      if (cc && cc.id) {
+        const ok = await saveSingleCostCenter(cc);
+        if (!ok) allOk = false;
+      }
+    }
+    return allOk;
   }
 }
 

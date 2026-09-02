@@ -21,9 +21,9 @@ import { fetchDriveFolderInfo } from '../utils/googleWorkspace';
 interface CostCentersViewProps {
   costCenters: CostCenter[];
   expenses?: Expense[];
-  onAddCostCenter: (newCc: Omit<CostCenter, 'id'>) => void;
-  onUpdateCostCenter: (updatedCc: CostCenter) => void;
-  onDeleteCostCenter: (id: string) => void;
+  onAddCostCenter: (newCc: Omit<CostCenter, 'id'>) => Promise<void> | void;
+  onUpdateCostCenter: (updatedCc: CostCenter) => Promise<void> | void;
+  onDeleteCostCenter: (id: string) => Promise<void> | void;
 }
 
 export function CostCentersView({
@@ -43,9 +43,11 @@ export function CostCentersView({
   const [isLoadingFolderInfo, setIsLoadingFolderInfo] = useState(false);
   const [folderAutoDetected, setFolderAutoDetected] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isSavingNew, setIsSavingNew] = useState(false);
 
   // Inline editing state
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [savingEditId, setSavingEditId] = useState<string | null>(null);
   const [editCode, setEditCode] = useState('');
   const [editName, setEditName] = useState('');
   const [editDriveFolder, setEditDriveFolder] = useState('');
@@ -55,6 +57,7 @@ export function CostCentersView({
 
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [costCenterToDelete, setCostCenterToDelete] = useState<CostCenter | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Auto-detect folder name from Drive URL for new Cost Center
   useEffect(() => {
@@ -116,7 +119,7 @@ export function CostCentersView({
     );
   }, [cleanCostCenters, searchTerm]);
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = newName.trim();
     const cleanCode = newCode.trim().toUpperCase();
@@ -136,29 +139,36 @@ export function CostCentersView({
       code: cleanCode || cleanName.slice(0, 4).toUpperCase(),
       driveFolder: finalFolder,
       driveUrl: finalDriveUrl,
-      notifyEmails: cleanEmails || undefined,
-      ccEmails: cleanEmails || undefined,
+      notifyEmails: cleanEmails || '',
+      ccEmails: cleanEmails || '',
       active: true,
     };
 
     const sanitized = sanitizeCostCenter({ ...rawNew, id: 'temp' });
-    onAddCostCenter({
-      name: sanitized.name,
-      code: sanitized.code,
-      driveFolder: sanitized.driveFolder,
-      driveUrl: sanitized.driveUrl,
-      notifyEmails: sanitized.notifyEmails,
-      ccEmails: sanitized.ccEmails,
-      active: sanitized.active,
-    });
+    setIsSavingNew(true);
+    try {
+      await onAddCostCenter({
+        name: sanitized.name,
+        code: sanitized.code,
+        driveFolder: sanitized.driveFolder,
+        driveUrl: sanitized.driveUrl,
+        notifyEmails: sanitized.notifyEmails || '',
+        ccEmails: sanitized.ccEmails || '',
+        active: sanitized.active,
+      });
 
-    setNewName('');
-    setNewCode('');
-    setNewDriveFolder('');
-    setNewDriveUrl('');
-    setNewNotifyEmails('');
-    setFolderAutoDetected(null);
-    setIsCreating(false);
+      setNewName('');
+      setNewCode('');
+      setNewDriveFolder('');
+      setNewDriveUrl('');
+      setNewNotifyEmails('');
+      setFolderAutoDetected(null);
+      setIsCreating(false);
+    } catch (err: any) {
+      alert('Error al guardar centro de costos en Firestore: ' + (err.message || err));
+    } finally {
+      setIsSavingNew(false);
+    }
   };
 
   const handleStartEdit = (cc: CostCenter) => {
@@ -171,7 +181,7 @@ export function CostCentersView({
     setEditNotifyEmails(clean.notifyEmails || clean.ccEmails || '');
   };
 
-  const handleSaveEdit = (cc: CostCenter) => {
+  const handleSaveEdit = async (cc: CostCenter) => {
     const cleanName = editName.trim();
     const cleanCode = editCode.trim().toUpperCase();
     const cleanFolder = editDriveFolder.trim();
@@ -194,12 +204,19 @@ export function CostCentersView({
       code: cleanCode || cleanName.slice(0, 4).toUpperCase(),
       driveFolder: finalFolder,
       driveUrl: finalDriveUrl,
-      notifyEmails: cleanEmails || undefined,
-      ccEmails: cleanEmails || undefined,
+      notifyEmails: cleanEmails || '',
+      ccEmails: cleanEmails || '',
     });
 
-    onUpdateCostCenter(updated);
-    setEditingId(null);
+    setSavingEditId(cc.id);
+    try {
+      await onUpdateCostCenter(updated);
+      setEditingId(null);
+    } catch (err: any) {
+      alert('Error al actualizar centro de costos en Firestore: ' + (err.message || err));
+    } finally {
+      setSavingEditId(null);
+    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -345,17 +362,25 @@ export function CostCentersView({
           <div className="flex justify-end space-x-2 pt-2">
             <button
               type="button"
+              disabled={isSavingNew}
               onClick={() => setIsCreating(false)}
-              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={!newName.trim()}
-              className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer"
+              disabled={!newName.trim() || isSavingNew}
+              className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center space-x-2 disabled:opacity-50"
             >
-              Guardar Centro de Costos
+              {isSavingNew ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Guardando en Firestore...</span>
+                </>
+              ) : (
+                <span>Guardar Centro de Costos</span>
+              )}
             </button>
           </div>
         </form>
@@ -517,15 +542,21 @@ export function CostCentersView({
                         {isEditing ? (
                           <div className="flex items-center justify-end space-x-1">
                             <button
+                              disabled={savingEditId === cc.id}
                               onClick={() => handleSaveEdit(cc)}
-                              className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition cursor-pointer"
+                              className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition cursor-pointer disabled:opacity-50 flex items-center justify-center min-w-[28px] min-h-[28px]"
                               title="Guardar cambios"
                             >
-                              <Check className="w-3.5 h-3.5" />
+                              {savingEditId === cc.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5" />
+                              )}
                             </button>
                             <button
+                              disabled={savingEditId === cc.id}
                               onClick={() => setEditingId(null)}
-                              className="p-1.5 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 transition cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 transition cursor-pointer disabled:opacity-50"
                               title="Cancelar"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -577,22 +608,38 @@ export function CostCentersView({
             <div className="flex items-center space-x-3 pt-2">
               <button
                 type="button"
+                disabled={isDeleting}
                 onClick={() => setCostCenterToDelete(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                onClick={() => {
+                disabled={isDeleting}
+                onClick={async () => {
                   if (costCenterToDelete) {
-                    onDeleteCostCenter(costCenterToDelete.id);
-                    setCostCenterToDelete(null);
+                    setIsDeleting(true);
+                    try {
+                      await onDeleteCostCenter(costCenterToDelete.id);
+                      setCostCenterToDelete(null);
+                    } catch (err: any) {
+                      alert('Error al eliminar centro de costos de Firestore: ' + (err.message || err));
+                    } finally {
+                      setIsDeleting(false);
+                    }
                   }
                 }}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs flex items-center justify-center space-x-2 disabled:opacity-50"
               >
-                Sí, Eliminar
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <span>Sí, Eliminar</span>
+                )}
               </button>
             </div>
           </div>

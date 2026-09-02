@@ -274,3 +274,61 @@ export interface SystemMetricsReport {
   serverTimestamp: string;
 }
 
+export interface AuditLogChange {
+  field: string;
+  fieldLabel?: string;
+  label?: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export type AuditLogEntityType =
+  | 'cost_center'
+  | 'vendor'
+  | 'expense'
+  | 'category'
+  | 'user'
+  | 'system';
+
+export type AuditLogAction =
+  | 'CREATE'
+  | 'UPDATE'
+  | 'DELETE'
+  | 'BATCH_CREATE'
+  | 'BATCH_UPDATE'
+  | 'BATCH_DELETE'
+  | 'SETTLE_PAYMENT'
+  | 'REVERT_PAYMENT'
+  | 'REPLACE_RECEIPT'
+  | 'WITHHOLDING_CERT'
+  | 'SYSTEM_CLEAR_LOGS'
+  | 'VENDOR_CREATE'
+  | 'VENDOR_UPDATE'
+  | 'VENDOR_DELETE'
+  | 'EXPENSE_CREATE'
+  | 'EXPENSE_UPDATE'
+  | 'EXPENSE_DELETE'
+  | 'EXPENSE_STATUS_CHANGE'
+  | 'COST_CENTER_CREATE'
+  | 'COST_CENTER_UPDATE'
+  | 'COST_CENTER_DELETE'
+  | 'CATEGORY_CREATE'
+  | 'CATEGORY_UPDATE'
+  | 'CATEGORY_DELETE'
+  | 'USER_ROLE_CHANGE';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string; // ISO string
+  userEmail: string;
+  userName: string;
+  action: AuditLogAction;
+  actionLabel: string; // e.g. "Edición de Proveedor", "Eliminación de Centro de Costos", "Creación de Gasto"
+  entityType: AuditLogEntityType;
+  entityId: string;
+  entityName: string; // e.g. "ALSE - Alimentos y Servicios", "La Serenísima S.A.", "Factura A-0001-00001234"
+  summary: string; // e.g. "Se eliminó el email 'copia@isf.org' de los emails en copia (CC)"
+  changes?: AuditLogChange[];
+  metadata?: Record<string, any>;
+}
+

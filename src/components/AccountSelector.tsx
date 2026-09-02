@@ -10,7 +10,7 @@ import {
   Edit3,
 } from 'lucide-react';
 import { UserBankDetails, UserProfile, Vendor, ExpensePaymentType } from '../types';
-import { formatCuit, matchesSearch } from '../utils/helpers';
+import { formatCuit, matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { VendorFormModal } from './VendorFormModal';
 
 export interface AccountOption {
@@ -252,17 +252,14 @@ export function AccountSelector({
   );
 
   const matchedVendor = useMemo(() => {
-    if (!vendorName && !cuit && !bankDetails?.accountHolder) return null;
-    const vNameClean = (vendorName || bankDetails?.accountHolder || '').trim().toLowerCase();
-    const cuitClean = (cuit || bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
-
+    if (!vendorName && !cuit && !bankDetails?.accountHolder && !bankDetails?.cbuCvu && !bankDetails?.alias) return null;
     return (
-      vendors.find((v) => {
-        const matchName = vNameClean && (v.name || '').trim().toLowerCase() === vNameClean;
-        const vCuitClean = (v.cuit || v.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
-        const matchCuit = cuitClean && vCuitClean && cuitClean === vCuitClean;
-        return matchName || matchCuit;
-      }) || null
+      findVendorByCuitOrName(
+        vendors,
+        cuit || bankDetails?.cuitCuil,
+        vendorName || bankDetails?.accountHolder,
+        bankDetails
+      ) || null
     );
   }, [vendors, vendorName, cuit, bankDetails]);
 
