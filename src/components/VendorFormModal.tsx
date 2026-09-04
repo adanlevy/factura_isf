@@ -296,6 +296,9 @@ export function VendorFormModal({
         if (items[i].type.indexOf('image') !== -1) {
           const file = items[i].getAsFile();
           if (file) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
             handleProcessDocument(file);
             break;
           }
@@ -383,22 +386,52 @@ export function VendorFormModal({
     subtitle || (initialData ? 'Actualiza los datos del catálogo y cuentas de pago' : 'Registra un proveedor en el catálogo oficial');
 
   const modalContent = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
+    <div
+      data-submodal="vendor-form-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto"
+      onDragEnter={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.nativeEvent?.stopImmediatePropagation?.();
+      }}
+    >
       <div
         className={`bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[94vh] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200 relative ${
           isDragging ? 'ring-4 ring-indigo-500 ring-offset-2' : ''
         }`}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(true);
+        }}
         onDragOver={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           setIsDragging(true);
         }}
         onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setIsDragging(false);
           }
         }}
         onDrop={(e) => {
           e.preventDefault();
+          e.stopPropagation();
+          e.nativeEvent?.stopImmediatePropagation?.();
           setIsDragging(false);
           if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             handleProcessDocument(e.dataTransfer.files[0]);
@@ -407,7 +440,30 @@ export function VendorFormModal({
       >
         {/* Full-area Drag Overlay */}
         {isDragging && (
-          <div className="absolute inset-0 z-50 bg-indigo-900/90 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-white animate-in fade-in">
+          <div
+            className="absolute inset-0 z-50 bg-indigo-900/90 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-white animate-in fade-in"
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent?.stopImmediatePropagation?.();
+              setIsDragging(false);
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleProcessDocument(e.dataTransfer.files[0]);
+              }
+            }}
+          >
             <div className="w-20 h-20 rounded-3xl bg-white text-indigo-600 flex items-center justify-center shadow-xl animate-bounce mb-4">
               <Upload className="w-10 h-10" />
             </div>
@@ -441,7 +497,25 @@ export function VendorFormModal({
         {/* Scrollable Form Body */}
         <div className="overflow-y-auto flex-1 p-6 space-y-4">
           {/* ENLARGED DRAG & DROP ZONE */}
-          <div className="rounded-3xl border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-gradient-to-b from-indigo-50/60 to-white p-5 sm:p-6 transition text-center relative group">
+          <div
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.nativeEvent?.stopImmediatePropagation?.();
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleProcessDocument(e.dataTransfer.files[0]);
+              }
+            }}
+            className="rounded-3xl border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-gradient-to-b from-indigo-50/60 to-white p-5 sm:p-6 transition text-center relative group"
+          >
             <input
               ref={fileInputRef}
               type="file"

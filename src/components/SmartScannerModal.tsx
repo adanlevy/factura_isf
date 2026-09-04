@@ -44,6 +44,7 @@ import {
   formatCuit,
   cleanCuit,
 } from '../utils/helpers';
+import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
@@ -432,6 +433,10 @@ export function SmartScannerModal({
         }
 
         const result = await response.json();
+
+        if (result.apiLog) {
+          syncApiLogToCloud(result.apiLog);
+        }
 
         if (result.success && result.data) {
           const data = result.data;
@@ -967,6 +972,9 @@ export function SmartScannerModal({
         {/* Main Body: Drop Area or Compressed Table */}
         <div
           onDragOver={(e) => {
+            if (document.querySelector('[data-submodal="vendor-form-modal"]') || (e.target as HTMLElement)?.closest?.('[data-submodal]')) {
+              return;
+            }
             e.preventDefault();
             setIsDragging(true);
           }}
@@ -977,7 +985,17 @@ export function SmartScannerModal({
           onDrop={(e) => {
             e.preventDefault();
             setIsDragging(false);
-            handleFilesSelected(e.dataTransfer.files);
+            // Guard against bubbling or drops from active submodals (e.g., bank account / vendor creator)
+            if (
+              document.querySelector('[data-submodal="vendor-form-modal"]') ||
+              (e.target as HTMLElement)?.closest?.('[data-submodal]') ||
+              (e.target as HTMLElement)?.closest?.('#account-selector-dropdown')
+            ) {
+              return;
+            }
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              handleFilesSelected(e.dataTransfer.files);
+            }
           }}
           className={`flex-1 overflow-y-auto p-3 sm:p-4 transition-colors ${
             isDragging ? 'bg-indigo-50/70 ring-2 ring-indigo-500 ring-inset' : 'bg-slate-100/70'

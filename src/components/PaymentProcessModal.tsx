@@ -449,11 +449,18 @@ export function PaymentProcessModal({
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     setIsDraggingProof(true);
                   }}
-                  onDragLeave={() => setIsDraggingProof(false)}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDraggingProof(false);
+                  }}
                   onDrop={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
+                    e.nativeEvent?.stopImmediatePropagation?.();
                     setIsDraggingProof(false);
                     const file = e.dataTransfer.files?.[0];
                     if (file) handleProcessFile(file);

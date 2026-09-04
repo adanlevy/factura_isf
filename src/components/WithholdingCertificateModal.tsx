@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Calendar,
   ExternalLink,
+  RotateCcw,
 } from 'lucide-react';
 import { Expense, CostCenter, UserProfile, AppUserRecord } from '../types';
 import {
@@ -40,6 +41,7 @@ interface WithholdingCertificateModalProps {
   costCenters: CostCenter[];
   appUsers?: AppUserRecord[];
   onSaved: (updatedExpense: Expense) => void;
+  onRevertPayment?: (expenseId: string) => void;
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
 }
@@ -51,6 +53,7 @@ export function WithholdingCertificateModal({
   costCenters,
   appUsers = [],
   onSaved,
+  onRevertPayment,
   currentUser,
   currentUserAccessToken,
 }: WithholdingCertificateModalProps) {
@@ -364,11 +367,18 @@ export function WithholdingCertificateModal({
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     setIsDragging(true);
                   }}
-                  onDragLeave={() => setIsDragging(false)}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                  }}
                   onDrop={(e) => {
                     e.preventDefault();
+                    e.stopPropagation();
+                    e.nativeEvent?.stopImmediatePropagation?.();
                     setIsDragging(false);
                     const file = e.dataTransfer.files?.[0];
                     if (file) handleProcessFile(file);
@@ -441,15 +451,33 @@ export function WithholdingCertificateModal({
           </div>
 
           {/* Footer */}
-          <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isExecuting}
-              className="px-4 py-2.5 text-slate-600 hover:text-slate-900 text-xs font-semibold rounded-xl hover:bg-slate-200 transition cursor-pointer disabled:opacity-50"
-            >
-              Cancelar
-            </button>
+          <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isExecuting}
+                className="px-4 py-2.5 text-slate-600 hover:text-slate-900 text-xs font-semibold rounded-xl hover:bg-slate-200 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+
+              {onRevertPayment && expense && (
+                <button
+                  type="button"
+                  disabled={isExecuting}
+                  onClick={() => {
+                    onRevertPayment(expense.id);
+                    onClose();
+                  }}
+                  className="px-3 py-2.5 text-rose-700 hover:text-rose-900 hover:bg-rose-100/80 border border-rose-200 text-xs font-semibold rounded-xl transition cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
+                  title="Revertir este pago si fue aplicado por error"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Revertir Pago a Pendiente</span>
+                </button>
+              )}
+            </div>
 
             <button
               type="button"

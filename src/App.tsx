@@ -25,15 +25,20 @@ import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
-import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit } from './utils/helpers';
+import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
+  deleteReceiptFromGoogleDrive,
+  extractDriveFileId,
   getStoredWorkspaceToken,
   saveStoredWorkspaceToken,
   sendReceiptUploadConfirmationEmail,
+  sendPaymentReversalEmail,
   sendNewUserWelcomeEmail,
+  sendGmailMessage,
 } from './utils/googleWorkspace';
+import { resolveEmailCcRecipients } from './utils/emailCc';
 import {
   subscribeToAuditLogs,
   fetchCentralAuditLogs,
@@ -64,7 +69,12 @@ import {
   normalizeVendorBankDetails,
   sessionDeletedVendorIds,
 } from './utils/cloudSync';
-import { removeCachedReceiptFile, cacheReceiptFile } from './utils/receiptCache';
+import {
+  removeCachedReceiptFile,
+  cacheReceiptFile,
+  removeCachedPaymentProofFile,
+  removeCachedWithholdingCertificateFile,
+} from './utils/receiptCache';
 import { hydrateUserPatternsFromCloud } from './utils/sorting';
 import { Plus, CreditCard, Cloud, RefreshCw } from 'lucide-react';
 
@@ -976,66 +986,194 @@ export default function App() {
         paymentProofImage: undefined,
         paymentProofFileName: undefined,
         paymentProofDriveUrl: undefined,
+        paymentProofAt: undefined,
+        withholdingCertificateImage: undefined,
+        withholdingCertificateFileName: undefined,
+        withholdingCertificateUploadedAt: undefined,
+        withholdingCertificateDriveUrl: undefined,
+        withholdingCertificateSentAt: undefined,
         updatedAt: new Date().toISOString(),
       };
       setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
+
+      // 1. Enviar email avisando que se revirtió el pago
+      try {
+        await sendPaymentReversalEmail({
+          expense: exp,
+          costCenters,
+          appUsers,
+          currentUser,
+        });
+      } catch (emailErr) {
+        console.warn('Notice sending payment reversal email:', emailErr);
+      }
+
+      // 2. Eliminar el archivo del comprobante de pago subido a Google Drive (en caso de que se hubiera subido)
+      const standardizedBaseName = generateDriveFileName(exp, costCenters);
+      const paymentProofFileId = extractDriveFileId(exp.paymentProofDriveUrl) || undefined;
+      const paymentProofNames: string[] = [];
+      if (exp.paymentProofFileName) {
+        paymentProofNames.push(exp.paymentProofFileName);
+        if (!exp.paymentProofFileName.startsWith(standardizedBaseName)) {
+          paymentProofNames.push(`${standardizedBaseName}-ComprobantePago-${exp.paymentProofFileName}`);
+        }
+      }
+
+      if (paymentProofFileId || paymentProofNames.length > 0) {
+        try {
+          await deleteReceiptFromGoogleDrive({
+            fileId: paymentProofFileId,
+            fileNames: paymentProofNames,
+            fileName: paymentProofNames[0],
+          });
+        } catch (driveErr) {
+          console.warn('Error deleting payment proof from Google Drive:', driveErr);
+        }
+      }
+      removeCachedPaymentProofFile(id).catch(() => {});
+
+      // 3. Eliminar el certificado de retención subido a Google Drive (en caso de que se hubiera subido)
+      const withholdingCertFileId = extractDriveFileId(exp.withholdingCertificateDriveUrl) || undefined;
+      const withholdingCertNames: string[] = [];
+      if (exp.withholdingCertificateFileName) {
+        withholdingCertNames.push(exp.withholdingCertificateFileName);
+        if (!exp.withholdingCertificateFileName.startsWith(standardizedBaseName)) {
+          withholdingCertNames.push(`${standardizedBaseName}-CertificadoRetencion-${exp.withholdingCertificateFileName}`);
+        }
+      }
+
+      if (withholdingCertFileId || withholdingCertNames.length > 0) {
+        try {
+          await deleteReceiptFromGoogleDrive({
+            fileId: withholdingCertFileId,
+            fileNames: withholdingCertNames,
+            fileName: withholdingCertNames[0],
+          });
+        } catch (driveErr) {
+          console.warn('Error deleting withholding certificate from Google Drive:', driveErr);
+        }
+      }
+      removeCachedWithholdingCertificateFile(id).catch(() => {});
+
       try {
         await upsertCentralExpenses([updated]);
         await logAuditEvent({
           userEmail: currentUser?.email,
           userName: currentUser?.name,
           action: 'EXPENSE_STATUS_CHANGE',
-          actionLabel: 'Cambio de Estado',
+          actionLabel: 'Reversión de Pago',
           entityType: 'expense',
           entityId: id,
           entityName: `${exp.vendor} ($${exp.amount})`,
-          summary: `Se revirtió el estado del comprobante de "${exp.vendor}" a Pendiente de Rendición.`,
+          summary: `Se revirtió el pago de "${exp.vendor}" a Pendiente. Se envió email de aviso y se eliminaron los comprobantes de transferencia y retención de Google Drive.`,
         });
-        showToast(`ℹ️ Comprobante de "${exp.vendor}" revertido a estado Pendiente.`);
+        showToast(`ℹ️ Pago de "${exp.vendor}" revertido a Pendiente. Notificación enviada y comprobantes de Drive removidos.`);
       } catch (err) {
         console.error('Error updating status in cloud:', err);
       }
     }
   };
 
+  const handleBatchPaymentCompleted = async (updatedExpenses: Expense[], emailsSentCount: number) => {
+    const updatedMap = new Map(updatedExpenses.map((e) => [e.id, e]));
+    setExpenses((prev) => prev.map((e) => updatedMap.get(e.id) || e));
+
+    try {
+      await upsertCentralExpenses(updatedExpenses);
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'EXPENSE_STATUS_CHANGE',
+        actionLabel: 'Liquidación y Pago en Lote',
+        entityType: 'expense',
+        entityId: `batch-${Date.now()}`,
+        entityName: `${updatedExpenses.length} comprobantes`,
+        summary: `Se liquidaron y pagaron ${updatedExpenses.length} comprobantes en lote.${emailsSentCount > 0 ? ` Se enviaron ${emailsSentCount} avisos por correo.` : ''}`,
+      });
+    } catch (err) {
+      console.error('Error batch updating status in cloud:', err);
+    }
+
+    if (emailsSentCount > 0) {
+      showToast(`🎉 Se liquidaron ${updatedExpenses.length} comprobantes y se enviaron ${emailsSentCount} avisos por email.`);
+    } else {
+      showToast(`✅ Se marcaron ${updatedExpenses.length} comprobantes como Reintegrados / Liquidados.`);
+    }
+  };
+
   const handleBatchSettleReimbursements = async (ids: string[]) => {
     const nowIso = new Date().toISOString();
     const todayStr = nowIso.slice(0, 10);
-    const updatedList = expenses.map((e) => {
-      if (ids.includes(e.id)) {
-        const matchingVendor = vendors.find((v) => (v.name || '').trim().toLowerCase() === (e.vendor || '').trim().toLowerCase());
-        const transferSnapshot = e.transferDetails || formatTransferDetails(e, matchingVendor);
-        return {
-          ...e,
-          reimbursementStatus: 'REIMBURSED' as const,
-          reimbursedAt: todayStr,
-          paymentConfirmedAt: nowIso,
-          transferDetails: transferSnapshot || e.transferDetails,
-          updatedAt: nowIso,
-        };
-      }
-      return e;
+    const targetExpenses = expenses.filter((e) => ids.includes(e.id));
+    if (targetExpenses.length === 0) return;
+
+    const updatedExpenses: Expense[] = targetExpenses.map((e) => {
+      const matchingVendor = vendors.find((v) => (v.name || '').trim().toLowerCase() === (e.vendor || '').trim().toLowerCase());
+      const transferSnapshot = e.transferDetails || formatTransferDetails(e, matchingVendor);
+      return {
+        ...e,
+        reimbursementStatus: 'REIMBURSED' as const,
+        reimbursedAt: todayStr,
+        paymentConfirmedAt: nowIso,
+        transferDetails: transferSnapshot || e.transferDetails,
+        updatedAt: nowIso,
+      };
     });
-    setExpenses(updatedList);
-    const modified = updatedList.filter((e) => ids.includes(e.id));
-    if (modified.length > 0) {
+
+    // Group and send notification emails to submitters
+    let emailsSentCount = 0;
+    const groups = new Map<string, { name: string; items: Expense[] }>();
+    for (const exp of updatedExpenses) {
+      const email = (exp.submittedByEmail || 'admin@isf-argentina.org').trim().toLowerCase();
+      const name = exp.submittedByName || exp.submittedByEmail?.split('@')[0] || 'Solicitante';
+      if (!groups.has(email)) groups.set(email, { name, items: [] });
+      groups.get(email)!.items.push(exp);
+    }
+
+    const token = getStoredWorkspaceToken();
+
+    for (const [email, group] of groups.entries()) {
       try {
-        await upsertCentralExpenses(modified);
-        await logAuditEvent({
-          userEmail: currentUser?.email,
-          userName: currentUser?.name,
-          action: 'EXPENSE_STATUS_CHANGE',
-          actionLabel: 'Liquidación en Lote',
-          entityType: 'expense',
-          entityId: 'batch-settle',
-          entityName: `${modified.length} comprobantes`,
-          summary: `Se liquidaron y marcaron como reintegrados ${modified.length} comprobantes.`,
+        const total = group.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+        const subject = group.items.length === 1
+          ? formatPaymentEmailSubject(group.items[0].vendor, group.items[0].amount, group.items[0].currency)
+          : `Reintegros Liquidados: ${group.items.length} comprobantes - Total ${formatCurrency(total)}`;
+
+        const rows = group.items.map((it) => `<tr>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${it.date}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: bold;">${it.vendor}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${it.project}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: right; font-weight: bold; color: #065f46;">${formatCurrency(it.amount, it.currency)}</td>
+        </tr>`).join('');
+
+        const bodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
+          <h2 style="color: #065f46; margin-top: 0;">Confirmación de Reintegro Liquidado</h2>
+          <p>Hola <strong>${group.name}</strong>,</p>
+          <p>Te confirmamos que se han transferido y liquidado con éxito <strong>${group.items.length} comprobante(s)</strong> por un total de <strong>${formatCurrency(total)}</strong>:</p>
+          <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+            <thead><tr style="background: #f8fafc;"><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Fecha</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proveedor</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proyecto</th><th style="padding: 6px 10px; text-align: right; font-size: 11px;">Importe</th></tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr style="background: #ecfdf5;"><td colspan="3" style="padding: 8px 10px; font-weight: bold; color: #065f46;">Total</td><td style="padding: 8px 10px; font-weight: bold; text-align: right; color: #065f46;">${formatCurrency(total)}</td></tr></tfoot>
+          </table>
+          <p style="font-size: 12px; color: #64748b;">Área de Administración y Finanzas — ISF Argentina</p>
+        </div>`;
+
+        const cc = resolveEmailCcRecipients({ toEmail: email, expenses: group.items, costCenters, appUsers });
+        await sendGmailMessage({
+          to: email,
+          cc: cc.length > 0 ? cc : undefined,
+          subject,
+          bodyHtml,
+          accessToken: token || undefined,
+          fromName: currentUser?.name || 'ISF Finanzas',
         });
-        showToast(`✅ Se marcaron ${ids.length} gastos como Reintegrados / Liquidados.`);
-      } catch (err) {
-        console.error('Error batch updating status in cloud:', err);
+        emailsSentCount++;
+      } catch (e) {
+        console.warn('Error sending batch settle email to', email, e);
       }
     }
+
+    await handleBatchPaymentCompleted(updatedExpenses, emailsSentCount);
   };
 
   const handleAddNewCostCenter = async (newCc: Omit<CostCenter, 'id'>) => {
@@ -1607,6 +1745,8 @@ export default function App() {
                 expenses={expenses}
                 costCenters={costCenters}
                 vendors={vendors}
+                appUsers={appUsers}
+                currentUser={currentUser}
                 onToggleReimbursementStatus={handleToggleReimbursementStatus}
                 onDirectPayExpense={handleDirectPayExpense}
                 onProcessPayment={handleDirectPayExpense}
@@ -1616,6 +1756,7 @@ export default function App() {
                 onDeleteExpense={handleDeleteExpense}
                 onBatchDeleteExpenses={handleBatchDeleteExpenses}
                 onBatchSettleReimbursements={handleBatchSettleReimbursements}
+                onBatchPaymentCompleted={handleBatchPaymentCompleted}
                 onRetryDriveUpload={handleUploadExpenseToDrive}
                 onAddVendor={handleAddVendor}
                 onUpdateVendor={handleUpdateVendor}
@@ -1695,6 +1836,11 @@ export default function App() {
             <AuditLogsView
               logs={auditLogs}
               currentUser={currentUser}
+              onRefreshLogs={async () => {
+                const refreshed = await fetchCentralAuditLogs(500);
+                setAuditLogs(refreshed);
+                showToast('🔄 Registros de auditoría actualizados.');
+              }}
               onClearLogs={async () => {
                 const ok = await clearCentralAuditLogs({ email: currentUser.email, name: currentUser.name });
                 if (ok) {
@@ -1789,6 +1935,7 @@ export default function App() {
         currentUser={currentUser || undefined}
         onClose={() => setWithholdingModalExpense(null)}
         onSaved={handleWithholdingCertificateSaved}
+        onRevertPayment={handleToggleReimbursementStatus}
       />
 
       <ReplaceReceiptModal

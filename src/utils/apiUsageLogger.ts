@@ -18,6 +18,19 @@ export const API_USAGE_COLLECTION = 'api_usage_logs';
 export const ARS_EXCHANGE_RATE = 1060;
 
 /**
+ * Synchronizes an API log returned from the backend to Firestore directly from the authenticated client
+ */
+export async function syncApiLogToCloud(apiLog: any) {
+  if (!apiLog || !apiLog.id) return;
+  try {
+    const docRef = doc(db, API_USAGE_COLLECTION, apiLog.id);
+    await setDoc(docRef, sanitizeForFirestore(apiLog), { merge: true });
+  } catch (err) {
+    console.warn('[ApiUsageLogger] Could not sync API log to Firestore:', err);
+  }
+}
+
+/**
  * Calculates official Gemini 2.5 / 3.7 Flash pricing:
  * - $0.10 / 1M prompt tokens ($0.00000010 per token)
  * - $0.40 / 1M output tokens ($0.00000040 per token)
@@ -160,15 +173,30 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
   const currYear = now.getFullYear();
   const currMonth = now.getMonth();
   const currMonthKey = `${currYear}-${String(currMonth + 1).padStart(2, '0')}`;
-  const currMonthLabel = `${monthNames[currMonth]} ${currYear}`;
 
-  const prevMonthIdx = currMonth === 0 ? 11 : currMonth - 1;
-  const prevYearVal = currMonth === 0 ? currYear - 1 : currYear;
+  let activeYear = currYear;
+  let activeMonth = currMonth;
+  // If logs exist but none for currMonthKey (e.g. clock mismatch or new month without calls yet),
+  // default to the month of the most recent log so actual usage is not hidden
+  if (logs.length > 0 && logs.filter((l) => l.timestamp && l.timestamp.startsWith(currMonthKey)).length === 0) {
+    const latestValid = logs.find((l) => l.timestamp && !isNaN(new Date(l.timestamp).getTime()));
+    if (latestValid) {
+      const d = new Date(latestValid.timestamp);
+      activeYear = d.getFullYear();
+      activeMonth = d.getMonth();
+    }
+  }
+
+  const effectiveCurrKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+  const effectiveCurrLabel = `${monthNames[activeMonth]} ${activeYear}`;
+
+  const prevMonthIdx = activeMonth === 0 ? 11 : activeMonth - 1;
+  const prevYearVal = activeMonth === 0 ? activeYear - 1 : activeYear;
   const prevMonthKey = `${prevYearVal}-${String(prevMonthIdx + 1).padStart(2, '0')}`;
   const prevMonthLabel = `${monthNames[prevMonthIdx]} ${prevYearVal}`;
 
   const createMonthAggregation = (key: string, label: string): MonthApiUsage => {
-    const monthLogs = logs.filter((l) => l.timestamp.startsWith(key));
+    const monthLogs = logs.filter((l) => l.timestamp && l.timestamp.startsWith(key));
     let totalCalls = 0;
     let totalTokens = 0;
     let totalCostUsd = 0;
@@ -217,7 +245,7 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
     };
   };
 
-  const currentMonthUsage = createMonthAggregation(currMonthKey, currMonthLabel);
+  const currentMonthUsage = createMonthAggregation(effectiveCurrKey, effectiveCurrLabel);
   const previousMonthUsage = createMonthAggregation(prevMonthKey, prevMonthLabel);
 
   const diffCostUsd = Number((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd).toFixed(4));

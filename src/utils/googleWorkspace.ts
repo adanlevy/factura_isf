@@ -273,11 +273,13 @@ export async function uploadReceiptToGoogleDrive(params: {
 }
 
 /**
- * Deletes a receipt file from Google Drive by fileId or fileName
+ * Deletes a receipt file from Google Drive by fileId(s) or fileName(s)
  */
 export async function deleteReceiptFromGoogleDrive(params: {
   fileId?: string;
+  fileIds?: string[];
   fileName?: string;
+  fileNames?: string[];
   folderName?: string;
   accessToken?: string;
 }): Promise<{
@@ -286,7 +288,7 @@ export async function deleteReceiptFromGoogleDrive(params: {
   message?: string;
   error?: string;
 }> {
-  const { fileId, fileName, folderName, accessToken: explicitToken } = params;
+  const { fileId, fileIds, fileName, fileNames, folderName, accessToken: explicitToken } = params;
   const token = explicitToken || getStoredWorkspaceToken();
 
   try {
@@ -295,7 +297,9 @@ export async function deleteReceiptFromGoogleDrive(params: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fileId,
+        fileIds,
         fileName,
+        fileNames,
         folderName,
         accessToken: token,
       }),
@@ -778,6 +782,129 @@ export async function notifyBankDetailsChange(params: {
     accessToken,
   });
 }
+
+/**
+ * Sends an automated notification email when an expense payment is reverted to PENDING
+ */
+export async function sendPaymentReversalEmail(params: {
+  expense: Expense;
+  costCenters?: CostCenter[];
+  appUsers?: AppUserRecord[];
+  currentUser?: UserProfile | null;
+  accessToken?: string;
+  reversalReason?: string;
+}): Promise<{
+  success: boolean;
+  messageId?: string;
+  message?: string;
+  error?: string;
+}> {
+  const { expense, costCenters, appUsers, currentUser, accessToken, reversalReason } = params;
+
+  const recipientEmail =
+    expense.submittedByEmail ||
+    currentUser?.email ||
+    'admin@isf-argentina.org';
+
+  const recipientName =
+    expense.submittedByName ||
+    recipientEmail.split('@')[0] ||
+    'Colaborador';
+
+  const ccRecipients = resolveEmailCcRecipients({
+    toEmail: recipientEmail,
+    expense,
+    costCenters,
+    appUsers,
+  });
+
+  const matchedCenter = costCenters?.find(
+    (c) => c.name.toLowerCase() === (expense.project || '').toLowerCase()
+  );
+  const centerLabel = matchedCenter
+    ? `${matchedCenter.code} - ${matchedCenter.name}`
+    : expense.project || 'General';
+
+  const formattedAmount = formatCurrency(expense.amount || 0, expense.currency);
+  const subject = `[ISF Finanzas] Reversión de Pago: ${expense.vendor || 'Comprobante'} (${formattedAmount})`;
+
+  const dateFormatted = formatDate(expense.date);
+  const revertedByName = currentUser?.name || currentUser?.email || 'Administración';
+  const timestampStr = `${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+
+  const bodyHtml = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 20px; color: #1e293b; }
+          .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+          .header { background: #0f172a; padding: 22px 24px; color: #ffffff; border-bottom: 3px solid #f59e0b; }
+          .badge { display: inline-block; background: rgba(245, 158, 11, 0.2); color: #fde68a; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+          .content { padding: 24px; }
+          .data-table { width: 100%; border-collapse: collapse; margin-top: 16px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+          .data-table td { padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid #f1f5f9; }
+          .data-table td.label { font-weight: 600; color: #64748b; width: 35%; background: #f8fafc; }
+          .data-table td.val { font-weight: 700; color: #0f172a; }
+          .footer { background: #f8fafc; padding: 16px 24px; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div class="badge">Aviso de Reversión</div>
+            <h1 style="margin: 0; font-size: 18px; font-weight: 700; color: #ffffff;">Reversión de Pago Registrado</h1>
+            <p style="margin: 4px 0 0 0; font-size: 12px; color: #cbd5e1;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
+          </div>
+          <div class="content">
+            <p style="font-size: 14px; margin-top: 0; color: #334155;">
+              Hola <strong>${recipientName}</strong>,
+            </p>
+            <p style="font-size: 13.5px; color: #334155; line-height: 1.5;">
+              Te informamos que se ha <strong>revertido el registro de pago</strong> correspondiente al comprobante de <strong>${expense.vendor || 'Proveedor'}</strong> por <strong>${formattedAmount}</strong>.
+            </p>
+            <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; font-size: 12.5px; color: #92400e; margin: 16px 0;">
+              ⚠️ <strong>Estado actual:</strong> El comprobante ha regresado al estado <strong>Pendiente de Pago</strong> en la plataforma para su debida revisión, ajuste o posterior liquidación.
+              ${reversalReason ? `<div style="margin-top: 6px; font-size: 12px;"><strong>Motivo indicado:</strong> ${reversalReason}</div>` : ''}
+            </div>
+
+            <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-top: 14px;">Detalles del Comprobante Revertido:</div>
+            <table class="data-table">
+              <tr><td class="label">Proveedor:</td><td class="val">${expense.vendor || '-'}</td></tr>
+              ${expense.invoiceNumber ? `<tr><td class="label">N° Comprobante:</td><td class="val">${expense.invoiceNumber}</td></tr>` : ''}
+              <tr><td class="label">Fecha Comprobante:</td><td class="val">${dateFormatted}</td></tr>
+              <tr><td class="label">Centro de Costos:</td><td class="val">${centerLabel}</td></tr>
+              <tr><td class="label">Categoría:</td><td class="val">${expense.category || '-'}</td></tr>
+              <tr><td class="label">Monto:</td><td class="val" style="color: #0f172a; font-size: 13.5px;">${formattedAmount}</td></tr>
+              <tr><td class="label">Tipo / Método:</td><td class="val">${expense.paymentMethod || 'Pago a Proveedor'}</td></tr>
+              <tr><td class="label">Revertido por:</td><td class="val">${revertedByName}</td></tr>
+              <tr><td class="label">Fecha de Reversión:</td><td class="val">${timestampStr}</td></tr>
+            </table>
+
+            <p style="font-size: 12px; color: #64748b; margin-top: 20px; line-height: 1.5;">
+              ℹ️ Los comprobantes de transferencia y certificados de retención que se hubieran subido previamente para este pago han sido eliminados de Google Drive y del sistema.
+            </p>
+          </div>
+          <div class="footer">
+            <strong>Ingeniería Sin Fronteras Argentina</strong> — Área de Administración, Finanzas y Tesorería<br>
+            Este es un correo automático generado por el sistema de gestión de comprobantes.
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  return sendGmailMessage({
+    to: recipientEmail,
+    cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+    subject,
+    bodyHtml,
+    fromName: 'ISF Finanzas',
+    accessToken,
+  });
+}
+
 
 /**
  * Fetches Google Drive Folder Name and details automatically from URL or ID

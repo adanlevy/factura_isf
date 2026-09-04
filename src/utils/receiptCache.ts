@@ -113,4 +113,6 @@ export const removeAllExpenseCachedFiles = async (expenseId: string) => {
 };
 
 export const removeCachedReceiptFile = removeCachedFile;
+export const removeCachedPaymentProofFile = (expenseId: string) => removeCachedFile(`${expenseId}_payment_proof`);
+export const removeCachedWithholdingCertificateFile = (expenseId: string) => removeCachedFile(`${expenseId}_withholding_cert`);
 

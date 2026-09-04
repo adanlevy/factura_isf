@@ -1021,6 +1021,29 @@ app.get("/api/data/sync", (_req, res) => {
   });
 });
 
+// 7. AUDIT LOGS (Registro de cambios y auditoría contable)
+app.get("/api/data/audit-logs", (_req, res) => {
+  const auditLogs = readCollection<any[]>("audit_logs", []);
+  res.json({ success: true, count: auditLogs.length, data: auditLogs });
+});
+
+app.post("/api/data/audit-logs", (req, res) => {
+  const entry = req.body;
+  if (!entry || !entry.id) {
+    return res.status(400).json({ success: false, error: "Registro de auditoría inválido" });
+  }
+  const existing = readCollection<any[]>("audit_logs", []);
+  const filtered = existing.filter((l) => l.id !== entry.id);
+  const updated = [entry, ...filtered].slice(0, 2000);
+  const saved = writeCollection("audit_logs", updated);
+  res.json({ success: saved, count: updated.length, data: entry });
+});
+
+app.post("/api/data/audit-logs/clear", (req, res) => {
+  const saved = writeCollection("audit_logs", []);
+  res.json({ success: saved, count: 0 });
+});
+
 // Endpoint to check centralized Google Drive / Workspace backend configuration
 app.get("/api/drive/status", async (_req, res) => {
   const centralAuth = await getCentralizedGoogleAccessToken();
@@ -1162,7 +1185,7 @@ Devuelve los datos en JSON conforme al esquema.`;
     const pTokens = (response as any).usageMetadata?.promptTokenCount || Math.ceil((cleanBase64.length * 0.75) / 4) + 450;
     const cTokens = (response as any).usageMetadata?.candidatesTokenCount || Math.ceil(jsonText.length / 4);
     const tTokens = (response as any).usageMetadata?.totalTokenCount || (pTokens + cTokens);
-    logApiUsage({
+    const apiLog = logApiUsage({
       service: 'gemini_ai',
       serviceName: 'Google Gemini AI',
       endpoint: '/api/extract-invoice',
@@ -1180,6 +1203,7 @@ Devuelve los datos en JSON conforme al esquema.`;
     return res.json({
       success: true,
       data: extractedData,
+      apiLog,
     });
   } catch (error: any) {
     console.error("Error extracting invoice:", error);
@@ -1354,7 +1378,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
     const vpTokens = (response as any).usageMetadata?.promptTokenCount || 1600;
     const vcTokens = (response as any).usageMetadata?.candidatesTokenCount || 300;
     const vtTokens = (response as any).usageMetadata?.totalTokenCount || (vpTokens + vcTokens);
-    logApiUsage({
+    const apiLog = logApiUsage({
       service: 'gemini_ai',
       serviceName: 'Google Gemini AI',
       endpoint: '/api/process-vendor-doc',
@@ -1372,6 +1396,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
     return res.json({
       success: true,
       data: extractedData,
+      apiLog,
     });
   } catch (error: any) {
     console.error("Error scanning vendor document:", error);
@@ -2076,9 +2101,44 @@ app.post("/api/upload-to-drive", async (req, res) => {
 // Endpoint 6: Delete receipt file from Google Drive
 app.post("/api/delete-from-drive", async (req, res) => {
   try {
-    const { fileId, fileName, folderName, accessToken } = req.body;
+    const { fileId, fileIds, fileName, fileNames, folderName, accessToken } = req.body;
 
-    if (!fileId && !fileName) {
+    const extractDriveId = (val?: string): string | null => {
+      if (!val || typeof val !== "string") return null;
+      const trimmed = val.trim();
+      const fileMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (fileMatch && fileMatch[1]) return fileMatch[1];
+      const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (idMatch && idMatch[1]) return idMatch[1];
+      if (/^[a-zA-Z0-9_-]{20,60}$/.test(trimmed)) return trimmed;
+      return null;
+    };
+
+    const targetIds: string[] = [];
+    if (Array.isArray(fileIds)) {
+      for (const id of fileIds) {
+        const extracted = extractDriveId(id);
+        if (extracted && !targetIds.includes(extracted)) targetIds.push(extracted);
+      }
+    }
+    if (fileId && typeof fileId === "string") {
+      const extracted = extractDriveId(fileId);
+      if (extracted && !targetIds.includes(extracted)) targetIds.push(extracted);
+    }
+
+    const targetNames: string[] = [];
+    if (Array.isArray(fileNames)) {
+      for (const name of fileNames) {
+        if (name && typeof name === "string" && name.trim() && !targetNames.includes(name.trim())) {
+          targetNames.push(name.trim());
+        }
+      }
+    }
+    if (fileName && typeof fileName === "string" && fileName.trim() && !targetNames.includes(fileName.trim())) {
+      targetNames.push(fileName.trim());
+    }
+
+    if (targetIds.length === 0 && targetNames.length === 0) {
       return res.status(400).json({
         success: false,
         error: "Se requiere fileId o fileName para eliminar de Google Drive.",
@@ -2097,31 +2157,31 @@ app.post("/api/delete-from-drive", async (req, res) => {
 
     const deletedIds: string[] = [];
 
-    // 1. If exact fileId is provided, delete it directly
-    if (fileId) {
+    // 1. Delete all targeted file IDs directly
+    for (const fId of targetIds) {
       try {
-        console.log(`[DRIVE API DELETE] Deleting fileId: ${fileId}`);
-        const delRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
+        console.log(`[DRIVE API DELETE] Deleting fileId: ${fId}`);
+        const delRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fId}?supportsAllDrives=true`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${effectiveAccessToken}` },
         });
         if (delRes.ok || delRes.status === 404) {
-          deletedIds.push(fileId);
+          deletedIds.push(fId);
         }
       } catch (e: any) {
         console.warn("[DRIVE API DELETE ERROR]", e.message);
       }
     }
 
-    // 2. If fileName is provided, search and delete any matching active files
-    if (fileName) {
+    // 2. Search and delete any matching active files by fileName
+    for (const fName of targetNames) {
       try {
-        const cleanName = fileName.replace(/'/g, "\\'");
+        const cleanName = fName.replace(/'/g, "\\'");
         const query = `name = '${cleanName}' and trashed = false`;
         const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
           query
         )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
-        
+
         const searchRes = await fetch(searchUrl, {
           headers: { Authorization: `Bearer ${effectiveAccessToken}` },
         });
@@ -2130,6 +2190,7 @@ app.post("/api/delete-from-drive", async (req, res) => {
           const searchData = (await searchRes.json()) as any;
           if (searchData.files && searchData.files.length > 0) {
             for (const f of searchData.files) {
+              if (deletedIds.includes(f.id)) continue;
               console.log(`[DRIVE API DELETE BY NAME] Deleting ${f.name} (${f.id})`);
               const dRes = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
                 method: "DELETE",

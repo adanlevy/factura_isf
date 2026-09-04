@@ -33,7 +33,7 @@ import {
   RefreshCw,
   FileCheck,
 } from 'lucide-react';
-import { Expense, CostCenter, Vendor } from '../types';
+import { Expense, CostCenter, Vendor, AppUserRecord, UserProfile } from '../types';
 import {
   formatCurrency,
   formatDate,
@@ -43,6 +43,7 @@ import {
   matchesSearch,
   findVendorByCuitOrName,
 } from '../utils/helpers';
+import { BatchPaymentModal } from './BatchPaymentModal';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { AccountDetailsDisplay } from './AccountDetailsDisplay';
@@ -60,6 +61,9 @@ interface AdminMovementViewProps {
   onDeleteExpense?: (id: string) => void;
   onBatchDeleteExpenses?: (ids: string[]) => void;
   onBatchSettleReimbursements: (ids: string[]) => void;
+  onBatchPaymentCompleted?: (updatedExpenses: Expense[], emailsSentCount: number) => Promise<void> | void;
+  appUsers?: AppUserRecord[];
+  currentUser?: UserProfile;
   onRetryDriveUpload?: (expense: Expense) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
   onUpdateVendor?: (vendor: Vendor) => void;
@@ -72,6 +76,8 @@ export function AdminMovementView({
   expenses = [],
   costCenters = [],
   vendors = [],
+  appUsers = [],
+  currentUser,
   onToggleReimbursementStatus,
   onDirectPayExpense,
   onProcessPayment,
@@ -81,6 +87,7 @@ export function AdminMovementView({
   onDeleteExpense,
   onBatchDeleteExpenses,
   onBatchSettleReimbursements,
+  onBatchPaymentCompleted,
   onRetryDriveUpload,
   onAddVendor,
   onUpdateVendor,
@@ -728,35 +735,45 @@ export function AdminMovementView({
                           <div className="flex flex-col items-center gap-1">
                             <div className="inline-flex items-center space-x-1">
                               {isPendingWithholding ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (onOpenWithholdingModal) {
-                                      onOpenWithholdingModal(expense);
-                                    } else if (confirm(`¿Deseas revertir el pago de "${expense.vendor}" a estado Pendiente?`)) {
+                                <div className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 hover:bg-amber-200/90 shadow-2xs overflow-hidden transition">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (onOpenWithholdingModal) {
+                                        onOpenWithholdingModal(expense);
+                                      }
+                                    }}
+                                    className="inline-flex items-center px-2 py-0.5 text-[10px] font-bold text-amber-900 hover:underline transition cursor-pointer"
+                                    title="Pagado - Pendiente de Certificado de Retención. Clic para gestionar certificado."
+                                  >
+                                    <Clock className="w-3 h-3 mr-1 text-amber-700" />
+                                    <span>Pagado - Pend. Retención</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       onToggleReimbursementStatus(expense.id);
-                                    }
-                                  }}
-                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition cursor-pointer shadow-2xs"
-                                  title="Pagado - Pendiente de Certificado de Retención. Clic para gestionar certificado."
-                                >
-                                  <Clock className="w-3 h-3 mr-1 text-amber-700" />
-                                  <span>Pagado - Pend. Retención</span>
-                                </button>
+                                    }}
+                                    className="px-1.5 py-0.5 text-amber-800 hover:text-rose-700 hover:bg-rose-100 border-l border-amber-300 transition cursor-pointer flex items-center justify-center group"
+                                    title="Revertir pago a estado Pendiente"
+                                  >
+                                    <RotateCcw className="w-3 h-3 group-hover:rotate-[-45deg] transition-transform" />
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (confirm(`¿Deseas revertir el pago de "${expense.vendor}" a estado Pendiente?`)) {
-                                      onToggleReimbursementStatus(expense.id);
-                                    }
+                                    onToggleReimbursementStatus(expense.id);
                                   }}
-                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 hover:bg-amber-50 text-emerald-700 hover:text-amber-800 border border-emerald-200 hover:border-amber-300 transition cursor-pointer group"
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-700 border border-emerald-200 hover:border-rose-300 transition cursor-pointer group"
                                   title="Pagado. Clic para revertir a estado Pendiente"
                                 >
                                   <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600 group-hover:hidden" />
-                                  <RotateCcw className="w-3 h-3 mr-1 text-amber-600 hidden group-hover:inline" />
-                                  <span>Pagado</span>
+                                  <RotateCcw className="w-3 h-3 mr-1 text-rose-600 hidden group-hover:inline" />
+                                  <span className="group-hover:hidden">Pagado</span>
+                                  <span className="hidden group-hover:inline">Revertir</span>
                                 </button>
                               )}
 
@@ -766,19 +783,6 @@ export function AdminMovementView({
                                 </span>
                               )}
                             </div>
-
-                            {/* Acceso rápido a subir retención si está pendiente */}
-                            {isPendingWithholding && onOpenWithholdingModal && (
-                              <button
-                                type="button"
-                                onClick={() => onOpenWithholdingModal(expense)}
-                                className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs transition cursor-pointer"
-                                title="Subir Certificado de Retenciones"
-                              >
-                                <FileCheck className="w-2.5 h-2.5 mr-0.5" />
-                                <span>Subir Retención</span>
-                              </button>
-                            )}
 
                             {paymentDateFormatted && (
                               <span className="text-[9.5px] text-slate-500 font-medium whitespace-nowrap mt-0.5" title="Fecha de pago">
@@ -948,30 +952,39 @@ export function AdminMovementView({
                     {isPaid ? (
                       <div className="flex flex-col items-end gap-1">
                         {isPendingWithholding ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (onOpenWithholdingModal) {
-                                onOpenWithholdingModal(expense);
-                              } else if (confirm(`¿Deseas revertir el pago de "${expense.vendor}" a estado Pendiente?`)) {
+                          <div className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 shadow-2xs overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onOpenWithholdingModal) {
+                                  onOpenWithholdingModal(expense);
+                                }
+                              }}
+                              className="inline-flex items-center px-2 py-0.5 text-[10.5px] font-bold text-amber-900 hover:bg-amber-200 transition cursor-pointer"
+                              title="Pagado - Pendiente de Certificado de Retención. Clic para gestionar."
+                            >
+                              <Clock className="w-3 h-3 mr-1 text-amber-700" />
+                              <span>Pagado - Pend. Retención</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 onToggleReimbursementStatus(expense.id);
-                              }
-                            }}
-                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition cursor-pointer shadow-2xs"
-                            title="Pagado - Pendiente de Certificado de Retención. Clic para gestionar."
-                          >
-                            <Clock className="w-3 h-3 mr-1 text-amber-700" />
-                            <span>Pagado - Pend. Retención</span>
-                          </button>
+                              }}
+                              className="px-1.5 py-0.5 text-amber-800 hover:text-rose-700 hover:bg-rose-100 border-l border-amber-300 transition cursor-pointer flex items-center justify-center"
+                              title="Revertir pago a estado Pendiente"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          </div>
                         ) : (
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm(`¿Deseas revertir el pago de "${expense.vendor}" a estado Pendiente?`)) {
-                                onToggleReimbursementStatus(expense.id);
-                              }
+                              onToggleReimbursementStatus(expense.id);
                             }}
-                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 hover:bg-amber-50 text-emerald-700 hover:text-amber-800 border border-emerald-200 hover:border-amber-300 transition cursor-pointer"
+                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-700 border border-emerald-200 hover:border-rose-300 transition cursor-pointer"
                             title="Pagado. Clic para revertir a estado Pendiente"
                           >
                             <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600" />
@@ -1240,55 +1253,25 @@ export function AdminMovementView({
         </div>
       )}
 
-      {/* Modal: Confirmación de Pago / Liquidación por Lote */}
-      {showBatchSettleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <button
-                onClick={() => setShowBatchSettleModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900">
-                ¿Liquidar comprobantes seleccionados?
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Se marcarán como <strong>Reintegrados / Liquidados</strong> los comprobantes pendientes seleccionados por un total de{' '}
-                <strong className="text-emerald-700 font-bold">
-                  {formatCurrency(
-                    selectedExpenses
-                      .filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')
-                      .reduce((sum, e) => sum + e.amount, 0)
-                  )}
-                </strong>.
-              </p>
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-2">
-              <button
-                onClick={() => setShowBatchSettleModal(false)}
-                className="px-4 py-2.5 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmBatchSettle}
-                className="px-4.5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition active:scale-95 cursor-pointer"
-              >
-                Confirmar Liquidación
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal: Liquidación y Pago por Lote con Notificación por Email */}
+      <BatchPaymentModal
+        isOpen={showBatchSettleModal}
+        onClose={() => setShowBatchSettleModal(false)}
+        expenses={selectedExpenses.filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')}
+        costCenters={costCenters}
+        vendors={vendors}
+        appUsers={appUsers}
+        currentUser={currentUser}
+        onPaymentCompleted={async (updatedExpenses, emailsSentCount) => {
+          if (onBatchPaymentCompleted) {
+            await onBatchPaymentCompleted(updatedExpenses, emailsSentCount);
+          } else {
+            onBatchSettleReimbursements(updatedExpenses.map((e) => e.id));
+          }
+          setSelectedIds([]);
+          setShowBatchSettleModal(false);
+        }}
+      />
 
       {/* Modal: Aviso de Liquidación por Lote (cuando no hay pendientes) */}
       {batchSettleWarning && (

@@ -133,13 +133,31 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
     };
   }, []);
 
-  // Compute live API usage metrics prioritizing real-time Firestore logs if available
+  // Unify all real-time Firestore logs and backend logs
+  const allLogs = useMemo(() => {
+    const map = new Map<string, ApiUsageLogEntry>();
+    if (metrics?.apiUsage?.recentLogs) {
+      for (const log of metrics.apiUsage.recentLogs) {
+        if (log && log.id && !log.id.startsWith('seed_')) map.set(log.id, log);
+      }
+    }
+    if (firestoreApiLogs) {
+      for (const log of firestoreApiLogs) {
+        if (log && log.id && !log.id.startsWith('seed_')) map.set(log.id, log);
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  }, [firestoreApiLogs, metrics?.apiUsage?.recentLogs]);
+
+  // Compute live API usage metrics prioritizing unified logs
   const liveApiUsage = useMemo(() => {
-    if (firestoreApiLogs.length > 0) {
-      return aggregateApiUsage(firestoreApiLogs);
+    if (allLogs.length > 0) {
+      return aggregateApiUsage(allLogs);
     }
     return metrics?.apiUsage;
-  }, [firestoreApiLogs, metrics?.apiUsage]);
+  }, [allLogs, metrics?.apiUsage]);
 
   const apiUsage = liveApiUsage;
   const exchangeRate = apiUsage?.exchangeRateArs || ARS_EXCHANGE_RATE;
@@ -154,8 +172,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
   // Filtered API logs
   const filteredLogs = useMemo(() => {
-    const logsToFilter = firestoreApiLogs.length > 0 ? firestoreApiLogs : (apiUsage?.recentLogs || []);
-    return logsToFilter.filter((log: ApiUsageLogEntry) => {
+    return allLogs.filter((log: ApiUsageLogEntry) => {
       const matchesService =
         logFilterService === 'all' || log.service === logFilterService;
       const matchesQuery =
@@ -163,7 +180,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         matchesSearch([log.actionName, log.endpoint, log.details, log.userEmail, log.serviceName, log.status], logSearchQuery);
       return matchesService && matchesQuery;
     });
-  }, [firestoreApiLogs, apiUsage?.recentLogs, logFilterService, logSearchQuery]);
+  }, [allLogs, logFilterService, logSearchQuery]);
 
   return (
     <div id="system-admin-view-root" className="space-y-6 max-w-7xl mx-auto pb-12">

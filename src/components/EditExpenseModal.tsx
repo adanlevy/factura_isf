@@ -30,6 +30,7 @@ import {
   recordCategoryCostCenterUsage,
 } from '../utils/sorting';
 import { generateDriveFileName, findVendorByCuitOrName, cleanCuit } from '../utils/helpers';
+import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { PaymentTypeSelector } from './PaymentTypeSelector';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -144,6 +145,9 @@ export function EditExpenseModal({
       });
 
       const result = await response.json();
+      if (result.apiLog) {
+        syncApiLogToCloud(result.apiLog);
+      }
       if (result.success && result.data) {
         const data = result.data;
         const amountNum = typeof data.amount === 'number' ? data.amount : formData.amount;

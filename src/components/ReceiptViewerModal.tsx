@@ -137,10 +137,7 @@ export function ReceiptViewerModal({
     expense.paymentMethod === 'Pago a Proveedor' ||
     expense.paymentMethod === 'Reintegro' ||
     expense.reimbursementStatus === 'PENDING';
-  const isPaid =
-    (isPendingPaymentType && expense.reimbursementStatus === 'REIMBURSED') ||
-    Boolean(expense.paymentConfirmedAt) ||
-    Boolean(expense.reimbursedAt);
+  const isPaid = isPendingPaymentType && expense.reimbursementStatus === 'REIMBURSED';
   const isPending = isPendingPaymentType && !isPaid;
 
   const hasPaymentProof = Boolean(expense.paymentProofImage || expense.paymentProofFileName);
