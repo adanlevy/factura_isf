@@ -66,6 +66,7 @@ export function WithholdingCertificateModal({
   const [recipientEmail, setRecipientEmail] = useState('');
   const [customNotes, setCustomNotes] = useState('');
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [showRevertConfirm, setShowRevertConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const matchedCc = expense
@@ -466,10 +467,7 @@ export function WithholdingCertificateModal({
                 <button
                   type="button"
                   disabled={isExecuting}
-                  onClick={() => {
-                    onRevertPayment(expense.id);
-                    onClose();
-                  }}
+                  onClick={() => setShowRevertConfirm(true)}
                   className="px-3 py-2.5 text-rose-700 hover:text-rose-900 hover:bg-rose-100/80 border border-rose-200 text-xs font-semibold rounded-xl transition cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
                   title="Revertir este pago si fue aplicado por error"
                 >
@@ -501,6 +499,47 @@ export function WithholdingCertificateModal({
 
         </div>
       </div>
+
+      {/* Confirmation Modal for Reverting Payment */}
+      {showRevertConfirm && expense && onRevertPayment && (
+        <div className="fixed inset-0 z-70 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 border border-rose-200">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">¿Revertir pago a Pendiente?</h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  Se revertirá el estado de pago del comprobante de <strong>{expense.vendor}</strong> ({formatCurrency(expense.amount, expense.currency)}) a pendiente.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowRevertConfirm(false)}
+                className="px-4 py-2 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRevertConfirm(false);
+                  onRevertPayment(expense.id);
+                  onClose();
+                }}
+                className="px-4 py-2 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition active:scale-95 cursor-pointer flex items-center space-x-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Confirmar Reversión</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full Preview Sub-modal */}
       {previewModalOpen && fileBase64 && (

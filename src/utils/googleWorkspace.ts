@@ -1,6 +1,7 @@
 // Google Workspace integration for Gmail API and Google Drive API
 import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord } from '../types';
 import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
+import { syncApiLogToCloud } from './apiUsageLogger';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const CUSTOM_CLIENT_ID_KEY = 'isf_custom_google_client_id';
@@ -253,6 +254,10 @@ export async function uploadReceiptToGoogleDrive(params: {
       throw new Error(data.error || 'Error al subir a Google Drive');
     }
 
+    if (data.apiLog) {
+      syncApiLogToCloud(data.apiLog).catch(() => {});
+    }
+
     return {
       success: true,
       fileId: data.fileId,
@@ -392,6 +397,10 @@ export async function replaceReceiptInGoogleDrive(params: {
       throw new Error(data.error || 'Error al reemplazar en Google Drive');
     }
 
+    if (data.apiLog) {
+      syncApiLogToCloud(data.apiLog).catch(() => {});
+    }
+
     return {
       success: true,
       fileId: data.fileId,
@@ -461,6 +470,10 @@ export async function sendGmailMessage(params: {
         saveStoredWorkspaceToken(null);
       }
       throw new Error(data.error || 'Error al despachar el correo');
+    }
+
+    if (data.apiLog) {
+      syncApiLogToCloud(data.apiLog).catch(() => {});
     }
 
     return {
@@ -553,13 +566,34 @@ export async function sendReceiptUploadConfirmationEmail(params: {
   // Build rows HTML
   const rowsHtml = expenses
     .map((exp, idx) => {
-      const isReimb = exp.reimbursable || exp.paymentMethod === 'Reintegro';
+      const cleanType = (exp.paymentType || exp.paymentMethod || '').trim().toUpperCase();
+      const isVendorPayment =
+        cleanType === 'PAGO_PROVEEDOR' ||
+        cleanType === 'PAGO A PROVEEDOR' ||
+        cleanType === 'PROVEEDOR' ||
+        cleanType === 'TRANSFERENCIA PROVEEDOR' ||
+        exp.paymentMethod === 'Pago a Proveedor' ||
+        exp.paymentMethod === 'Pago a proveedor';
+
+      const isReimb =
+        !isVendorPayment &&
+        (cleanType === 'REINTEGRO' ||
+         cleanType === 'REEMBOLSO' ||
+         exp.paymentMethod === 'Reintegro' ||
+         (exp.reimbursable && exp.paymentType !== 'PAGO_PROVEEDOR'));
+
       const formattedAmt = formatCurrency(exp.amount || 0, exp.currency);
       const bankInfo = exp.bankDetails?.alias
         ? `Alias: <strong>${exp.bankDetails.alias}</strong>`
         : exp.bankDetails?.cbuCvu
         ? `CBU/CVU: ${exp.bankDetails.cbuCvu}`
         : '';
+
+      const typeLabel = isVendorPayment
+        ? `<span style="color: #0284c7; font-weight: 600;">🏢 Pago a proveedor</span>`
+        : isReimb
+        ? `<span style="color: #d97706; font-weight: 600;">🔄 Reintegro</span>`
+        : `<span style="color: #059669; font-weight: 600;">💳 ${exp.paymentMethod || 'Pago Directo'}</span>`;
 
       return `
         <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 0 ? 'background-color: #ffffff;' : 'background-color: #f8fafc;'}">
@@ -579,11 +613,7 @@ export async function sendReceiptUploadConfirmationEmail(params: {
             ${exp.category || 'Varios'}
           </td>
           <td style="padding: 10px 12px; font-size: 12px; color: #334155;">
-            ${
-              isReimb
-                ? `<span style="color: #d97706; font-weight: 600;">🔄 Reintegro</span>${bankInfo ? `<div style="font-size: 11px; color: #64748b;">${bankInfo}</div>` : ''}`
-                : `<span style="color: #059669; font-weight: 600;">🏢 ${exp.paymentMethod || 'Pago Directo'}</span>`
-            }
+            ${typeLabel}${bankInfo ? `<div style="font-size: 11px; color: #64748b; margin-top: 2px;">${bankInfo}</div>` : ''}
           </td>
           <td style="padding: 10px 12px; font-size: 13px; font-weight: 700; color: #0f172a; text-align: right; white-space: nowrap;">
             ${formattedAmt}
@@ -665,9 +695,26 @@ export async function sendReceiptUploadConfirmationEmail(params: {
             </div>
 
             ${
-              expenses.some((e) => e.reimbursable)
+              expenses.some(
+                (e) =>
+                  e.paymentType === 'REINTEGRO' ||
+                  e.paymentMethod === 'Reintegro' ||
+                  (e.reimbursable && e.paymentType !== 'PAGO_PROVEEDOR')
+              )
                 ? `<div style="background-color: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; padding: 12px 14px; font-size: 12px; color: #92400e; margin-top: 15px;">
                     ℹ️ <strong>Atención Reintegros:</strong> Los comprobantes marcados como reintegro fueron derivados automáticamente a Tesorería / Administración para su correspondiente revisión y liquidación.
+                  </div>`
+                : ''
+            }
+            ${
+              expenses.some(
+                (e) =>
+                  e.paymentType === 'PAGO_PROVEEDOR' ||
+                  e.paymentMethod === 'Pago a Proveedor' ||
+                  e.paymentMethod === 'Pago a proveedor'
+              )
+                ? `<div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 14px; font-size: 12px; color: #1e40af; margin-top: 15px;">
+                    ℹ️ <strong>Atención Pagos a Proveedores:</strong> Los comprobantes marcados como pago a proveedor fueron registrados en el circuito de pagos a proveedores de Administración y Finanzas.
                   </div>`
                 : ''
             }

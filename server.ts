@@ -370,39 +370,114 @@ function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number 
   return Number(total.toFixed(6));
 }
 
-// Asynchronously persist API log to Cloud Firestore
-async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
-  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
-  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?documentId=${encodeURIComponent(record.id)}&key=${firebaseConfigData.apiKey}`;
+// Convert native JS values to Firestore REST API value representations
+function toFirestoreRestValue(val: any): any {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    if (Number.isInteger(val)) return { integerValue: String(val) };
+    return { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(toFirestoreRestValue) } };
+  }
+  if (typeof val === 'object') {
+    const fields: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (v !== undefined) fields[k] = toFirestoreRestValue(v);
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
 
-  const fields: Record<string, any> = {
-    id: { stringValue: record.id },
-    timestamp: { stringValue: record.timestamp },
-    service: { stringValue: record.service },
-    serviceName: { stringValue: record.serviceName || '' },
-    endpoint: { stringValue: record.endpoint || '' },
-    actionName: { stringValue: record.actionName || '' },
-    model: { stringValue: record.model || '' },
-    promptTokens: { integerValue: String(record.promptTokens || 0) },
-    candidatesTokens: { integerValue: String(record.candidatesTokens || 0) },
-    totalTokens: { integerValue: String(record.totalTokens || 0) },
-    estimatedCostUsd: { doubleValue: record.estimatedCostUsd || 0 },
-    estimatedCostArs: { doubleValue: record.estimatedCostArs || 0 },
-    status: { stringValue: record.status || 'success' },
-    durationMs: { integerValue: String(record.durationMs || 0) },
-    userEmail: { stringValue: record.userEmail || '' },
-    details: { stringValue: record.details || '' },
-  };
+// Convert Firestore REST API value representations to native JS values
+function fromFirestoreRestValue(val: any): any {
+  if (!val) return null;
+  if ('nullValue' in val) return null;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return parseInt(val.integerValue, 10);
+  if ('doubleValue' in val) return parseFloat(val.doubleValue);
+  if ('stringValue' in val) return val.stringValue;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('arrayValue' in val) {
+    return (val.arrayValue.values || []).map(fromFirestoreRestValue);
+  }
+  if ('mapValue' in val) {
+    const obj: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val.mapValue.fields || {})) {
+      obj[k] = fromFirestoreRestValue(v);
+    }
+    return obj;
+  }
+  return null;
+}
+
+function parseFirestoreDoc(doc: any): any {
+  if (!doc || !doc.fields) return null;
+  const result: Record<string, any> = {};
+  for (const [k, v] of Object.entries(doc.fields)) {
+    result[k] = fromFirestoreRestValue(v);
+  }
+  const idFromPath = doc.name ? doc.name.split('/').pop() : undefined;
+  if (!result.id && idFromPath) {
+    result.id = idFromPath;
+  }
+  return result;
+}
+
+// Asynchronously persist API log to Cloud Firestore via REST PATCH
+async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey || !record?.id) return;
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs/${encodeURIComponent(record.id)}?key=${firebaseConfigData.apiKey}`;
+
+  const fields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (v !== undefined) {
+      fields[k] = toFirestoreRestValue(v);
+    }
+  }
 
   try {
-    await fetch(url, {
-      method: 'POST',
+    const res = await fetch(url, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields }),
     });
+    if (!res.ok) {
+      console.warn('[Server Firestore REST] API log save returned non-200:', res.status, await res.text());
+    }
   } catch (err) {
     console.warn('[Server Firestore REST] Error saving API log:', err);
+  }
+}
+
+// Asynchronously persist Audit log to Cloud Firestore via REST PATCH
+async function saveAuditLogToFirestore(entry: any): Promise<void> {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey || !entry?.id) return;
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs/${encodeURIComponent(entry.id)}?key=${firebaseConfigData.apiKey}`;
+
+  const fields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(entry)) {
+    if (v !== undefined) {
+      fields[k] = toFirestoreRestValue(v);
+    }
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    if (!res.ok) {
+      console.warn('[Server Firestore REST] Audit log save returned non-200:', res.status, await res.text());
+    }
+  } catch (err) {
+    console.warn('[Server Firestore REST] Error saving Audit log:', err);
   }
 }
 
@@ -410,7 +485,7 @@ async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
 async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return [];
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?pageSize=300&key=${firebaseConfigData.apiKey}`;
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?pageSize=1000&key=${firebaseConfigData.apiKey}`;
 
   try {
     const res = await fetch(url);
@@ -420,31 +495,57 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
 
     const records: ApiUsageRecord[] = [];
     for (const doc of json.documents) {
-      const f = doc.fields || {};
-      const id = f.id?.stringValue || doc.name?.split('/').pop() || '';
-      if (id.startsWith('seed_')) continue;
-      records.push({
-        id,
-        timestamp: f.timestamp?.stringValue || new Date().toISOString(),
-        service: (f.service?.stringValue as any) || 'gemini_ai',
-        serviceName: f.serviceName?.stringValue || 'Google Gemini AI',
-        endpoint: f.endpoint?.stringValue || '',
-        actionName: f.actionName?.stringValue || 'Operación',
-        model: f.model?.stringValue,
-        promptTokens: parseInt(f.promptTokens?.integerValue || '0', 10),
-        candidatesTokens: parseInt(f.candidatesTokens?.integerValue || '0', 10),
-        totalTokens: parseInt(f.totalTokens?.integerValue || '0', 10),
-        estimatedCostUsd: parseFloat(f.estimatedCostUsd?.doubleValue ?? f.estimatedCostUsd?.integerValue ?? '0'),
-        estimatedCostArs: parseFloat(f.estimatedCostArs?.doubleValue ?? f.estimatedCostArs?.integerValue ?? '0'),
-        status: (f.status?.stringValue as any) || 'success',
-        durationMs: parseInt(f.durationMs?.integerValue || '0', 10),
-        userEmail: f.userEmail?.stringValue,
-        details: f.details?.stringValue,
-      });
+      const parsed = parseFirestoreDoc(doc);
+      if (parsed && parsed.id && !parsed.id.startsWith('seed_')) {
+        records.push({
+          id: parsed.id,
+          timestamp: parsed.timestamp || new Date().toISOString(),
+          service: parsed.service || 'gemini_ai',
+          serviceName: parsed.serviceName || 'Google Gemini AI',
+          endpoint: parsed.endpoint || '',
+          actionName: parsed.actionName || 'Operación',
+          model: parsed.model,
+          promptTokens: Number(parsed.promptTokens || 0),
+          candidatesTokens: Number(parsed.candidatesTokens || 0),
+          totalTokens: Number(parsed.totalTokens || 0),
+          estimatedCostUsd: Number(parsed.estimatedCostUsd || 0),
+          estimatedCostArs: Number(parsed.estimatedCostArs || 0),
+          status: parsed.status || 'success',
+          durationMs: Number(parsed.durationMs || 0),
+          userEmail: parsed.userEmail,
+          details: parsed.details,
+        });
+      }
     }
     return records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (err) {
     console.warn('[Server Firestore REST] Error fetching API logs:', err);
+    return [];
+  }
+}
+
+// Asynchronously fetch Audit logs from Cloud Firestore
+async function fetchFirestoreAuditLogs(): Promise<any[]> {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return [];
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs?pageSize=1000&key=${firebaseConfigData.apiKey}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const json = await res.json();
+    if (!json.documents || !Array.isArray(json.documents)) return [];
+
+    const records: any[] = [];
+    for (const doc of json.documents) {
+      const parsed = parseFirestoreDoc(doc);
+      if (parsed && parsed.id) {
+        records.push(parsed);
+      }
+    }
+    return records.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+  } catch (err) {
+    console.warn('[Server Firestore REST] Error fetching Audit logs:', err);
     return [];
   }
 }
@@ -1022,9 +1123,29 @@ app.get("/api/data/sync", (_req, res) => {
 });
 
 // 7. AUDIT LOGS (Registro de cambios y auditoría contable)
-app.get("/api/data/audit-logs", (_req, res) => {
-  const auditLogs = readCollection<any[]>("audit_logs", []);
-  res.json({ success: true, count: auditLogs.length, data: auditLogs });
+app.get("/api/data/audit-logs", async (_req, res) => {
+  const localLogs = readCollection<any[]>("audit_logs", []);
+  const cloudLogs = await fetchFirestoreAuditLogs();
+
+  const map = new Map<string, any>();
+  for (const log of localLogs) {
+    if (log && log.id) map.set(log.id, log);
+  }
+  for (const log of cloudLogs) {
+    if (log && log.id) map.set(log.id, log);
+  }
+
+  const combined = Array.from(map.values()).sort(
+    (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+  );
+
+  if (combined.length > 0 && combined.length !== localLogs.length) {
+    try {
+      writeCollection("audit_logs", combined.slice(0, 2000));
+    } catch (_) {}
+  }
+
+  res.json({ success: true, count: combined.length, data: combined });
 });
 
 app.post("/api/data/audit-logs", (req, res) => {
@@ -1036,11 +1157,28 @@ app.post("/api/data/audit-logs", (req, res) => {
   const filtered = existing.filter((l) => l.id !== entry.id);
   const updated = [entry, ...filtered].slice(0, 2000);
   const saved = writeCollection("audit_logs", updated);
+
+  // Persist to Firestore in background
+  saveAuditLogToFirestore(entry).catch((err) => {
+    console.warn('[Audit Log REST save warn]', err);
+  });
+
   res.json({ success: saved, count: updated.length, data: entry });
 });
 
-app.post("/api/data/audit-logs/clear", (req, res) => {
+app.post("/api/data/audit-logs/clear", async (_req, res) => {
   const saved = writeCollection("audit_logs", []);
+
+  // Clear cloud records if available
+  if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+    const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+    const cloudLogs = await fetchFirestoreAuditLogs();
+    for (const log of cloudLogs) {
+      const delUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs/${encodeURIComponent(log.id)}?key=${firebaseConfigData.apiKey}`;
+      fetch(delUrl, { method: 'DELETE' }).catch(() => {});
+    }
+  }
+
   res.json({ success: saved, count: 0 });
 });
 

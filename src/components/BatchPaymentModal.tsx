@@ -205,10 +205,43 @@ export function BatchPaymentModal({
           const isSingle = group.expenses.length === 1;
           const firstExp = group.expenses[0];
 
+          const allAreVendorPayments = group.expenses.every((e) => {
+            const t = (e.paymentType || e.paymentMethod || '').trim().toUpperCase();
+            return t === 'PAGO_PROVEEDOR' || t === 'PAGO A PROVEEDOR' || t === 'PROVEEDOR' || e.paymentMethod === 'Pago a Proveedor';
+          });
+          const allAreReimbursements = group.expenses.every((e) => {
+            const t = (e.paymentType || e.paymentMethod || '').trim().toUpperCase();
+            return t === 'REINTEGRO' || t === 'REEMBOLSO' || e.paymentMethod === 'Reintegro';
+          });
+
           // Subject
-          const emailSubject = isSingle
-            ? formatPaymentEmailSubject(firstExp.vendor, firstExp.amount, firstExp.currency)
-            : `Reintegros Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+          let emailSubject: string;
+          if (isSingle) {
+            emailSubject = formatPaymentEmailSubject(
+              firstExp.vendor,
+              firstExp.amount,
+              firstExp.currency,
+              firstExp.paymentType || firstExp.paymentMethod
+            );
+          } else if (allAreVendorPayments) {
+            emailSubject = `[Pagos] Proveedores Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+          } else if (allAreReimbursements) {
+            emailSubject = `[Pagos] Reintegros Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+          } else {
+            emailSubject = `[Pagos] Comprobantes Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+          }
+
+          const headerTitle = allAreVendorPayments
+            ? 'Confirmación de Pago(s) a Proveedor(es)'
+            : allAreReimbursements
+            ? 'Confirmación de Reintegro(s) Liquidado(s)'
+            : 'Confirmación de Pago y Liquidación';
+
+          const descriptorText = allAreVendorPayments
+            ? 'el pago a proveedor'
+            : allAreReimbursements
+            ? 'el reintegro'
+            : 'el pago';
 
           // Expenses breakdown HTML table
           const expensesRows = group.expenses
@@ -233,7 +266,7 @@ export function BatchPaymentModal({
 
           const emailBodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 650px; margin: 0 auto; background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
             <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px;">
-              <h2 style="color: #065f46; margin: 0 0 4px 0; font-size: 20px;">Confirmación de Reintegro(s) Liquidado(s)</h2>
+              <h2 style="color: #065f46; margin: 0 0 4px 0; font-size: 20px;">${headerTitle}</h2>
               <p style="margin: 0; color: #64748b; font-size: 13px;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
             </div>
 
@@ -241,7 +274,7 @@ export function BatchPaymentModal({
             <p style="font-size: 14px;">
               Te confirmamos que se ha(n) <strong>transferido y liquidado con éxito</strong> ${
                 isSingle
-                  ? `el reintegro por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu comprobante de <em>${firstExp.vendor}</em>.`
+                  ? `${descriptorText} por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu comprobante de <em>${firstExp.vendor}</em>.`
                   : `<strong>${group.expenses.length} comprobantes</strong> por un total de <strong>${formatCurrency(group.totalAmount)}</strong>.`
               }
             </p>

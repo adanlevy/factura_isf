@@ -159,6 +159,8 @@ export function AdminMovementView({
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [showBatchSettleModal, setShowBatchSettleModal] = useState(false);
   const [batchSettleWarning, setBatchSettleWarning] = useState<string | null>(null);
+  const [revertTargetExpense, setRevertTargetExpense] = useState<Expense | null>(null);
+  const [isRevertingPayment, setIsRevertingPayment] = useState(false);
 
   // Unique cost centers for dropdowns with smart sorting
   const rawCostCenters = useMemo(() => {
@@ -271,10 +273,10 @@ export function AdminMovementView({
   // Mass actions
   const handleOpenBatchSettleModal = () => {
     const pendingSelectedIds = selectedExpenses
-      .filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')
+      .filter((e) => e.reimbursementStatus !== 'REIMBURSED')
       .map((e) => e.id);
     if (pendingSelectedIds.length === 0) {
-      setBatchSettleWarning('Ninguno de los comprobantes seleccionados está en estado Pendiente de Reintegro.');
+      setBatchSettleWarning('Ninguno de los comprobantes seleccionados está en estado pendiente de pago.');
       return;
     }
     setBatchSettleWarning(null);
@@ -283,7 +285,7 @@ export function AdminMovementView({
 
   const handleConfirmBatchSettle = () => {
     const pendingSelectedIds = selectedExpenses
-      .filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')
+      .filter((e) => e.reimbursementStatus !== 'REIMBURSED')
       .map((e) => e.id);
     if (pendingSelectedIds.length > 0) {
       onBatchSettleReimbursements(pendingSelectedIds);
@@ -753,7 +755,7 @@ export function AdminMovementView({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onToggleReimbursementStatus(expense.id);
+                                      setRevertTargetExpense(expense);
                                     }}
                                     className="px-1.5 py-0.5 text-amber-800 hover:text-rose-700 hover:bg-rose-100 border-l border-amber-300 transition cursor-pointer flex items-center justify-center group"
                                     title="Revertir pago a estado Pendiente"
@@ -765,7 +767,7 @@ export function AdminMovementView({
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    onToggleReimbursementStatus(expense.id);
+                                    setRevertTargetExpense(expense);
                                   }}
                                   className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-700 border border-emerald-200 hover:border-rose-300 transition cursor-pointer group"
                                   title="Pagado. Clic para revertir a estado Pendiente"
@@ -970,7 +972,7 @@ export function AdminMovementView({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onToggleReimbursementStatus(expense.id);
+                                setRevertTargetExpense(expense);
                               }}
                               className="px-1.5 py-0.5 text-amber-800 hover:text-rose-700 hover:bg-rose-100 border-l border-amber-300 transition cursor-pointer flex items-center justify-center"
                               title="Revertir pago a estado Pendiente"
@@ -982,7 +984,7 @@ export function AdminMovementView({
                           <button
                             type="button"
                             onClick={() => {
-                              onToggleReimbursementStatus(expense.id);
+                              setRevertTargetExpense(expense);
                             }}
                             className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-700 border border-emerald-200 hover:border-rose-300 transition cursor-pointer"
                             title="Pagado. Clic para revertir a estado Pendiente"
@@ -1257,7 +1259,7 @@ export function AdminMovementView({
       <BatchPaymentModal
         isOpen={showBatchSettleModal}
         onClose={() => setShowBatchSettleModal(false)}
-        expenses={selectedExpenses.filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')}
+        expenses={selectedExpenses.filter((e) => e.reimbursementStatus !== 'REIMBURSED')}
         costCenters={costCenters}
         vendors={vendors}
         appUsers={appUsers}
@@ -1272,6 +1274,79 @@ export function AdminMovementView({
           setShowBatchSettleModal(false);
         }}
       />
+
+      {/* Modal: Confirmación para Revertir Pago */}
+      {revertTargetExpense && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start space-x-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">¿Revertir pago a estado Pendiente?</h3>
+                <p className="text-xs text-slate-500">
+                  Esta acción deshará la liquidación del comprobante y restablecerá su estado a pendiente de pago.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Proveedor / Concepto:</span>
+                <span className="font-bold text-slate-800">{revertTargetExpense.vendor || 'Sin especificar'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Monto:</span>
+                <span className="font-extrabold text-slate-900">{formatCurrency(revertTargetExpense.amount, revertTargetExpense.currency)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Proyecto / CC:</span>
+                <span className="font-semibold text-indigo-700">{revertTargetExpense.project || 'General'}</span>
+              </div>
+              {revertTargetExpense.reimbursedAt && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Fecha de Pago:</span>
+                  <span className="text-slate-700">{formatDate(revertTargetExpense.reimbursedAt)}</span>
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11.5px] text-amber-800 bg-amber-50/80 p-2.5 rounded-xl border border-amber-200/80 leading-relaxed">
+              ⚠️ Se enviará un aviso de reversión por correo y se removerá el comprobante de transferencia bancaria asociado en Google Drive si corresponde.
+            </p>
+
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRevertTargetExpense(null)}
+                disabled={isRevertingPayment}
+                className="px-4 py-2.5 rounded-2xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!revertTargetExpense) return;
+                  setIsRevertingPayment(true);
+                  try {
+                    await onToggleReimbursementStatus(revertTargetExpense.id);
+                    setRevertTargetExpense(null);
+                  } finally {
+                    setIsRevertingPayment(false);
+                  }
+                }}
+                disabled={isRevertingPayment}
+                className="px-4.5 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition active:scale-95 cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isRevertingPayment ? 'animate-spin' : ''}`} />
+                <span>{isRevertingPayment ? 'Revirtiendo...' : 'Sí, revertir pago'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Aviso de Liquidación por Lote (cuando no hay pendientes) */}
       {batchSettleWarning && (

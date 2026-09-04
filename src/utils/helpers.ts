@@ -641,13 +641,39 @@ export function truncateVendorName(vendor?: string, maxLength: number = 12): str
 }
 
 /**
- * Genera el asunto de correo para confirmación de pago / liquidación:
- * [Pagos] Proveedor (máximo 12 dígitos)-Monto / Comprobante de pago y reintegro liquidado
+ * Genera el asunto de correo para confirmación de pago / liquidación según el tipo:
+ * - Pago a proveedor: [Pagos] Proveedor (máx 12)-Monto / Comprobante de pago a proveedor
+ * - Reintegro: [Pagos] Proveedor (máx 12)-Monto / Comprobante de reintegro liquidado
+ * - General / Mixto: [Pagos] Proveedor (máx 12)-Monto / Comprobante de pago liquidado
  */
-export function formatPaymentEmailSubject(vendor?: string, amount: number = 0, currency: string = 'ARS'): string {
+export function formatPaymentEmailSubject(
+  vendor?: string,
+  amount: number = 0,
+  currency: string = 'ARS',
+  paymentTypeOrMethod?: string
+): string {
   const vendorShort = truncateVendorName(vendor, 12);
   const formattedAmt = formatCurrency(amount, currency);
-  return `[Pagos] ${vendorShort}-${formattedAmt} / Comprobante de pago y reintegro liquidado`;
+
+  const cleanType = (paymentTypeOrMethod || '').trim().toUpperCase();
+  const isVendorPayment =
+    cleanType === 'PAGO_PROVEEDOR' ||
+    cleanType === 'PAGO A PROVEEDOR' ||
+    cleanType === 'PROVEEDOR' ||
+    cleanType === 'TRANSFERENCIA PROVEEDOR';
+
+  const isReimbursement =
+    cleanType === 'REINTEGRO' ||
+    cleanType === 'REEMBOLSO';
+
+  let descriptor = 'Comprobante de pago liquidado';
+  if (isVendorPayment) {
+    descriptor = 'Comprobante de pago a proveedor';
+  } else if (isReimbursement) {
+    descriptor = 'Comprobante de reintegro liquidado';
+  }
+
+  return `[Pagos] ${vendorShort}-${formattedAmt} / ${descriptor}`;
 }
 
 /**

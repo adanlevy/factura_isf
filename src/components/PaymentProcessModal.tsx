@@ -191,19 +191,41 @@ export function PaymentProcessModal({
     const isPdfProof = paymentProofFileName?.toLowerCase().endsWith('.pdf');
     const isImageProof = Boolean(paymentProofBase64 && !isPdfProof);
 
-    const emailSubject = formatPaymentEmailSubject(expense.vendor, expense.amount, expense.currency);
+    const cleanPaymentType = (expense.paymentType || expense.paymentMethod || '').trim().toUpperCase();
+    const isVendorPayment =
+      cleanPaymentType === 'PAGO_PROVEEDOR' ||
+      cleanPaymentType === 'PAGO A PROVEEDOR' ||
+      cleanPaymentType === 'PROVEEDOR' ||
+      cleanPaymentType === 'TRANSFERENCIA PROVEEDOR' ||
+      expense.paymentMethod === 'Pago a Proveedor' ||
+      expense.paymentMethod === 'Pago a proveedor';
+
+    const emailSubject = formatPaymentEmailSubject(
+      expense.vendor,
+      expense.amount,
+      expense.currency,
+      isVendorPayment ? 'PAGO_PROVEEDOR' : 'REINTEGRO'
+    );
+
+    const emailHeaderTitle = isVendorPayment ? 'Confirmación de Pago a Proveedor' : 'Confirmación de Reintegro Liquidado';
+    const emailPaymentSentence = isVendorPayment
+      ? `Te confirmamos que el pago a proveedor por <strong>${formatCurrency(
+          expense.amount,
+          expense.currency
+        )}</strong> correspondiente al comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>) ha sido <strong>transferido y ejecutado con éxito</strong>.`
+      : `Te confirmamos que el reintegro por <strong>${formatCurrency(
+          expense.amount,
+          expense.currency
+        )}</strong> correspondiente a tu comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.`;
 
     const emailBodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
       <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px;">
-        <h2 style="color: #065f46; margin: 0 0 4px 0; font-size: 20px;">Confirmación de Reintegro Liquidado</h2>
+        <h2 style="color: #065f46; margin: 0 0 4px 0; font-size: 20px;">${emailHeaderTitle}</h2>
         <p style="margin: 0; color: #64748b; font-size: 13px;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
       </div>
 
       <p style="font-size: 14px;">Hola <strong>${recipientName}</strong>,</p>
-      <p style="font-size: 14px;">Te confirmamos que el reintegro por <strong>${formatCurrency(
-        expense.amount,
-        expense.currency
-      )}</strong> correspondiente a tu comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.</p>
+      <p style="font-size: 14px;">${emailPaymentSentence}</p>
 
       ${
         hasBankData && expense.bankDetails
