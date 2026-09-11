@@ -88,6 +88,9 @@ export interface Expense {
   createdAt: string; // ISO string
   vendor: string; // Comercio / Proveedor
   cuit?: string; // CUIT fiscal del emisor
+  recipientCuit?: string; // CUIT del receptor / cliente
+  recipientName?: string; // Nombre / Razón Social del receptor
+  isIsfRecipient?: boolean; // True si está a nombre de CUIT 30-71254928-5 (Ingeniería Sin Fronteras)
   amount: number; // Monto total
   currency: string; // ARS, USD, EUR, etc.
   invoiceNumber?: string; // N° Factura / Ticket

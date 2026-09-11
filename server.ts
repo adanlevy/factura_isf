@@ -1262,6 +1262,15 @@ REGLAS DE EXTRACCIÓN:
 
 7. "cuit": CUIT o CUIL de 11 dígitos del emisor/proveedor en Argentina (formato "XX-XXXXXXXX-X" o dígitos continuos) si está visible en el encabezado, datos fiscales o pie de página. Si no figura con claridad, devuelve null.
 
+8. "recipientCuit": CUIT o CUIL del RECEPTOR / CLIENTE / COMPRADOR (a nombre de quién se emite la factura o comprobante).
+   - Busca en el bloque de datos del cliente/receptor: "Cliente", "Receptor", "Datos del Receptor", "Señor(es)", "Doc. Receptor", "CUIT/CUIL del Cliente".
+   - Si figura CUIT "30-71254928-5" (o 30712549285), extráelo con precisión.
+   - Si figura "Consumidor Final" o no hay CUIT del cliente/receptor, devuelve null.
+
+9. "recipientName": Nombre o razón social del RECEPTOR / CLIENTE / COMPRADOR (ej: "Ingeniería Sin Fronteras", "Asociación Civil Ingeniería Sin Fronteras Argentina", o nombre de una persona/empresa distinta). Si no figura o es Consumidor Final, devuelve "Consumidor Final" o null.
+
+10. "isIsfRecipient": Booleano. Devuelve true si el receptor/cliente del comprobante está emitido a nombre de Ingeniería Sin Fronteras Argentina o a su CUIT 30-71254928-5. Devuelve false si el comprobante está emitido a nombre de otra persona o empresa con otro CUIT/DNI, o si es un ticket a Consumidor Final sin CUIT de ISF.
+
 Devuelve los datos en JSON conforme al esquema.`;
 
     const startTime = Date.now();
@@ -1285,6 +1294,9 @@ Devuelve los datos en JSON conforme al esquema.`;
           properties: {
             vendor: { type: Type.STRING, description: "Nombre del comercio o proveedor" },
             cuit: { type: Type.STRING, description: "CUIT del emisor/proveedor si figura en la factura, con o sin guiones, o null" },
+            recipientCuit: { type: Type.STRING, description: "CUIT del receptor/cliente/comprador en la factura si figura, o null" },
+            recipientName: { type: Type.STRING, description: "Nombre o razón social del receptor/cliente de la factura si figura, o null" },
+            isIsfRecipient: { type: Type.BOOLEAN, description: "True si la factura está emitida a nombre de CUIT 30-71254928-5 o Ingeniería Sin Fronteras, false en caso contrario" },
             amount: { type: Type.NUMBER, description: "Monto total final en número decimal o null si no se encuentra" },
             currency: { type: Type.STRING, description: "Código de moneda ej: ARS, USD" },
             date: { type: Type.STRING, description: "Fecha en formato YYYY-MM-DD o null si no se encuentra en el comprobante" },
@@ -1319,6 +1331,37 @@ Devuelve los datos en JSON conforme al esquema.`;
         extractedData = JSON.parse(jsonMatch[0]);
       }
     }
+
+    // Deterministic CUIT verification for Ingeniería Sin Fronteras (CUIT 30-71254928-5)
+    const ISF_CUIT_CLEAN = "30712549285";
+    const rawRecipientCuit = extractedData.recipientCuit ? String(extractedData.recipientCuit).trim() : null;
+    const cleanRecipientCuit = rawRecipientCuit ? rawRecipientCuit.replace(/\D/g, "") : "";
+    const rawRecipientName = extractedData.recipientName ? String(extractedData.recipientName).trim() : null;
+
+    let isIsfRecipient = false;
+    let isfRecipientMismatchReason: string | null = null;
+
+    if (cleanRecipientCuit === ISF_CUIT_CLEAN) {
+      isIsfRecipient = true;
+    } else if (rawRecipientName && /ingenier[ií]a\s+sin\s+fronteras|asociaci[oó]n\s+civil\s+ingenier[ií]a/i.test(rawRecipientName)) {
+      isIsfRecipient = true;
+    } else if (extractedData.isIsfRecipient === true && (!cleanRecipientCuit || cleanRecipientCuit === ISF_CUIT_CLEAN)) {
+      isIsfRecipient = true;
+    } else {
+      isIsfRecipient = false;
+      if (cleanRecipientCuit && cleanRecipientCuit.length >= 10) {
+        isfRecipientMismatchReason = `La factura figura a nombre de otro CUIT (${rawRecipientCuit}${rawRecipientName ? ` - ${rawRecipientName}` : ""}).`;
+      } else if (rawRecipientName && !/consumidor\s+final/i.test(rawRecipientName)) {
+        isfRecipientMismatchReason = `La factura figura a nombre de: ${rawRecipientName}.`;
+      } else {
+        isfRecipientMismatchReason = "El comprobante no especifica el CUIT de Ingeniería Sin Fronteras (30-71254928-5) o figura a Consumidor Final.";
+      }
+    }
+
+    extractedData.recipientCuit = rawRecipientCuit;
+    extractedData.recipientName = rawRecipientName;
+    extractedData.isIsfRecipient = isIsfRecipient;
+    extractedData.isfRecipientMismatchReason = isfRecipientMismatchReason;
 
     const pTokens = (response as any).usageMetadata?.promptTokenCount || Math.ceil((cleanBase64.length * 0.75) / 4) + 450;
     const cTokens = (response as any).usageMetadata?.candidatesTokenCount || Math.ceil(jsonText.length / 4);

@@ -22,6 +22,7 @@ import {
   Edit2,
   Plus,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import { Expense, ReimbursementStatus, PaymentMethod, UserBankDetails, UserProfile, Vendor, ExpensePaymentType, CostCenter } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
@@ -120,6 +121,29 @@ export function EditExpenseModal({
 
   const [isReanalyzing, setIsReanalyzing] = useState(false);
   const [reanalyzeMessage, setReanalyzeMessage] = useState<string | null>(null);
+  const [cuitMismatchWarningData, setCuitMismatchWarningData] = useState<any | null>(null);
+
+  const applyExtractedData = (data: any) => {
+    const amountNum = typeof data.amount === 'number' ? data.amount : formData?.amount;
+    setFormData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        vendor: data.vendor || prev.vendor,
+        amount: amountNum && amountNum > 0 ? amountNum : prev.amount,
+        currency: data.currency || prev.currency || 'ARS',
+        date: data.date || prev.date,
+        invoiceNumber: data.invoiceNumber || prev.invoiceNumber,
+        cuit: data.cuit || prev.cuit,
+        recipientCuit: data.recipientCuit || prev.recipientCuit,
+        recipientName: data.recipientName || prev.recipientName,
+        isIsfRecipient: data.isIsfRecipient,
+        paymentMethod: data.paymentMethod || prev.paymentMethod,
+        aiConfidenceSummary: data.confidenceSummary || 'Comprobante reanalizado con IA.',
+      };
+    });
+    setReanalyzeMessage(`✅ Datos actualizados por IA: ${data.vendor || ''} ($${amountNum})`);
+  };
 
   const handleReanalyzeWithAi = async () => {
     if (!formData?.receiptImage) {
@@ -150,23 +174,11 @@ export function EditExpenseModal({
       }
       if (result.success && result.data) {
         const data = result.data;
-        const amountNum = typeof data.amount === 'number' ? data.amount : formData.amount;
-
-        setFormData((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            vendor: data.vendor || prev.vendor,
-            amount: amountNum > 0 ? amountNum : prev.amount,
-            currency: data.currency || prev.currency || 'ARS',
-            date: data.date || prev.date,
-            invoiceNumber: data.invoiceNumber || prev.invoiceNumber,
-            cuit: data.cuit || prev.cuit,
-            paymentMethod: data.paymentMethod || prev.paymentMethod,
-            aiConfidenceSummary: data.confidenceSummary || 'Comprobante reanalizado con IA.',
-          };
-        });
-        setReanalyzeMessage(`✅ Datos actualizados por IA: ${data.vendor || ''} ($${amountNum})`);
+        if (data.isIsfRecipient === false) {
+          setCuitMismatchWarningData(data);
+          return;
+        }
+        applyExtractedData(data);
       } else {
         setReanalyzeMessage('⚠️ La IA no detectó nuevos campos.');
       }
@@ -819,6 +831,85 @@ export function EditExpenseModal({
           setVendorModalInitialData(undefined);
         }}
       />
+
+      {/* ALERTA CUIT INGENIERÍA SIN FRONTERAS (30-71254928-5) */}
+      {cuitMismatchWarningData && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-amber-300 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0 shadow-xs">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-black text-slate-900 leading-snug">
+                    Atención: Titular del Comprobante
+                  </h3>
+                  <p className="text-xs font-semibold text-amber-800 mt-0.5">
+                    La factura no parece estar a nombre de Ingeniería Sin Fronteras
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200/80 text-xs space-y-3 text-slate-700">
+                <p className="text-slate-800 leading-relaxed font-medium">
+                  El sistema verificó el comprobante y no detectó el CUIT institucional de <strong>Ingeniería Sin Fronteras (30-71254928-5)</strong> como receptor o cliente.
+                </p>
+
+                <div className="bg-white/90 rounded-xl p-3 border border-amber-200 space-y-1.5 text-[11.5px]">
+                  {cuitMismatchWarningData.vendor && (
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-slate-500 font-medium">Emisor / Proveedor:</span>
+                      <span className="font-bold text-slate-800 truncate max-w-[210px]">{cuitMismatchWarningData.vendor}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-slate-500 font-medium shrink-0">Receptor detectado:</span>
+                    <span className="font-bold text-amber-900 text-right">
+                      {cuitMismatchWarningData.recipientCuit
+                        ? `${cuitMismatchWarningData.recipientCuit}${cuitMismatchWarningData.recipientName ? ` (${cuitMismatchWarningData.recipientName})` : ''}`
+                        : cuitMismatchWarningData.recipientName || 'Sin CUIT de ISF / Consumidor Final'}
+                    </span>
+                  </div>
+                  {cuitMismatchWarningData.isfRecipientMismatchReason && (
+                    <div className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-100 italic">
+                      {cuitMismatchWarningData.isfRecipientMismatchReason}
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11.5px] text-amber-950 font-bold">
+                  ¿Deseas continuar igual con la carga?
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCuitMismatchWarningData(null);
+                    setReanalyzeMessage('⚠️ Actualización cancelada: comprobante no emitido a ISF.');
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  Cancelar carga
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    applyExtractedData(cuitMismatchWarningData);
+                    setCuitMismatchWarningData(null);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aceptar</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

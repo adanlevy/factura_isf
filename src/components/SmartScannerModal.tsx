@@ -18,6 +18,7 @@ import {
   User,
   Building2,
   AlertCircle,
+  AlertTriangle,
   Edit3,
   Search,
   ChevronDown,
@@ -101,6 +102,13 @@ export interface QueueItem {
   items: ExpenseItem[];
   aiConfidenceSummary?: string;
   savedSuccessfully?: boolean;
+
+  // Recipient CUIT & ISF verification
+  recipientCuit?: string;
+  recipientName?: string;
+  isIsfRecipient?: boolean;
+  isfRecipientMismatchReason?: string;
+  cuitWarningAcknowledged?: boolean;
 }
 
 /**
@@ -369,6 +377,11 @@ export function SmartScannerModal({
       items: [],
       manuallyEditedAmount: false,
       manuallyEditedDate: false,
+      recipientCuit: undefined,
+      recipientName: undefined,
+      isIsfRecipient: undefined,
+      isfRecipientMismatchReason: undefined,
+      cuitWarningAcknowledged: false,
     };
 
     // Append to queue immediately
@@ -518,6 +531,11 @@ export function SmartScannerModal({
                     ? 'Tarjeta Débito Galicia'
                     : '',
                 items: data.items && data.items.length > 0 ? data.items : item.items,
+                recipientCuit: data.recipientCuit || undefined,
+                recipientName: data.recipientName || undefined,
+                isIsfRecipient: typeof data.isIsfRecipient === 'boolean' ? data.isIsfRecipient : undefined,
+                isfRecipientMismatchReason: data.isfRecipientMismatchReason || undefined,
+                cuitWarningAcknowledged: data.isIsfRecipient === true ? true : item.cuitWarningAcknowledged,
                 aiConfidenceSummary: isSuccessfulOcr
                   ? data.confidenceSummary ||
                     `Detectado: ${vendorDisplayNote} • $${amountNum?.toLocaleString()} • ${extractedDate}`
@@ -688,6 +706,24 @@ export function SmartScannerModal({
     setQueue((prev) => prev.filter((item) => item.id !== itemId));
   };
 
+  // --- VERIFICACIÓN DE CUIT INGENIERÍA SIN FRONTERAS (30-71254928-5) ---
+  // Si la factura fue analizada y no parece estar a nombre de ISF, se alerta al usuario con opciones: Aceptar / Cancelar carga
+  const pendingCuitWarningItem = useMemo(() => {
+    return queue.find(
+      (item) => item.status !== 'analyzing' && item.isIsfRecipient === false && !item.cuitWarningAcknowledged
+    );
+  }, [queue]);
+
+  const handleAcknowledgeCuitWarning = (itemId: string) => {
+    setQueue((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, cuitWarningAcknowledged: true } : it))
+    );
+  };
+
+  const handleCancelCuitMismatchUpload = (itemId: string) => {
+    handleRemoveItem(itemId);
+  };
+
   // --- SAVE EXPENSE (SINGLE & BULK) ---
   const handleSaveSingleItem = (item: QueueItem) => {
     const hasAmount = typeof item.amount === 'number' && item.amount > 0;
@@ -715,6 +751,9 @@ export function SmartScannerModal({
       date: item.date,
       vendor: item.vendor.trim() || 'Comercio / Proveedor',
       cuit: item.cuit || undefined,
+      recipientCuit: item.recipientCuit || undefined,
+      recipientName: item.recipientName || undefined,
+      isIsfRecipient: item.isIsfRecipient,
       amount: Number(item.amount),
       currency: item.currency || 'ARS',
       invoiceNumber: item.invoiceNumber || undefined,
@@ -806,6 +845,9 @@ export function SmartScannerModal({
         id: `exp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         vendor: item.vendor.trim() || 'Comercio / Proveedor',
         cuit: item.cuit ? cleanCuit(item.cuit) : undefined,
+        recipientCuit: item.recipientCuit || undefined,
+        recipientName: item.recipientName || undefined,
+        isIsfRecipient: item.isIsfRecipient,
         amount: numAmount,
         currency: item.currency || 'ARS',
         date: item.date,
@@ -1189,6 +1231,15 @@ export function SmartScannerModal({
                                 N° {item.invoiceNumber}
                               </div>
                             )}
+                            {item.isIsfRecipient === false && (
+                              <div
+                                className="inline-flex items-center gap-1 text-[9.5px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5 shadow-2xs"
+                                title={item.isfRecipientMismatchReason || 'No figura a nombre de Ingeniería Sin Fronteras (CUIT 30-71254928-5)'}
+                              >
+                                <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                                <span className="truncate max-w-[130px]">No es CUIT ISF</span>
+                              </div>
+                            )}
                           </td>
 
                           {/* 3. COLUMNA MONTO */}
@@ -1465,6 +1516,15 @@ export function SmartScannerModal({
                           {item.invoiceNumber && (
                             <div className="text-[10.5px] text-slate-500 font-medium truncate">
                               N° {item.invoiceNumber}
+                            </div>
+                          )}
+                          {item.isIsfRecipient === false && (
+                            <div
+                              className="inline-flex items-center gap-1 text-[9.5px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5 shadow-2xs"
+                              title={item.isfRecipientMismatchReason || 'No figura a nombre de CUIT 30-71254928-5 (Ingeniería Sin Fronteras)'}
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                              <span>No es CUIT ISF</span>
                             </div>
                           )}
                           <div className="mt-0.5">
@@ -1782,6 +1842,85 @@ export function SmartScannerModal({
           </div>
         </div>
       </div>
+
+      {/* ALERTA CUIT INGENIERÍA SIN FRONTERAS (30-71254928-5) */}
+      {pendingCuitWarningItem && (
+        <div className="fixed inset-0 z-[80] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-amber-300 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0 shadow-xs">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-black text-slate-900 leading-snug">
+                    Atención: Titular del Comprobante
+                  </h3>
+                  <p className="text-xs font-semibold text-amber-800 mt-0.5">
+                    La factura no parece estar a nombre de Ingeniería Sin Fronteras
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200/80 text-xs space-y-3 text-slate-700">
+                <p className="text-slate-800 leading-relaxed font-medium">
+                  El sistema verificó el comprobante y no detectó el CUIT institucional de <strong>Ingeniería Sin Fronteras (30-71254928-5)</strong> como receptor o cliente.
+                </p>
+
+                <div className="bg-white/90 rounded-xl p-3 border border-amber-200 space-y-1.5 text-[11.5px]">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500 font-medium">Archivo:</span>
+                    <span className="font-bold text-slate-800 truncate max-w-[210px]" title={pendingCuitWarningItem.fileName}>
+                      {pendingCuitWarningItem.fileName}
+                    </span>
+                  </div>
+                  {pendingCuitWarningItem.vendor && (
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-slate-500 font-medium">Emisor / Proveedor:</span>
+                      <span className="font-bold text-slate-800 truncate max-w-[210px]">{pendingCuitWarningItem.vendor}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-slate-500 font-medium shrink-0">Receptor detectado:</span>
+                    <span className="font-bold text-amber-900 text-right">
+                      {pendingCuitWarningItem.recipientCuit
+                        ? `${pendingCuitWarningItem.recipientCuit}${pendingCuitWarningItem.recipientName ? ` (${pendingCuitWarningItem.recipientName})` : ''}`
+                        : pendingCuitWarningItem.recipientName || 'Sin CUIT de ISF / Consumidor Final'}
+                    </span>
+                  </div>
+                  {pendingCuitWarningItem.isfRecipientMismatchReason && (
+                    <div className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-100 italic">
+                      {pendingCuitWarningItem.isfRecipientMismatchReason}
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11.5px] text-amber-950 font-bold">
+                  ¿Deseas continuar igual con la carga?
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleCancelCuitMismatchUpload(pendingCuitWarningItem.id)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                >
+                  Cancelar carga
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAcknowledgeCuitWarning(pendingCuitWarningItem.id)}
+                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aceptar</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FULL PREVIEW ZOOM MODAL (HANDLES BOTH IMAGES & PDF EMBEDS) */}
       {previewZoomFile && (
