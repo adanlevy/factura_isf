@@ -30,13 +30,12 @@ export function saveGoogleClientId(clientId: string) {
 }
 
 export const GOOGLE_OAUTH_CLIENT_ID = getGoogleClientId();
+// Scopes de autenticación para usuarios: Únicamente identidad y perfil básico.
+// Todas las operaciones de Google Drive y Gmail se realizan de forma centralizada en el servidor en nombre de admin@isf-argentina.org.
 export const GOOGLE_SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
-  'https://www.googleapis.com/auth/drive.file',
-  'https://www.googleapis.com/auth/drive',
-  'https://www.googleapis.com/auth/gmail.send',
 ].join(' ');
 
 const TOKEN_STORAGE_KEY = 'isf_google_workspace_token';

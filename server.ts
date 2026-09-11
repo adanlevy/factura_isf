@@ -1822,15 +1822,17 @@ app.post("/api/send-email", async (req, res) => {
 
     const bccString = bccArray.join(", ");
 
-    // Prepare candidate tokens: Client OAuth token + Central Service Account / Refresh Token
+    // Prioritize Centralized Account (admin@isf-argentina.org) so all emails are dispatched from the central institutional identity
     const centralAuth = await getCentralizedGoogleAccessToken();
     const candidateTokens: { token: string; source: string }[] = [];
 
-    if (accessToken && typeof accessToken === "string" && accessToken.trim()) {
-      candidateTokens.push({ token: accessToken.trim(), source: "client_token" });
-    }
-    if (centralAuth?.token && !candidateTokens.some((c) => c.token === centralAuth.token)) {
+    if (centralAuth?.token) {
       candidateTokens.push(centralAuth);
+    }
+    if (accessToken && typeof accessToken === "string" && accessToken.trim()) {
+      if (!candidateTokens.some((c) => c.token === accessToken.trim())) {
+        candidateTokens.push({ token: accessToken.trim(), source: "client_token" });
+      }
     }
 
     const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString("base64")}?=`;
