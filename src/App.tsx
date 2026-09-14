@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry } from './types';
 import {
   DEFAULT_CATEGORIES,
@@ -97,6 +97,11 @@ export default function App() {
     }
     return null;
   });
+
+  const currentUserRef = useRef<UserProfile | null>(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // Core Data with Centralized Cloud Persistence (Only server store, no local mock duplicates)
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -213,6 +218,28 @@ export default function App() {
         const cloudUsers = await fetchCentralUsers();
         if (cloudUsers && cloudUsers.length > 0 && isMounted) {
           setAppUsers(cloudUsers);
+
+          // Synchronize active session role with Firestore
+          const current = currentUserRef.current;
+          if (current?.email) {
+            const currentEmailClean = current.email.toLowerCase().trim();
+            const meInCloud = cloudUsers.find(
+              (u) => u.email.toLowerCase().trim() === currentEmailClean
+            );
+            if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {
+              const updatedUser: UserProfile = {
+                ...current,
+                role: meInCloud.role,
+                name: meInCloud.name || current.name,
+                picture: meInCloud.picture || current.picture,
+              };
+              setCurrentUser(updatedUser);
+              saveStoredAuth(updatedUser);
+              if (meInCloud.role === 'user') {
+                setActiveTab('expenses');
+              }
+            }
+          }
         }
 
         // Hydrate user specific smart preferences and cost centers
@@ -250,6 +277,33 @@ export default function App() {
       if (!isMounted) return;
       if (incomingUsers && incomingUsers.length > 0) {
         setAppUsers(incomingUsers);
+
+        // Real-time synchronization of current active user session role
+        const current = currentUserRef.current;
+        if (current?.email) {
+          const currentEmailClean = current.email.toLowerCase().trim();
+          const meInCloud = incomingUsers.find(
+            (u) => u.email.toLowerCase().trim() === currentEmailClean
+          );
+          if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {
+            const updatedUser: UserProfile = {
+              ...current,
+              role: meInCloud.role,
+              name: meInCloud.name || current.name,
+              picture: meInCloud.picture || current.picture,
+            };
+            setCurrentUser(updatedUser);
+            saveStoredAuth(updatedUser);
+            if (meInCloud.role === 'user') {
+              setActiveTab('expenses');
+            }
+            showToast(
+              meInCloud.role === 'admin'
+                ? '🛡️ Tus permisos se actualizaron a Administrador en tiempo real.'
+                : '👤 Tus permisos se actualizaron a Colaborador en tiempo real.'
+            );
+          }
+        }
       }
     });
 
@@ -1421,7 +1475,12 @@ export default function App() {
     });
 
     if (currentUser && currentUser.email.toLowerCase() === email.toLowerCase()) {
-      setCurrentUser({ ...currentUser, role: newRole });
+      const updated = { ...currentUser, role: newRole };
+      setCurrentUser(updated);
+      saveStoredAuth(updated);
+      if (newRole === 'user' && activeTab !== 'expenses') {
+        setActiveTab('expenses');
+      }
     }
     showToast(`✅ Rol de "${email}" actualizado a ${newRole === 'admin' ? 'Administrador' : 'Colaborador'}.`);
   };
@@ -1644,6 +1703,12 @@ export default function App() {
   const canSwitchRole = useMemo(() => {
     if (!currentUser?.email) return false;
     const cleanEmail = currentUser.email.toLowerCase().trim();
+    // 1. Central Firestore record in appUsers has ABSOLUTE priority
+    const record = appUsers.find((u) => u.email.toLowerCase().trim() === cleanEmail);
+    if (record && record.role) {
+      return record.role === 'admin';
+    }
+    // 2. Fallback only if not yet registered in Firestore
     if (
       cleanEmail === 'admin@isf-argentina.org' ||
       cleanEmail === 'alevy@isf-argentina.org' ||
@@ -1652,8 +1717,7 @@ export default function App() {
     ) {
       return true;
     }
-    const record = appUsers.find((u) => u.email.toLowerCase().trim() === cleanEmail);
-    return record?.role === 'admin';
+    return false;
   }, [currentUser?.email, appUsers]);
 
   const handleSwitchUserRole = (role: 'admin' | 'user') => {

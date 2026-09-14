@@ -909,7 +909,22 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
   const cleanEmail = (email || '').toLowerCase().trim();
   if (!cleanEmail) return null;
 
-  // Predefined/Bootstrapped administrators
+  // 1. Central Firestore database has ABSOLUTE priority if user record exists
+  try {
+    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const docRef = doc(db, 'app_users', safeKey);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as AppUserRecord;
+      if (data.role === 'admin' || data.role === 'user') {
+        return data.role;
+      }
+    }
+  } catch (e) {
+    console.warn('[Firestore] Could not resolve user role from cloud:', e);
+  }
+
+  // 2. Predefined/Bootstrapped administrators (Fallback only for initial system setup)
   if (
     cleanEmail === 'admin@isf-argentina.org' ||
     cleanEmail === 'alevy@isf-argentina.org' ||
@@ -917,20 +932,6 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
     cleanEmail === 'finanzas@isf-argentina.org'
   ) {
     return 'admin';
-  }
-
-  try {
-    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, 'app_users', safeKey);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data() as AppUserRecord;
-      if (data.role) {
-        return data.role;
-      }
-    }
-  } catch (e) {
-    console.warn('[Firestore] Could not resolve user role from cloud:', e);
   }
 
   // If not found in the authorized database or predefined admins list, return null (unauthorized)

@@ -26,7 +26,7 @@ export function getStoredAuth(): AuthState {
             email: parsed.email.trim().toLowerCase(),
             name: parsed.name.trim(),
             picture: parsed.picture || undefined,
-            role: parsed.role || (parsed.email.includes('admin') || parsed.email.startsWith('alevy') ? 'admin' : 'user'),
+            role: parsed.role || 'user',
             accessToken: parsed.accessToken || undefined,
           },
         };
