@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Server,
   History,
+  HelpCircle,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { FacturaAppIcon } from './FacturaIcon';
@@ -25,6 +26,7 @@ interface NavbarProps {
   setActiveTab: (tab: NavigationTab) => void;
   onOpenNewModal: () => void;
   onOpenAuthProfile: () => void;
+  onOpenManual?: () => void;
   onLogout?: () => void;
   currentUser: UserProfile;
   expensesCount: number;
@@ -38,6 +40,7 @@ export function Navbar({
   setActiveTab,
   onOpenNewModal,
   onOpenAuthProfile,
+  onOpenManual,
   onLogout,
   currentUser,
   expensesCount,
@@ -83,6 +86,20 @@ export function Navbar({
 
           {/* Right Action & User Profile Pill */}
           <div className="flex items-center space-x-2 sm:space-x-3">
+            {/* Manual / Help Button */}
+            {onOpenManual && (
+              <button
+                id="btn-open-manual"
+                type="button"
+                onClick={onOpenManual}
+                className="w-9 h-9 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50/80 text-slate-500 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition cursor-pointer"
+                title="Manual de uso / Ayuda"
+                aria-label="Abrir manual de uso"
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
+            )}
+
             {/* User Account / Profile Button */}
             <div className="flex items-center gap-1.5">
               <button

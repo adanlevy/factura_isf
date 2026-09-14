@@ -21,6 +21,7 @@ import { AuditLogsView } from './components/AuditLogsView';
 import { AuthProfileModal } from './components/AuthProfileModal';
 import { UserLoginGate } from './components/UserLoginGate';
 import { LegalPagesModal } from './components/LegalPagesModal';
+import { ManualModal } from './components/ManualModal';
 import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
@@ -121,6 +122,7 @@ export default function App() {
   const [paymentModalExpense, setPaymentModalExpense] = useState<Expense | null>(null);
   const [withholdingModalExpense, setWithholdingModalExpense] = useState<Expense | null>(null);
   const [isAuthProfileOpen, setIsAuthProfileOpen] = useState(false);
+  const [isManualOpen, setIsManualOpen] = useState(false);
   const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | null>(() => {
     const path = window.location.pathname.toLowerCase();
     if (path.includes('privacy') || path.includes('privacidad')) return 'privacy';
@@ -1709,6 +1711,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onOpenNewModal={() => setIsScannerModalOpen(true)}
         onOpenAuthProfile={() => setIsAuthProfileOpen(true)}
+        onOpenManual={() => setIsManualOpen(true)}
         onLogout={handleLogout}
         currentUser={currentUser}
         expensesCount={expenses.length}
@@ -1862,6 +1865,14 @@ export default function App() {
             <span className="font-medium text-slate-700">Factura • ISF Finanzas</span>
             <span className="text-slate-300">|</span>
             <button
+              id="footer-manual-btn"
+              onClick={() => setIsManualOpen(true)}
+              className="text-slate-500 hover:text-indigo-600 transition cursor-pointer hover:underline"
+            >
+              Manual de Uso
+            </button>
+            <span className="text-slate-300">•</span>
+            <button
               id="footer-privacy-btn"
               onClick={() => setLegalModalType('privacy')}
               className="text-slate-500 hover:text-indigo-600 transition cursor-pointer hover:underline"
@@ -1996,6 +2007,12 @@ export default function App() {
       <LegalPagesModal
         type={legalModalType}
         onClose={() => setLegalModalType(null)}
+      />
+
+      <ManualModal
+        isOpen={isManualOpen}
+        role={currentUser.role}
+        onClose={() => setIsManualOpen(false)}
       />
 
       {/* Toast Banner */}
