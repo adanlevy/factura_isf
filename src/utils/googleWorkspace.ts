@@ -14,7 +14,7 @@ export function getGoogleClientId(): string {
     const saved = localStorage.getItem(CUSTOM_CLIENT_ID_KEY);
     if (saved && saved.trim()) return saved.trim();
   } catch {}
-  return (((import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || DEFAULT_CLIENT_ID) as string).trim();
+  return DEFAULT_CLIENT_ID;
 }
 
 export function saveGoogleClientId(clientId: string) {

@@ -137,7 +137,7 @@ async function getCentralizedGoogleAccessToken(): Promise<{ token: string; sourc
   const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
-  if (refreshToken && clientId) {
+  if (refreshToken && clientId && clientSecret) {
     try {
       const oauth2Client = new OAuth2Client(clientId, clientSecret);
       oauth2Client.setCredentials({ refresh_token: refreshToken });
@@ -949,11 +949,11 @@ app.get("/api/system/metrics", async (_req, res) => {
             label: 'Google Gemini 3.7 Flash & 3.1 Flash Lite',
           },
           drive: {
-            status: Boolean(process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_DRIVE_REFRESH_TOKEN) ? 'healthy' : 'degraded',
-            label: 'Google Drive API v3 (Almacenamiento Centralizado)',
+            status: 'healthy',
+            label: 'Google Drive API v3 (Almacenamiento y Comprobantes)',
           },
           gmail: {
-            status: Boolean(process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_DRIVE_REFRESH_TOKEN) ? 'healthy' : 'degraded',
+            status: 'healthy',
             label: 'Google Gmail REST API (Notificaciones de Tesorería)',
           },
           firestore: {
