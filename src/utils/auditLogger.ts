@@ -13,6 +13,7 @@ import {
 import { db } from '../lib/firebase';
 import { AuditLogEntry, AuditLogChange, AuditLogAction, AuditLogEntityType } from '../types';
 import { sanitizeForFirestore } from './cloudSync';
+import { authFetch } from './authFetch';
 
 export const AUDIT_LOGS_COLLECTION = 'audit_logs';
 
@@ -151,7 +152,7 @@ export async function logAuditEvent(entry: {
 
   // 2. Persist to server backend (guaranteed persistence)
   try {
-    fetch('/api/data/audit-logs', {
+    authFetch('/api/data/audit-logs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fullEntry),
@@ -184,7 +185,7 @@ export async function fetchCentralAuditLogs(maxCount = 250): Promise<AuditLogEnt
 
   // 2. Fetch from server backend
   try {
-    const res = await fetch('/api/data/audit-logs');
+    const res = await authFetch('/api/data/audit-logs');
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -270,7 +271,7 @@ export async function clearCentralAuditLogs(user?: { email?: string; name?: stri
     saveLocalAuditLogsCache([]);
 
     // Clear server
-    await fetch('/api/data/audit-logs/clear', { method: 'POST' }).catch(() => {});
+    await authFetch('/api/data/audit-logs/clear', { method: 'POST' }).catch(() => {});
 
     // Clear Firestore if accessible
     try {

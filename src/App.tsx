@@ -79,6 +79,7 @@ import {
   removeCachedWithholdingCertificateFile,
 } from './utils/receiptCache';
 import { hydrateUserPatternsFromCloud } from './utils/sorting';
+import { authFetch } from './utils/authFetch';
 import { Plus, CreditCard, Cloud, RefreshCw } from 'lucide-react';
 
 export default function App() {
@@ -1631,7 +1632,7 @@ export default function App() {
     );
 
     try {
-      const response = await fetch('/api/send-email', {
+      const response = await authFetch('/api/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

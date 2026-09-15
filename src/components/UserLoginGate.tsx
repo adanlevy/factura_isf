@@ -103,14 +103,27 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
         const displayName = res.user.name || userEmail.split('@')[0];
 
         // Ensure user is signed into Firebase Auth with the Google credential
-        if (res.accessToken) {
-          try {
-            const credential = GoogleAuthProvider.credential(null, res.accessToken);
-            await signInWithCredential(auth, credential);
-            console.log('[Firebase Auth] Authenticated as:', auth.currentUser?.email);
-          } catch (authErr) {
-            console.warn('[Firebase Auth] Notice on credential sign in:', authErr);
+        if (!res.accessToken) {
+          setErrorMsg('No se obtuvo el token de acceso de Google. Por favor, reintenta iniciar sesión.');
+          setIsGoogleLoading(false);
+          return;
+        }
+
+        try {
+          const credential = GoogleAuthProvider.credential(null, res.accessToken);
+          const userCred = await signInWithCredential(auth, credential);
+          if (!userCred.user) {
+            throw new Error('Firebase Auth no retornó un usuario válido.');
           }
+          console.log('[Firebase Auth] Sesión autenticada como:', userCred.user.email);
+        } catch (authErr: any) {
+          console.error('[Firebase Auth] Error crítico al autenticar credencial:', authErr);
+          const detail = authErr?.message || 'Error en Firebase Auth';
+          setErrorMsg(
+            `Fallo de autenticación segura: No se pudo validar la sesión en Firebase (${detail}). El acceso fue bloqueado para evitar rechazos de permisos en Firestore. Por favor, recarga y vuelve a intentar.`
+          );
+          setIsGoogleLoading(false);
+          return;
         }
 
         // Register/update user in Firestore since they are authorized

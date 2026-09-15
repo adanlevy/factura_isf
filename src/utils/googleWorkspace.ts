@@ -2,6 +2,7 @@
 import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord } from '../types';
 import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
 import { syncApiLogToCloud } from './apiUsageLogger';
+import { authFetch } from './authFetch';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const CUSTOM_CLIENT_ID_KEY = 'isf_custom_google_client_id';
@@ -228,7 +229,7 @@ export async function uploadReceiptToGoogleDrive(params: {
   const standardizedFileName = baseFileName.includes('.') ? baseFileName : `${baseFileName}.${fileExt}`;
 
   try {
-    const response = await fetch('/api/upload-to-drive', {
+    const response = await authFetch('/api/upload-to-drive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -296,7 +297,7 @@ export async function deleteReceiptFromGoogleDrive(params: {
   const token = explicitToken || getStoredWorkspaceToken();
 
   try {
-    const response = await fetch('/api/delete-from-drive', {
+    const response = await authFetch('/api/delete-from-drive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -371,7 +372,7 @@ export async function replaceReceiptInGoogleDrive(params: {
   const oldFileName = expense.driveUploadedFileName || (expense.driveUploadedUrl ? standardizedFileName : undefined);
 
   try {
-    const response = await fetch('/api/upload-to-drive', {
+    const response = await authFetch('/api/upload-to-drive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -448,7 +449,7 @@ export async function sendGmailMessage(params: {
   const token = explicitToken || getStoredWorkspaceToken();
 
   try {
-    const response = await fetch('/api/send-email', {
+    const response = await authFetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -499,7 +500,7 @@ export async function checkCentralizedDriveStatus(): Promise<{
   message?: string;
 }> {
   try {
-    const res = await fetch('/api/drive/status');
+    const res = await authFetch('/api/drive/status');
     if (res.ok) {
       return await res.json();
     }
@@ -972,7 +973,7 @@ export async function fetchDriveFolderInfo(
   const token = accessToken || getStoredWorkspaceToken();
 
   try {
-    const res = await fetch('/api/drive-folder-info', {
+    const res = await authFetch('/api/drive-folder-info', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

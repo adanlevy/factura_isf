@@ -5,6 +5,9 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { OAuth2Client } from "google-auth-library";
 import dotenv from "dotenv";
+import { initializeApp, cert, applicationDefault, type App } from "firebase-admin/app";
+import { getAuth as getAdminAuth } from "firebase-admin/auth";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -339,6 +342,64 @@ try {
   console.warn("[Server Firebase Config] Note:", e);
 }
 
+// ==========================================
+// FIREBASE ADMIN SDK INITIALIZATION
+// ==========================================
+let adminApp: App | null = null;
+let adminAuth: ReturnType<typeof getAdminAuth> | null = null;
+let adminDb: ReturnType<typeof getAdminFirestore> | null = null;
+
+try {
+  const projectId = firebaseConfigData?.projectId || process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT;
+  if (projectId) {
+    let credential;
+    const saRaw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (saRaw) {
+      try {
+        const parsed = JSON.parse(saRaw);
+        credential = cert(parsed);
+      } catch (e) {
+        console.warn("[Firebase Admin] Could not parse FIREBASE_SERVICE_ACCOUNT JSON:", e);
+      }
+    }
+    if (!credential && process.env.GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
+      try {
+        credential = applicationDefault();
+      } catch (e) {
+        console.warn("[Firebase Admin] Could not load applicationDefault credential:", e);
+      }
+    }
+
+    adminApp = initializeApp({
+      projectId,
+      ...(credential ? { credential } : {}),
+    });
+    adminAuth = getAdminAuth(adminApp);
+    const dbId = firebaseConfigData?.firestoreDatabaseId;
+    adminDb = getAdminFirestore(adminApp, dbId);
+    console.log(`[Firebase Admin] Initialized successfully for project "${projectId}", DB "${dbId || '(default)'}"`);
+  }
+} catch (err: any) {
+  console.warn("[Firebase Admin] Initialization notice:", err?.message);
+}
+
+export interface AuthenticatedUser {
+  uid: string;
+  email: string;
+  name?: string;
+  picture?: string;
+  role: 'admin' | 'user';
+  canSwitchRole: boolean;
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: AuthenticatedUser;
+    }
+  }
+}
+
 export interface ApiUsageRecord {
   id: string;
   timestamp: string;
@@ -619,7 +680,23 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
   if (!email) return { role: null, canSwitchRole: false };
   const cleanEmail = email.toLowerCase().trim();
 
-  // 1. Check in Firestore REST app_users document
+  // 1. Primary: Direct check in Firestore via firebase-admin if available
+  if (adminDb) {
+    try {
+      const docSnap = await adminDb.collection("app_users").doc(cleanEmail).get();
+      if (docSnap.exists) {
+        const data = docSnap.data();
+        const role = data?.role;
+        if (role === 'admin' || role === 'user') {
+          return { role, canSwitchRole: role === 'admin' };
+        }
+      }
+    } catch (_) {
+      // Gracefully fall through if IAM permissions are restricted
+    }
+  }
+
+  // 2. Secondary: Check in Firestore REST app_users document
   if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
     const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
     try {
@@ -635,19 +712,116 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
     } catch (_) {}
   }
 
-  // 2. Check local server app_users cache
+  // 3. Check local server app_users cache
   const localUsers = readCollection<any[]>('app-users', []);
   const found = localUsers.find((u) => (u.email || '').toLowerCase().trim() === cleanEmail);
   if (found && (found.role === 'admin' || found.role === 'user')) {
     return { role: found.role, canSwitchRole: found.role === 'admin' };
   }
 
-  // 3. Fallback to bootstrap admin emails configured in environment
+  // 4. Fallback to bootstrap admin emails configured in environment
   if (BOOTSTRAP_ADMIN_EMAILS.includes(cleanEmail)) {
     return { role: 'admin', canSwitchRole: true };
   }
 
   return { role: null, canSwitchRole: false };
+}
+
+/**
+ * Middleware: Verify Firebase Auth ID Token (JWT) and enforce registered user membership.
+ * Attaches req.user with decoded identity and RBAC role.
+ */
+async function authenticateFirebaseUser(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      success: false,
+      error: "Acceso no autenticado: Se requiere token de sesión de Firebase en el encabezado Authorization.",
+      code: "UNAUTHENTICATED",
+    });
+  }
+
+  const idToken = authHeader.split("Bearer ")[1]?.trim();
+  if (!idToken) {
+    return res.status(401).json({
+      success: false,
+      error: "Token de autenticación vacío o malformado.",
+      code: "INVALID_TOKEN",
+    });
+  }
+
+  if (!adminAuth) {
+    return res.status(500).json({
+      success: false,
+      error: "Firebase Admin Auth no está inicializado en el servidor.",
+      code: "ADMIN_NOT_INITIALIZED",
+    });
+  }
+
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(idToken);
+    const userEmail = (decodedToken.email || "").toLowerCase().trim();
+
+    if (!userEmail) {
+      return res.status(403).json({
+        success: false,
+        error: "El token de autenticación no contiene un correo electrónico válido.",
+        code: "NO_EMAIL_IN_TOKEN",
+      });
+    }
+
+    const { role, canSwitchRole } = await resolveRoleForEmail(userEmail);
+    if (!role) {
+      return res.status(403).json({
+        success: false,
+        error: `Acceso denegado: El usuario "${userEmail}" no está habilitado como colaborador ni administrador.`,
+        code: "UNAUTHORIZED_USER",
+      });
+    }
+
+    req.user = {
+      uid: decodedToken.uid,
+      email: userEmail,
+      name: decodedToken.name || userEmail.split("@")[0],
+      picture: decodedToken.picture,
+      role,
+      canSwitchRole,
+    };
+
+    next();
+  } catch (err: any) {
+    console.warn("[Auth Middleware] Token verification failed:", err?.message);
+    const isExpired = err?.code === "auth/id-token-expired" || (err?.message || "").includes("expired");
+    return res.status(401).json({
+      success: false,
+      error: isExpired
+        ? "La sesión de Firebase ha expirado. Por favor, renueva tu sesión."
+        : "Token de Firebase inválido o no verificado.",
+      code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
+    });
+  }
+}
+
+/**
+ * Middleware: Enforces that the authenticated caller has the 'admin' role.
+ */
+function requireAdminRole(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({
+      success: false,
+      error: "Acceso denegado: Se requieren permisos de administrador de ISF para esta acción.",
+      code: "FORBIDDEN_ADMIN_REQUIRED",
+    });
+  }
+  next();
 }
 
 // Endpoint: Resolve user role on server side
@@ -668,6 +842,24 @@ app.get("/api/auth/bootstrap-admins", (_req, res) => {
 
 // Ensure bootstrap admins are seeded into Firestore app_users on server boot
 async function ensureBootstrapAdmins() {
+  if (adminDb) {
+    for (const email of BOOTSTRAP_ADMIN_EMAILS) {
+      try {
+        const docRef = adminDb.collection("app_users").doc(email);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+          await docRef.set({
+            email,
+            name: email.split('@')[0],
+            role: 'admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
   for (const email of BOOTSTRAP_ADMIN_EMAILS) {
@@ -694,12 +886,19 @@ async function ensureBootstrapAdmins() {
 setTimeout(() => ensureBootstrapAdmins().catch(() => {}), 2000);
 
 // Endpoint: Clear API logs
-app.post("/api/system/clear-logs", async (_req, res) => {
+app.post("/api/system/clear-logs", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   try {
     writeCollection('api_usage_logs', []);
     
     // Attempt to delete cloud records if any
-    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+    if (adminDb) {
+      try {
+        const snap = await adminDb.collection("api_usage_logs").limit(500).get();
+        const batch = adminDb.batch();
+        snap.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      } catch (_) {}
+    } else if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
       const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
       const cloudLogs = await fetchFirestoreApiLogs();
       for (const log of cloudLogs) {
@@ -715,7 +914,7 @@ app.post("/api/system/clear-logs", async (_req, res) => {
 });
 
 // Endpoint: System & API Metrics Report
-app.get("/api/system/metrics", async (_req, res) => {
+app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   try {
     const logs = await getRealApiLogsAsync();
 
@@ -971,7 +1170,7 @@ app.get("/api/system/metrics", async (_req, res) => {
 });
 
 // Endpoint: Manual logging of client-side operations
-app.post("/api/system/log-call", (req, res) => {
+app.post("/api/system/log-call", authenticateFirebaseUser, (req, res) => {
   try {
     const { service, serviceName, endpoint, actionName, model, promptTokens, candidatesTokens, totalTokens, estimatedCostUsd, status = 'success', durationMs = 0, userEmail, details } = req.body;
     const cost = estimatedCostUsd ?? (service === 'gemini_ai' ? calculateGeminiCost(promptTokens || 0, candidatesTokens || 0) : 0.0001);
@@ -1088,14 +1287,14 @@ function filterExpensesServer(expenses: any[], queryParams: any) {
 }
 
 // 1. EXPENSES COLLECTION
-app.get("/api/data/expenses", (req, res) => {
+app.get("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
   const allExpenses = readCollection<any[]>("expenses", []);
   const expenses = filterExpensesServer(allExpenses, req.query);
   res.json({ success: true, count: expenses.length, total: allExpenses.length, data: expenses });
 });
 
 // Non-destructive merge / update
-app.post("/api/data/expenses", (req, res) => {
+app.post("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
   const { expenses, replace } = req.body;
   if (!Array.isArray(expenses)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'expenses' debe ser un array." });
@@ -1114,7 +1313,7 @@ app.post("/api/data/expenses", (req, res) => {
 });
 
 // Upsert specific expenses
-app.post("/api/data/expenses/upsert", (req, res) => {
+app.post("/api/data/expenses/upsert", authenticateFirebaseUser, (req, res) => {
   const { items } = req.body;
   const itemsArray = Array.isArray(items) ? items : req.body.item ? [req.body.item] : [];
   if (itemsArray.length === 0) {
@@ -1128,7 +1327,7 @@ app.post("/api/data/expenses/upsert", (req, res) => {
 });
 
 // Delete specific expenses
-app.post("/api/data/expenses/delete", (req, res) => {
+app.post("/api/data/expenses/delete", authenticateFirebaseUser, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) {
     return res.status(400).json({ success: false, error: "ids must be an array" });
@@ -1141,12 +1340,12 @@ app.post("/api/data/expenses/delete", (req, res) => {
 });
 
 // 2. VENDORS COLLECTION
-app.get("/api/data/vendors", (_req, res) => {
+app.get("/api/data/vendors", authenticateFirebaseUser, (_req, res) => {
   const vendors = readCollection<any[]>("vendors", []);
   res.json({ success: true, count: vendors.length, data: vendors });
 });
 
-app.post("/api/data/vendors", (req, res) => {
+app.post("/api/data/vendors", authenticateFirebaseUser, (req, res) => {
   const { vendors, replace } = req.body;
   if (!Array.isArray(vendors)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'vendors' debe ser un array." });
@@ -1162,7 +1361,7 @@ app.post("/api/data/vendors", (req, res) => {
   res.json({ success: saved, count: finalVendors.length });
 });
 
-app.post("/api/data/vendors/delete", (req, res) => {
+app.post("/api/data/vendors/delete", authenticateFirebaseUser, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) {
     return res.status(400).json({ success: false, error: "ids must be an array" });
@@ -1175,12 +1374,12 @@ app.post("/api/data/vendors/delete", (req, res) => {
 });
 
 // 3. COST CENTERS COLLECTION
-app.get("/api/data/cost-centers", (_req, res) => {
+app.get("/api/data/cost-centers", authenticateFirebaseUser, (_req, res) => {
   const costCenters = readCollection<any[]>("cost_centers", []);
   res.json({ success: true, count: costCenters.length, data: costCenters });
 });
 
-app.post("/api/data/cost-centers", (req, res) => {
+app.post("/api/data/cost-centers", authenticateFirebaseUser, (req, res) => {
   const { costCenters, replace } = req.body;
   if (!Array.isArray(costCenters)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'costCenters' debe ser un array." });
@@ -1197,12 +1396,12 @@ app.post("/api/data/cost-centers", (req, res) => {
 });
 
 // 4. CATEGORIES COLLECTION
-app.get("/api/data/categories", (_req, res) => {
+app.get("/api/data/categories", authenticateFirebaseUser, (_req, res) => {
   const categories = readCollection<any[]>("categories", []);
   res.json({ success: true, count: categories.length, data: categories });
 });
 
-app.post("/api/data/categories", (req, res) => {
+app.post("/api/data/categories", authenticateFirebaseUser, (req, res) => {
   const { categories } = req.body;
   if (!Array.isArray(categories)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'categories' debe ser un array." });
@@ -1212,14 +1411,14 @@ app.post("/api/data/categories", (req, res) => {
 });
 
 // 5. USER PREFERENCES & SMART PATTERNS (Persistencia por usuario multidispositivo)
-app.get("/api/data/user-prefs", (req, res) => {
+app.get("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
   const email = (req.query.email as string || "default").toLowerCase().trim();
   const allPrefs = readCollection<Record<string, any>>("user_preferences", {});
   const userPref = allPrefs[email] || {};
   res.json({ success: true, email, data: userPref });
 });
 
-app.post("/api/data/user-prefs", (req, res) => {
+app.post("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
   const { email, preferences } = req.body;
   if (!email) {
     return res.status(400).json({ success: false, error: "Email requerido para guardar preferencias." });
@@ -1235,11 +1434,28 @@ app.post("/api/data/user-prefs", (req, res) => {
   res.json({ success: saved, email: normalizedEmail, data: allPrefs[normalizedEmail] });
 });
 
-// 6. APP USERS COLLECTION (Gestión de usuarios y roles)
-app.get("/api/data/users", async (_req, res) => {
+// 6. APP USERS COLLECTION (Gestión de usuarios y roles - Exclusivo Administrador)
+app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   try {
     let users = readCollection<any[]>("app-users", []);
-    // Fetch from Firestore if available
+    
+    // 1. Fetch via firebase-admin if available
+    if (adminDb) {
+      try {
+        const snap = await adminDb.collection("app_users").get();
+        const adminUsers: any[] = [];
+        snap.forEach((docSnap) => {
+          adminUsers.push(docSnap.data());
+        });
+        if (adminUsers.length > 0) {
+          users = adminUsers;
+          writeCollection("app-users", users);
+          return res.json({ success: true, count: users.length, data: users });
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fetch from Firestore REST if adminDb not loaded
     if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
       const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
       try {
@@ -1273,7 +1489,7 @@ app.get("/api/data/users", async (_req, res) => {
   }
 });
 
-app.post("/api/data/users", async (req, res) => {
+app.post("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (req, res) => {
   try {
     const user = req.body;
     if (!user || !user.email) {
@@ -1284,7 +1500,22 @@ app.post("/api/data/users", async (req, res) => {
     const updated = mergeById(existing, [{ ...user, email: cleanEmail }]);
     writeCollection("app-users", updated);
 
-    // Sync to Firestore REST
+    // 1. Sync via firebase-admin
+    if (adminDb) {
+      try {
+        await adminDb.collection("app_users").doc(cleanEmail).set({
+          email: cleanEmail,
+          name: user.name || '',
+          role: user.role || 'user',
+          ...(user.picture ? { picture: user.picture } : {}),
+          ...(user.notes ? { notes: user.notes } : {}),
+          updatedAt: new Date().toISOString(),
+          ...(user.createdAt ? { createdAt: user.createdAt } : { createdAt: new Date().toISOString() }),
+        }, { merge: true });
+      } catch (_) {}
+    }
+
+    // 2. Sync to Firestore REST
     if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
       const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
       const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
@@ -1310,7 +1541,7 @@ app.post("/api/data/users", async (req, res) => {
   }
 });
 
-app.post("/api/data/users/delete", async (req, res) => {
+app.post("/api/data/users/delete", authenticateFirebaseUser, requireAdminRole, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
@@ -1320,6 +1551,12 @@ app.post("/api/data/users/delete", async (req, res) => {
     const existing = readCollection<any[]>("app-users", []);
     const remaining = existing.filter((u) => (u.email || '').toLowerCase().trim() !== cleanEmail);
     writeCollection("app-users", remaining);
+
+    if (adminDb) {
+      try {
+        await adminDb.collection("app_users").doc(cleanEmail).delete();
+      } catch (_) {}
+    }
 
     if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
       const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
@@ -1334,7 +1571,7 @@ app.post("/api/data/users/delete", async (req, res) => {
 });
 
 // 7. BULK SYNC / INITIAL HYDRATION
-app.get("/api/data/sync", (req, res) => {
+app.get("/api/data/sync", authenticateFirebaseUser, (req, res) => {
   const allExpenses = readCollection<any[]>("expenses", []);
   const expenses = filterExpensesServer(allExpenses, req.query);
   const vendors = readCollection<any[]>("vendors", []);
@@ -1354,7 +1591,7 @@ app.get("/api/data/sync", (req, res) => {
 });
 
 // 7. AUDIT LOGS (Registro de cambios y auditoría contable)
-app.get("/api/data/audit-logs", async (_req, res) => {
+app.get("/api/data/audit-logs", authenticateFirebaseUser, async (_req, res) => {
   const localLogs = readCollection<any[]>("audit_logs", []);
   const cloudLogs = await fetchFirestoreAuditLogs();
 
@@ -1379,7 +1616,7 @@ app.get("/api/data/audit-logs", async (_req, res) => {
   res.json({ success: true, count: combined.length, data: combined });
 });
 
-app.post("/api/data/audit-logs", (req, res) => {
+app.post("/api/data/audit-logs", authenticateFirebaseUser, (req, res) => {
   const entry = req.body;
   if (!entry || !entry.id) {
     return res.status(400).json({ success: false, error: "Registro de auditoría inválido" });
@@ -1397,11 +1634,18 @@ app.post("/api/data/audit-logs", (req, res) => {
   res.json({ success: saved, count: updated.length, data: entry });
 });
 
-app.post("/api/data/audit-logs/clear", async (_req, res) => {
+app.post("/api/data/audit-logs/clear", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   const saved = writeCollection("audit_logs", []);
 
   // Clear cloud records if available
-  if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection("audit_logs").limit(500).get();
+      const batch = adminDb.batch();
+      snap.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    } catch (_) {}
+  } else if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
     const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
     const cloudLogs = await fetchFirestoreAuditLogs();
     for (const log of cloudLogs) {
@@ -1414,7 +1658,7 @@ app.post("/api/data/audit-logs/clear", async (_req, res) => {
 });
 
 // Endpoint to check centralized Google Drive / Workspace backend configuration
-app.get("/api/drive/status", async (_req, res) => {
+app.get("/api/drive/status", authenticateFirebaseUser, async (_req, res) => {
   const centralAuth = await getCentralizedGoogleAccessToken();
   res.json({
     configured: Boolean(centralAuth),
@@ -1426,7 +1670,7 @@ app.get("/api/drive/status", async (_req, res) => {
 });
 
 // Endpoint 1: Extract data from Invoice / Receipt Photo
-app.post("/api/extract-invoice", async (req, res) => {
+app.post("/api/extract-invoice", authenticateFirebaseUser, async (req, res) => {
   const startTime = Date.now();
   try {
     const { imageBase64, mimeType = "image/jpeg", availableCategories = [] } = req.body;
@@ -1639,7 +1883,7 @@ Devuelve los datos en JSON conforme al esquema.`;
 });
 
 // Endpoint 1b: Process Vendor Document (Image or PDF) to extract vendor & bank details
-app.post("/api/process-vendor-doc", async (req, res) => {
+app.post("/api/process-vendor-doc", authenticateFirebaseUser, async (req, res) => {
   try {
     const rawBase64 = req.body.fileBase64 || req.body.imageBase64 || req.body.data;
     let mimeType = req.body.mimeType;
@@ -1832,7 +2076,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
 });
 
 // Endpoint 2: Process Voice Note / Audio for expense categorization & assignment
-app.post("/api/process-audio", async (req, res) => {
+app.post("/api/process-audio", authenticateFirebaseUser, async (req, res) => {
   try {
     const { 
       audioBase64, 
@@ -1981,7 +2225,7 @@ Tu misión es extraer y completar con total fidelidad:
 });
 
 // Endpoint 3: Text or Combined Quick Extraction (Fallback or Direct Dictation)
-app.post("/api/process-text-prompt", async (req, res) => {
+app.post("/api/process-text-prompt", authenticateFirebaseUser, async (req, res) => {
   try {
     const { text, availableProjects = [], availableCategories = [] } = req.body;
     if (!text) {
@@ -2064,7 +2308,7 @@ Extrae estructuradamente:
 });
 
 // Endpoint 4: Send Administrative Notification Emails (Bank Details Request, Payment Confirmation, Upload Receipt Summary & Withholdings)
-app.post("/api/send-email", async (req, res) => {
+app.post("/api/send-email", authenticateFirebaseUser, requireAdminRole, async (req, res) => {
   try {
     const { to, cc, bcc, subject, bodyHtml, accessToken, attachments } = req.body;
     if (!to || !subject || !bodyHtml) {
@@ -2244,7 +2488,7 @@ app.post("/api/send-email", async (req, res) => {
 });
 
 // Endpoint 5: Upload receipt to Google Drive folder with standardized nomenclature & Shared Drive support
-app.post("/api/upload-to-drive", async (req, res) => {
+app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
   try {
     const {
       expenseId,
@@ -2513,7 +2757,7 @@ app.post("/api/upload-to-drive", async (req, res) => {
 });
 
 // Endpoint 6: Delete receipt file from Google Drive
-app.post("/api/delete-from-drive", async (req, res) => {
+app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) => {
   try {
     const { fileId, fileIds, fileName, fileNames, folderName, accessToken } = req.body;
 
@@ -2636,7 +2880,7 @@ app.post("/api/delete-from-drive", async (req, res) => {
 });
 
 // Endpoint 7: Get Google Drive Folder Name and details automatically from URL or folder ID
-app.all("/api/drive-folder-info", async (req, res) => {
+app.all("/api/drive-folder-info", authenticateFirebaseUser, async (req, res) => {
   try {
     const folderUrlOrId = (req.method === "POST" ? req.body?.folderUrl || req.body?.folderId : req.query?.folderUrl || req.query?.folderId) as string;
     const clientAccessToken = (req.method === "POST" ? req.body?.accessToken : req.query?.accessToken) as string;

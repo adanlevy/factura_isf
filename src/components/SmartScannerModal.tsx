@@ -46,6 +46,7 @@ import {
   cleanCuit,
 } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
+import { authFetch } from '../utils/authFetch';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
@@ -422,7 +423,7 @@ export function SmartScannerModal({
       try {
         if (abortController.signal.aborted) return;
 
-        const response = await fetch('/api/extract-invoice', {
+        const response = await authFetch('/api/extract-invoice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -43,6 +43,7 @@ import {
   ARS_EXCHANGE_RATE,
 } from '../utils/apiUsageLogger';
 import { matchesSearch } from '../utils/helpers';
+import { authFetch } from '../utils/authFetch';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
 
 interface SystemAdminViewProps {
@@ -86,7 +87,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   const fetchMetrics = async () => {
     try {
       setRefreshing(true);
-      const res = await fetch('/api/system/metrics');
+      const res = await authFetch('/api/system/metrics');
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data) {

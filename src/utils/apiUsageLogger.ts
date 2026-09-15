@@ -13,6 +13,7 @@ import {
 import { db } from '../lib/firebase';
 import { ApiUsageLogEntry, MonthApiUsage, ServiceUsageSummary, SystemMetricsReport } from '../types';
 import { sanitizeForFirestore } from './cloudSync';
+import { authFetch } from './authFetch';
 
 export const API_USAGE_COLLECTION = 'api_usage_logs';
 export const ARS_EXCHANGE_RATE = 1060;
@@ -99,7 +100,7 @@ export async function logApiUsageEvent(entry: {
     await setDoc(docRef, sanitizeForFirestore(fullRecord));
 
     // Also notify backend mirror in background
-    fetch('/api/system/log-call', {
+    authFetch('/api/system/log-call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fullRecord),
@@ -291,7 +292,7 @@ export async function clearCentralApiUsageLogs(): Promise<boolean> {
     await batch.commit();
 
     // Also notify server backend
-    fetch('/api/system/clear-logs', { method: 'POST' }).catch(() => {});
+    authFetch('/api/system/clear-logs', { method: 'POST' }).catch(() => {});
 
     return true;
   } catch (e) {

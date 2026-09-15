@@ -23,6 +23,7 @@ import { Expense, Vendor, CostCenter, AppUserRecord } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '../data/initialData';
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
 import { sanitizeCostCenter } from './helpers';
+import { authFetch } from './authFetch';
 
 export const DEFAULT_APP_USERS: AppUserRecord[] = [];
 
@@ -608,7 +609,7 @@ export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean>
     await batch.commit();
 
     // Also notify server backend with lightweight metadata
-    fetch('/api/data/expenses', {
+    authFetch('/api/data/expenses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expenses: expenses.map((e) => prepareExpenseForFirestore(e)) }),
@@ -649,7 +650,7 @@ export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> 
     }
     await batch.commit();
 
-    fetch('/api/data/expenses/upsert', {
+    authFetch('/api/data/expenses/upsert', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: items.map((i) => prepareExpenseForFirestore(i)) }),
@@ -694,7 +695,7 @@ export async function deleteCentralExpenses(ids: string[]): Promise<boolean> {
     }
     await batch.commit();
 
-    fetch('/api/data/expenses/delete', {
+    authFetch('/api/data/expenses/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -724,7 +725,7 @@ export async function saveCentralVendors(vendors: Vendor[]): Promise<boolean> {
     }
     await batch.commit();
 
-    fetch('/api/data/vendors', {
+    authFetch('/api/data/vendors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ vendors: normalizedList }),
@@ -751,7 +752,7 @@ export async function deleteCentralVendors(ids: string[]): Promise<boolean> {
     }
     await batch.commit();
 
-    fetch('/api/data/vendors/delete', {
+    authFetch('/api/data/vendors/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -772,7 +773,7 @@ export async function saveSingleVendor(vendor: Vendor): Promise<boolean> {
     const docRef = doc(db, 'vendors', vendor.id);
     await setDoc(docRef, sanitizeForFirestore(normalized));
 
-    fetch('/api/data/vendors', {
+    authFetch('/api/data/vendors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ vendors: [normalized] }),
@@ -802,7 +803,7 @@ export async function saveSingleCostCenter(costCenter: CostCenter): Promise<bool
       ccEmails: cleanCc.ccEmails ?? '',
     }));
 
-    fetch('/api/data/cost-centers', {
+    authFetch('/api/data/cost-centers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ costCenters: [cleanCc] }),
@@ -821,7 +822,7 @@ export async function deleteCentralCostCenter(id: string): Promise<boolean> {
     const docRef = doc(db, 'cost_centers', id);
     await deleteDoc(docRef);
 
-    fetch('/api/data/cost-centers/delete', {
+    authFetch('/api/data/cost-centers/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: [id] }),
@@ -850,7 +851,7 @@ export async function saveCentralCostCenters(costCenters: CostCenter[]): Promise
     }
     await batch.commit();
 
-    fetch('/api/data/cost-centers', {
+    authFetch('/api/data/cost-centers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ costCenters }),
@@ -875,7 +876,7 @@ export async function saveCentralCategories(categories: string[]): Promise<boole
     const docRef = doc(db, 'categories', 'master_list');
     await setDoc(docRef, { items: categories, updatedAt: new Date().toISOString() }, { merge: true });
 
-    fetch('/api/data/categories', {
+    authFetch('/api/data/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ categories }),
@@ -910,7 +911,7 @@ export async function saveUserCloudPreferences(userEmail: string, preferences: U
     const docRef = doc(db, 'user_preferences', safeKey);
     await setDoc(docRef, sanitizeForFirestore({ ...preferences, email: userEmail }), { merge: true });
 
-    fetch('/api/data/user-prefs', {
+    authFetch('/api/data/user-prefs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: userEmail, preferences }),
@@ -940,7 +941,7 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
 
     if (usersMap.size === 0) {
       // Fetch from backend server API
-      const res = await fetch('/api/data/users');
+      const res = await authFetch('/api/data/users');
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data)) {
@@ -953,7 +954,7 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
   } catch (e) {
     console.warn('[Firestore] Notice fetching users, querying server:', e);
     try {
-      const res = await fetch('/api/data/users');
+      const res = await authFetch('/api/data/users');
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data)) {
@@ -975,7 +976,7 @@ export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
   });
 
   // 1. Write through backend server first
-  fetch('/api/data/users', {
+  authFetch('/api/data/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(safeDoc),
@@ -1003,7 +1004,7 @@ export async function deleteCentralUser(email: string): Promise<boolean> {
   const cleanEmail = email.toLowerCase().trim();
 
   // 1. Delete through backend server
-  fetch('/api/data/users/delete', {
+  authFetch('/api/data/users/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: cleanEmail }),
@@ -1076,7 +1077,7 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
 
   // 2. Server-side verification (environment config & database gate)
   try {
-    const res = await fetch('/api/auth/resolve-role', {
+    const res = await authFetch('/api/auth/resolve-role', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: cleanEmail }),

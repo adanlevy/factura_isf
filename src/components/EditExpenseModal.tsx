@@ -32,6 +32,7 @@ import {
 } from '../utils/sorting';
 import { generateDriveFileName, findVendorByCuitOrName, cleanCuit } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
+import { authFetch } from '../utils/authFetch';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { PaymentTypeSelector } from './PaymentTypeSelector';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -159,7 +160,7 @@ export function EditExpenseModal({
       if (formData.receiptFileName?.endsWith('.png')) mimeType = 'image/png';
       else if (formData.receiptFileName?.endsWith('.pdf')) mimeType = 'application/pdf';
 
-      const response = await fetch('/api/extract-invoice', {
+      const response = await authFetch('/api/extract-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

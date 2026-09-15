@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Vendor, UserBankDetails } from '../types';
 import { formatCuit } from '../utils/helpers';
+import { authFetch } from '../utils/authFetch';
 
 interface VendorFormModalProps {
   isOpen: boolean;
@@ -208,7 +209,7 @@ export function VendorFormModal({
       reader.onload = async (e) => {
         const base64 = e.target?.result as string;
         try {
-          const res = await fetch('/api/process-vendor-doc', {
+          const res = await authFetch('/api/process-vendor-doc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
