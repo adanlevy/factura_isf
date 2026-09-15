@@ -430,47 +430,153 @@ export async function sendGmailMessage(params: {
   const { to, cc, bcc, subject, bodyHtml, fromName, accessToken: explicitToken, attachments } = params;
   const token = explicitToken || getStoredWorkspaceToken();
 
+  const payload = JSON.stringify({
+    to,
+    cc,
+    bcc,
+    subject,
+    bodyHtml,
+    fromName: fromName || 'ISF Finanzas',
+    accessToken: token,
+    attachments,
+  });
+
+  // Attempt 1: Call backend /api/send-email (supports centralized service account & institutional sender)
   try {
-    const response = await authFetch('/api/send-email', {
+    let response = await authFetch('/api/send-email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to,
-        cc,
-        bcc,
-        subject,
-        bodyHtml,
-        fromName: fromName || 'ISF Finanzas',
-        accessToken: token,
-        attachments,
-      }),
+      body: payload,
+    }).catch(async (fetchErr) => {
+      // If network glitch or container waking up, retry once after 500ms
+      console.warn('[Gmail] Initial /api/send-email fetch attempt notice:', fetchErr?.message);
+      await new Promise((r) => setTimeout(r, 500));
+      return authFetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      });
     });
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      if (response.status === 401 || data.isAuthError) {
-        saveStoredWorkspaceToken(null);
+    if (response && response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        if (data.apiLog) {
+          syncApiLogToCloud(data.apiLog).catch(() => {});
+        }
+        return {
+          success: true,
+          messageId: data.messageId,
+          mode: data.mode,
+          message: data.message,
+        };
       }
       throw new Error(data.error || 'Error al despachar el correo');
     }
 
-    if (data.apiLog) {
-      syncApiLogToCloud(data.apiLog).catch(() => {});
+    // If 401, check if token expired
+    if (response && response.status === 401) {
+      saveStoredWorkspaceToken(null);
+    }
+  } catch (err: any) {
+    console.warn('[Gmail] Backend /api/send-email attempt failed:', err?.message || err);
+
+    // Fallback: If user has a direct Google OAuth access token, attempt direct Gmail API client-side
+    if (token && typeof token === 'string' && token.startsWith('ya29.')) {
+      try {
+        const recipientArray = (Array.isArray(to) ? to : [to]).filter(Boolean).map((e) => String(e).trim());
+        const recipientString = recipientArray.join(', ');
+        const ccArray = (Array.isArray(cc) ? cc : [cc])
+          .filter(Boolean)
+          .map((e) => String(e).trim())
+          .filter((e) => !recipientArray.includes(e));
+        const ccString = ccArray.join(', ');
+        const bccArray = (Array.isArray(bcc) ? bcc : [bcc]).filter(Boolean).map((e) => String(e).trim());
+        const bccString = bccArray.join(', ');
+
+        const utf8Subject = `=?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`;
+        const baseHeaders = [
+          `To: ${recipientString}`,
+          ...(ccString ? [`Cc: ${ccString}`] : []),
+          ...(bccString ? [`Bcc: ${bccString}`] : []),
+          `Subject: ${utf8Subject}`,
+          'MIME-Version: 1.0',
+        ];
+
+        let rawMime = '';
+        if (attachments && attachments.length > 0) {
+          const boundary = `boundary_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+          const parts = [
+            ...baseHeaders,
+            `Content-Type: multipart/mixed; boundary="${boundary}"`,
+            '',
+            `--${boundary}`,
+            'Content-Type: text/html; charset=utf-8',
+            'Content-Transfer-Encoding: 7bit',
+            '',
+            bodyHtml,
+            '',
+          ];
+          for (const att of attachments) {
+            if (att && att.base64 && att.filename) {
+              const cleanBase64 = att.base64.includes('base64,') ? att.base64.split('base64,')[1] : att.base64;
+              const contentType = att.contentType || (att.filename.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+              parts.push(
+                `--${boundary}`,
+                `Content-Type: ${contentType}; name="${att.filename}"`,
+                'Content-Transfer-Encoding: base64',
+                `Content-Disposition: attachment; filename="${att.filename}"`,
+                '',
+                cleanBase64,
+                ''
+              );
+            }
+          }
+          parts.push(`--${boundary}--`);
+          rawMime = parts.join('\r\n');
+        } else {
+          rawMime = [...baseHeaders, 'Content-Type: text/html; charset=utf-8', '', bodyHtml].join('\r\n');
+        }
+
+        const encodedMessage = btoa(unescape(encodeURIComponent(rawMime)))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+
+        const directRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ raw: encodedMessage }),
+        });
+
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          return {
+            success: true,
+            messageId: directData.id,
+            mode: 'client_direct_gmail',
+            message: `Correo enviado exitosamente a ${recipientString} vía Gmail directo.`,
+          };
+        }
+      } catch (directErr: any) {
+        console.warn('[Gmail] Direct client Gmail API fallback notice:', directErr?.message);
+      }
     }
 
-    return {
-      success: true,
-      messageId: data.messageId,
-      mode: data.mode,
-      message: data.message,
-    };
-  } catch (err: any) {
-    console.error('Gmail send error:', err);
+    console.error('Gmail send error:', err?.message || err);
     return {
       success: false,
-      error: err.message || 'No se pudo enviar el correo vía Gmail API.',
+      error: err?.message || 'No se pudo enviar el correo vía Gmail API.',
     };
   }
+
+  return {
+    success: false,
+    error: 'No se pudo enviar el correo vía Gmail API.',
+  };
 }
 
 /**

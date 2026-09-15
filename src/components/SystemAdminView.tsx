@@ -561,6 +561,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       {apiUsage.currentMonth.byService.gemini_ai?.calls || 0} llamadas •{' '}
                       {((apiUsage.currentMonth.byService.gemini_ai?.tokens || 0) / 1000).toFixed(1)}k tokens
                     </div>
+                    <div className="text-[10px] text-indigo-600 bg-indigo-50/80 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
+                      Oficial: $0.75 in / $3.75 out x 1M
+                    </div>
                   </div>
                 </div>
                 <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 flex justify-between">

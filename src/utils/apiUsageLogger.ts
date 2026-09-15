@@ -32,13 +32,19 @@ export async function syncApiLogToCloud(apiLog: any) {
 }
 
 /**
- * Calculates official Gemini 2.5 / 3.7 Flash pricing:
- * - $0.10 / 1M prompt tokens ($0.00000010 per token)
- * - $0.40 / 1M output tokens ($0.00000040 per token)
+ * Calcula el costo oficial de Google Gemini API (Google AI Studio / Cloud Billing):
+ * - Gemini 3.7 Flash:
+ *   - Entrada (Prompt tokens): $0.75 USD por 1M tokens ($0.00000075 / token)
+ *   - Salida (Output / Candidates / Thinking tokens): $3.75 USD por 1M tokens ($0.00000375 / token)
+ * - Modelos Flash-Lite (ej: 3.1-flash-lite): $0.10 / $0.40 por 1M tokens
  */
-export function calculateGeminiCost(promptTokens = 0, candidatesTokens = 0): number {
-  const inputCost = (promptTokens / 1_000_000) * 0.10;
-  const outputCost = (candidatesTokens / 1_000_000) * 0.40;
+export function calculateGeminiCost(promptTokens = 0, candidatesTokens = 0, model = 'gemini-3.7-flash'): number {
+  const isLite = model && (model.includes('lite') || model.includes('1.5-flash'));
+  const inputRate = isLite ? 0.10 : 0.75;
+  const outputRate = isLite ? 0.40 : 3.75;
+
+  const inputCost = (promptTokens / 1_000_000) * inputRate;
+  const outputCost = (candidatesTokens / 1_000_000) * outputRate;
   const total = inputCost + outputCost;
   return Number(total.toFixed(6));
 }
@@ -68,7 +74,7 @@ export async function logApiUsageEvent(entry: {
     let costUsd = entry.estimatedCostUsd;
     if (costUsd === undefined) {
       if (entry.service === 'gemini_ai') {
-        costUsd = calculateGeminiCost(entry.promptTokens || 0, entry.candidatesTokens || 0);
+        costUsd = calculateGeminiCost(entry.promptTokens || 0, entry.candidatesTokens || 0, entry.model);
       } else {
         costUsd = 0.0001; // Drive / Gmail operation baseline
       }
@@ -211,7 +217,19 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
     for (const log of monthLogs) {
       totalCalls += 1;
       totalTokens += log.totalTokens || 0;
-      totalCostUsd += log.estimatedCostUsd || 0;
+
+      let costUsd = log.estimatedCostUsd || 0;
+      if (log.service === 'gemini_ai') {
+        const pTokens = log.promptTokens || 0;
+        const cTokens = log.candidatesTokens || 0;
+        if (pTokens > 0 || cTokens > 0) {
+          costUsd = calculateGeminiCost(pTokens, cTokens, log.model);
+        } else if (costUsd > 0 && costUsd < 0.05 && (log.totalTokens || 0) > 30000) {
+          // Ajuste retrospectivo para registros guardados con la tarifa antigua 8x menor
+          costUsd = Number((costUsd * 8).toFixed(6));
+        }
+      }
+      totalCostUsd += costUsd;
 
       const svc = byService[log.service] || {
         service: log.service,
@@ -223,8 +241,8 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
       };
       svc.calls += 1;
       svc.tokens += log.totalTokens || 0;
-      svc.costUsd += log.estimatedCostUsd || 0;
-      svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * ARS_EXCHANGE_RATE);
+      svc.costUsd += costUsd;
+      svc.costArs += Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2));
       byService[log.service] = svc;
     }
 

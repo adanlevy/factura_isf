@@ -98,7 +98,39 @@ export function AuditLogsView({
 
     // 3. Action filter
     if (selectedActionType !== 'ALL') {
-      list = list.filter((l) => l.action === selectedActionType);
+      if (selectedActionType === 'EXPENSE_CREATE') {
+        list = list.filter(
+          (l) =>
+            l.action === 'EXPENSE_CREATE' ||
+            (l.action === 'BATCH_CREATE' && l.entityType === 'expense')
+        );
+      } else if (selectedActionType === 'EXPENSE_UPDATE') {
+        list = list.filter(
+          (l) =>
+            (l.action === 'EXPENSE_UPDATE' ||
+              l.action === 'UPDATE' ||
+              l.action === 'REPLACE_RECEIPT' ||
+              l.action === 'WITHHOLDING_CERT') &&
+            l.entityType === 'expense'
+        );
+      } else if (selectedActionType === 'EXPENSE_PAYMENT') {
+        list = list.filter(
+          (l) =>
+            l.action === 'SETTLE_PAYMENT' ||
+            l.action === 'REVERT_PAYMENT' ||
+            l.action === 'EXPENSE_STATUS_CHANGE'
+        );
+      } else if (selectedActionType === 'EXPENSE_DELETE') {
+        list = list.filter(
+          (l) =>
+            (l.action === 'EXPENSE_DELETE' ||
+              l.action === 'DELETE' ||
+              l.action === 'BATCH_DELETE') &&
+            l.entityType === 'expense'
+        );
+      } else {
+        list = list.filter((l) => l.action === selectedActionType);
+      }
     }
 
     // 4. Keyword search
@@ -235,12 +267,25 @@ export function AuditLogsView({
     switch (action) {
       case 'CREATE':
       case 'BATCH_CREATE':
+      case 'EXPENSE_CREATE':
+      case 'VENDOR_CREATE':
+      case 'COST_CENTER_CREATE':
+      case 'CATEGORY_CREATE':
         return 'bg-emerald-50 text-emerald-700 border-emerald-200';
       case 'UPDATE':
       case 'BATCH_UPDATE':
+      case 'EXPENSE_UPDATE':
+      case 'VENDOR_UPDATE':
+      case 'COST_CENTER_UPDATE':
+      case 'CATEGORY_UPDATE':
+      case 'USER_ROLE_CHANGE':
         return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'DELETE':
       case 'BATCH_DELETE':
+      case 'EXPENSE_DELETE':
+      case 'VENDOR_DELETE':
+      case 'COST_CENTER_DELETE':
+      case 'CATEGORY_DELETE':
       case 'SYSTEM_CLEAR_LOGS':
         return 'bg-rose-50 text-rose-700 border-rose-200';
       case 'SETTLE_PAYMENT':
@@ -250,6 +295,8 @@ export function AuditLogsView({
       case 'REPLACE_RECEIPT':
       case 'WITHHOLDING_CERT':
         return 'bg-purple-50 text-purple-700 border-purple-200';
+      case 'EXPENSE_STATUS_CHANGE':
+        return 'bg-indigo-50 text-indigo-700 border-indigo-200';
       default:
         return 'bg-slate-50 text-slate-700 border-slate-200';
     }
@@ -446,23 +493,46 @@ export function AuditLogsView({
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={toggleExpandAll}
-            className="text-xs text-indigo-600 hover:text-indigo-800 font-bold transition cursor-pointer flex items-center gap-1"
-          >
-            {expandedLogIds.size > 0 ? (
-              <>
-                <ChevronUp className="w-3.5 h-3.5" />
-                <span>Colapsar todos los detalles</span>
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3.5 h-3.5" />
-                <span>Expandir todos los detalles</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Action Filter Selector */}
+            <div className="flex items-center gap-1.5 py-1">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Acción:</span>
+              <select
+                id="audit-filter-action"
+                value={selectedActionType}
+                onChange={(e) => setSelectedActionType(e.target.value)}
+                className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-semibold text-xs rounded-xl px-2.5 py-1.5 outline-hidden focus:ring-2 focus:ring-indigo-500 cursor-pointer transition"
+              >
+                <option value="ALL">Todas las acciones</option>
+                <option value="EXPENSE_CREATE">📥 Cargas de Gastos</option>
+                <option value="EXPENSE_UPDATE">✏️ Edición de Comprobantes</option>
+                <option value="EXPENSE_PAYMENT">💳 Pagos y Reversiones</option>
+                <option value="EXPENSE_DELETE">🗑️ Eliminación de Gastos</option>
+                <option value="VENDOR_CREATE">🏢 Creación de Proveedores</option>
+                <option value="VENDOR_UPDATE">📝 Edición de Proveedores</option>
+                <option value="COST_CENTER_CREATE">📁 Creación Centro de Costos</option>
+                <option value="COST_CENTER_UPDATE">📑 Edición Centro de Costos</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleExpandAll}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-bold transition cursor-pointer flex items-center gap-1 py-1"
+            >
+              {expandedLogIds.size > 0 ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span>Colapsar todos</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  <span>Expandir todos</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

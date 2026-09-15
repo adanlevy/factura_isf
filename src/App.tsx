@@ -891,6 +891,41 @@ export default function App() {
     }
 
     showToast(`✅ Comprobante de "${newExpense.vendor}" ($${newExpense.amount.toLocaleString()}) registrado.`);
+
+    // Audit log: registrar carga de gasto individual
+    logAuditEvent({
+      userEmail: currentUser?.email || initialExpense.submittedByEmail,
+      userName: currentUser?.name || initialExpense.submittedByName,
+      action: 'EXPENSE_CREATE',
+      actionLabel: 'Carga de Comprobante',
+      entityType: 'expense',
+      entityId: initialExpense.id,
+      entityName: `${initialExpense.vendor || 'Proveedor'} (${formatCurrency(initialExpense.amount, initialExpense.currency)})`,
+      summary: `Se cargó el comprobante de "${initialExpense.vendor || 'Proveedor'}" por ${formatCurrency(initialExpense.amount, initialExpense.currency)} (Proyecto: ${initialExpense.project || 'Sin asignar'}, Categoría: ${initialExpense.category || 'Sin asignar'}, Factura: ${initialExpense.invoiceNumber || 'S/N'}, Medio: ${initialExpense.paymentMethod || 'No especificado'}).`,
+      changes: [
+        { field: 'vendor', fieldLabel: 'Proveedor', oldValue: '(Nuevo)', newValue: initialExpense.vendor || 'Sin especificar' },
+        { field: 'amount', fieldLabel: 'Monto', oldValue: '0', newValue: formatCurrency(initialExpense.amount, initialExpense.currency) },
+        { field: 'project', fieldLabel: 'Centro de Costos', oldValue: '(Sin asignar)', newValue: initialExpense.project || 'Sin asignar' },
+        { field: 'category', fieldLabel: 'Categoría', oldValue: '(Sin asignar)', newValue: initialExpense.category || 'Sin asignar' },
+        { field: 'date', fieldLabel: 'Fecha del Comprobante', oldValue: '-', newValue: initialExpense.date || '-' },
+        ...(initialExpense.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura / Comprobante', oldValue: '-', newValue: initialExpense.invoiceNumber }] : []),
+        ...(initialExpense.cuit ? [{ field: 'cuit', fieldLabel: 'CUIT Emisor', oldValue: '-', newValue: initialExpense.cuit }] : []),
+        ...(initialExpense.paymentMethod ? [{ field: 'paymentMethod', fieldLabel: 'Medio de Pago', oldValue: '-', newValue: initialExpense.paymentMethod }] : []),
+        ...(initialExpense.paymentType ? [{ field: 'paymentType', fieldLabel: 'Tipo de Pago', oldValue: '-', newValue: initialExpense.paymentType }] : []),
+        ...(initialExpense.notes ? [{ field: 'notes', fieldLabel: 'Notas / Observaciones', oldValue: '-', newValue: initialExpense.notes }] : []),
+        { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: initialExpense.receiptImage ? (initialExpense.receiptFileName || 'Comprobante adjunto') : 'Sin archivo' },
+      ],
+      metadata: {
+        amount: initialExpense.amount,
+        currency: initialExpense.currency,
+        vendor: initialExpense.vendor,
+        project: initialExpense.project,
+        category: initialExpense.category,
+        invoiceNumber: initialExpense.invoiceNumber,
+        hasReceipt: Boolean(initialExpense.receiptImage),
+        submittedBy: initialExpense.submittedByEmail || currentUser?.email,
+      },
+    }).catch((e) => console.warn('Audit log error on expense create:', e));
   };
 
   const handleSaveBatchExpenses = (newExpenses: Expense[]) => {
@@ -986,10 +1021,67 @@ export default function App() {
         });
     }
 
+    // Audit log: registrar cada comprobante subido en el lote
+    initializedExpenses.forEach((exp) => {
+      logAuditEvent({
+        userEmail: currentUser?.email || exp.submittedByEmail,
+        userName: currentUser?.name || exp.submittedByName,
+        action: 'EXPENSE_CREATE',
+        actionLabel: 'Carga de Comprobante (Lote)',
+        entityType: 'expense',
+        entityId: exp.id,
+        entityName: `${exp.vendor || 'Proveedor'} (${formatCurrency(exp.amount, exp.currency)})`,
+        summary: `Se cargó el comprobante de "${exp.vendor || 'Proveedor'}" por ${formatCurrency(exp.amount, exp.currency)} (Proyecto: ${exp.project || 'Sin asignar'}, Categoría: ${exp.category || 'Sin asignar'}, Factura: ${exp.invoiceNumber || 'S/N'}, Medio: ${exp.paymentMethod || 'No especificado'}).`,
+        changes: [
+          { field: 'vendor', fieldLabel: 'Proveedor', oldValue: '(Nuevo)', newValue: exp.vendor || 'Sin especificar' },
+          { field: 'amount', fieldLabel: 'Monto', oldValue: '0', newValue: formatCurrency(exp.amount, exp.currency) },
+          { field: 'project', fieldLabel: 'Centro de Costos', oldValue: '(Sin asignar)', newValue: exp.project || 'Sin asignar' },
+          { field: 'category', fieldLabel: 'Categoría', oldValue: '(Sin asignar)', newValue: exp.category || 'Sin asignar' },
+          { field: 'date', fieldLabel: 'Fecha del Comprobante', oldValue: '-', newValue: exp.date || '-' },
+          ...(exp.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura / Comprobante', oldValue: '-', newValue: exp.invoiceNumber }] : []),
+          ...(exp.cuit ? [{ field: 'cuit', fieldLabel: 'CUIT Emisor', oldValue: '-', newValue: exp.cuit }] : []),
+          ...(exp.paymentMethod ? [{ field: 'paymentMethod', fieldLabel: 'Medio de Pago', oldValue: '-', newValue: exp.paymentMethod }] : []),
+          ...(exp.paymentType ? [{ field: 'paymentType', fieldLabel: 'Tipo de Pago', oldValue: '-', newValue: exp.paymentType }] : []),
+          ...(exp.notes ? [{ field: 'notes', fieldLabel: 'Notas / Observaciones', oldValue: '-', newValue: exp.notes }] : []),
+          { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: exp.receiptImage ? (exp.receiptFileName || 'Comprobante adjunto') : 'Sin archivo' },
+        ],
+        metadata: {
+          amount: exp.amount,
+          currency: exp.currency,
+          vendor: exp.vendor,
+          project: exp.project,
+          category: exp.category,
+          invoiceNumber: exp.invoiceNumber,
+          hasReceipt: Boolean(exp.receiptImage),
+          submittedBy: exp.submittedByEmail || currentUser?.email,
+          batchUpload: true,
+        },
+      }).catch((e) => console.warn('Audit log error on batch expense item create:', e));
+    });
+
+    if (initializedExpenses.length > 1) {
+      const totalAmount = initializedExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+      logAuditEvent({
+        userEmail: currentUser?.email || initializedExpenses[0]?.submittedByEmail,
+        userName: currentUser?.name || initializedExpenses[0]?.submittedByName,
+        action: 'BATCH_CREATE',
+        actionLabel: 'Carga en Lote de Comprobantes',
+        entityType: 'expense',
+        entityId: `batch-${Date.now()}`,
+        entityName: `${initializedExpenses.length} comprobantes`,
+        summary: `Se cargaron ${initializedExpenses.length} comprobantes en lote por un monto total de ${formatCurrency(totalAmount)}.`,
+        metadata: {
+          count: initializedExpenses.length,
+          totalAmount,
+        },
+      }).catch((e) => console.warn('Audit log error on batch summary create:', e));
+    }
+
     showToast(`✅ ${initializedExpenses.length} comprobantes guardados exitosamente.`);
   };
 
   const handleUpdateExpense = async (updatedExpense: Expense) => {
+    const prevExpense = expenses.find((e) => e.id === updatedExpense.id);
     const timestamped: Expense = {
       ...updatedExpense,
       updatedAt: new Date().toISOString(),
@@ -1000,6 +1092,38 @@ export default function App() {
     }
     try {
       await upsertCentralExpenses([timestamped]);
+
+      const diffs = computeObjectDiff(prevExpense, timestamped, {
+        vendor: 'Proveedor',
+        amount: 'Monto',
+        currency: 'Moneda',
+        project: 'Centro de Costos',
+        category: 'Categoría',
+        date: 'Fecha del Comprobante',
+        invoiceNumber: 'N° Factura / Comprobante',
+        reimbursementStatus: 'Estado de Reintegro',
+        reimbursable: 'Aplica Reintegro',
+        paymentMethod: 'Medio de Pago',
+        paymentType: 'Tipo de Pago',
+        notes: 'Notas / Observaciones',
+        accountingNotes: 'Notas Contables',
+        cuit: 'CUIT Emisor',
+        recipientName: 'Nombre Receptor',
+        recipientCuit: 'CUIT Receptor',
+      });
+
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'EXPENSE_UPDATE',
+        actionLabel: 'Edición de Comprobante',
+        entityType: 'expense',
+        entityId: timestamped.id,
+        entityName: `${timestamped.vendor || 'Comprobante'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
+        summary: `Se actualizaron los datos del comprobante de "${timestamped.vendor || 'Comprobante'}".`,
+        changes: diffs.length > 0 ? diffs : undefined,
+      });
+
       showToast('✅ Comprobante actualizado correctamente.');
     } catch (err) {
       console.error('Error saving updated expense:', err);
@@ -1017,6 +1141,18 @@ export default function App() {
     }
     try {
       await upsertCentralExpenses([timestamped]);
+
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'WITHHOLDING_CERT',
+        actionLabel: 'Certificado de Retención',
+        entityType: 'expense',
+        entityId: timestamped.id,
+        entityName: `${timestamped.vendor || 'Comprobante'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
+        summary: `Se adjuntó certificado de retención para el comprobante de "${timestamped.vendor}".`,
+      });
+
       showToast(`📄 Certificado de retención guardado para ${timestamped.vendor}.`);
     } catch (err) {
       console.error('Error saving withholding cert:', err);
@@ -1072,6 +1208,26 @@ export default function App() {
 
     // Guardar en Firestore central (sin IA / sin OCR)
     upsertCentralExpenses([updatedExpense]);
+
+    // Registrar en auditoría el cambio de archivo
+    logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'REPLACE_RECEIPT',
+      actionLabel: 'Reemplazo de Foto de Comprobante',
+      entityType: 'expense',
+      entityId: targetExpense.id,
+      entityName: `${targetExpense.vendor} (${formatCurrency(targetExpense.amount, targetExpense.currency)})`,
+      summary: `Se reemplazó el archivo adjunto del comprobante de "${targetExpense.vendor}" por "${newFileName}".`,
+      changes: [
+        {
+          field: 'receiptFileName',
+          fieldLabel: 'Archivo Adjunto',
+          oldValue: targetExpense.receiptFileName || '(Anterior)',
+          newValue: newFileName,
+        },
+      ],
+    }).catch((e) => console.warn('Audit log error on replace receipt:', e));
 
     // Si el visor de comprobante estaba abierto con este gasto, refrescarlo
     if (viewingReceiptExpense && viewingReceiptExpense.id === targetExpense.id) {

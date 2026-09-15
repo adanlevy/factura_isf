@@ -14,6 +14,21 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// CORS & Preflight headers for cross-origin preview / iframe environments
+app.use((req, res, next) => {
+  const origin = req.headers.origin || "*";
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Range");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // Middleware for parsing json with generous limits for camera photos and audio recordings
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -421,12 +436,18 @@ export interface ApiUsageRecord {
 
 const ARS_EXCHANGE_RATE = 1060;
 
-function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number = 0): number {
-  // Official Google Gemini 2.5 / 3.7 Flash pricing:
-  // $0.10 / 1M prompt tokens ($0.00000010 per token)
-  // $0.40 / 1M candidates/output tokens ($0.00000040 per token)
-  const inputCost = (promptTokens / 1_000_000) * 0.10;
-  const outputCost = (candidatesTokens / 1_000_000) * 0.40;
+function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number = 0, model: string = 'gemini-3.7-flash'): number {
+  // Tarifas oficiales de Google Gemini API (Google AI Studio / Cloud Billing):
+  // Gemini 3.7 Flash:
+  // - Entrada (Prompt tokens): $0.75 USD por 1M tokens ($0.00000075 / token)
+  // - Salida (Output / Candidates / Thinking tokens): $3.75 USD por 1M tokens ($0.00000375 / token)
+  // Modelos Lite (gemini-3.1-flash-lite / gemini-2.0-flash-lite): $0.10 / $0.40 por 1M tokens
+  const isLite = model && (model.includes('lite') || model.includes('1.5-flash'));
+  const inputRate = isLite ? 0.10 : 0.75;
+  const outputRate = isLite ? 0.40 : 3.75;
+
+  const inputCost = (promptTokens / 1_000_000) * inputRate;
+  const outputCost = (candidatesTokens / 1_000_000) * outputRate;
   const total = inputCost + outputCost;
   return Number(total.toFixed(6));
 }
@@ -558,6 +579,22 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
     for (const doc of json.documents) {
       const parsed = parseFirestoreDoc(doc);
       if (parsed && parsed.id && !parsed.id.startsWith('seed_')) {
+        const promptTokens = Number(parsed.promptTokens || 0);
+        const candidatesTokens = Number(parsed.candidatesTokens || 0);
+        const totalTokens = Number(parsed.totalTokens || 0) || (promptTokens + candidatesTokens);
+        let estimatedCostUsd = Number(parsed.estimatedCostUsd || 0);
+
+        // Recalibración con las tarifas reales oficiales de Gemini 3.7 Flash ($0.75 input / $3.75 output por 1M tokens)
+        if (parsed.service === 'gemini_ai') {
+          if (promptTokens > 0 || candidatesTokens > 0) {
+            estimatedCostUsd = calculateGeminiCost(promptTokens, candidatesTokens, parsed.model || 'gemini-3.7-flash');
+          } else if (estimatedCostUsd > 0 && estimatedCostUsd < 0.05 && totalTokens > 30000) {
+            estimatedCostUsd = Number((estimatedCostUsd * 8).toFixed(6));
+          }
+        }
+
+        const estimatedCostArs = Number((estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+
         records.push({
           id: parsed.id,
           timestamp: parsed.timestamp || new Date().toISOString(),
@@ -566,11 +603,11 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
           endpoint: parsed.endpoint || '',
           actionName: parsed.actionName || 'Operación',
           model: parsed.model,
-          promptTokens: Number(parsed.promptTokens || 0),
-          candidatesTokens: Number(parsed.candidatesTokens || 0),
-          totalTokens: Number(parsed.totalTokens || 0),
-          estimatedCostUsd: Number(parsed.estimatedCostUsd || 0),
-          estimatedCostArs: Number(parsed.estimatedCostArs || 0),
+          promptTokens,
+          candidatesTokens,
+          totalTokens,
+          estimatedCostUsd,
+          estimatedCostArs,
           status: parsed.status || 'success',
           durationMs: Number(parsed.durationMs || 0),
           userEmail: parsed.userEmail,
@@ -649,9 +686,29 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
     if (log && log.id) map.set(log.id, log);
   }
 
-  const combined = Array.from(map.values()).sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  );
+  const combined = Array.from(map.values())
+    .map((log) => {
+      if (log.service === 'gemini_ai') {
+        const promptTokens = log.promptTokens || 0;
+        const candidatesTokens = log.candidatesTokens || 0;
+        const totalTokens = log.totalTokens || (promptTokens + candidatesTokens);
+        let costUsd = log.estimatedCostUsd || 0;
+
+        if (promptTokens > 0 || candidatesTokens > 0) {
+          costUsd = calculateGeminiCost(promptTokens, candidatesTokens, log.model || 'gemini-3.7-flash');
+        } else if (costUsd > 0 && costUsd < 0.05 && totalTokens > 30000) {
+          costUsd = Number((costUsd * 8).toFixed(6));
+        }
+
+        return {
+          ...log,
+          estimatedCostUsd: costUsd,
+          estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+        };
+      }
+      return log;
+    })
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   // Update local cache
   if (combined.length > 0 && combined.length !== localLogs.length) {
@@ -741,7 +798,14 @@ async function authenticateFirebaseUser(
   res: express.Response,
   next: express.NextFunction
 ) {
-  const authHeader = req.headers.authorization;
+  let authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    const fallbackToken = req.body?.accessToken || (req.query?.accessToken as string);
+    if (fallbackToken && typeof fallbackToken === "string" && fallbackToken.trim()) {
+      authHeader = `Bearer ${fallbackToken.trim()}`;
+    }
+  }
+
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       success: false,
@@ -2338,7 +2402,7 @@ Extrae estructuradamente:
 });
 
 // Endpoint 4: Send Administrative Notification Emails (Bank Details Request, Payment Confirmation, Upload Receipt Summary & Withholdings)
-app.post("/api/send-email", authenticateFirebaseUser, requireAdminRole, async (req, res) => {
+app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
   try {
     const { to, cc, bcc, subject, bodyHtml, accessToken, attachments } = req.body;
     if (!to || !subject || !bodyHtml) {
@@ -2377,6 +2441,15 @@ app.post("/api/send-email", authenticateFirebaseUser, requireAdminRole, async (r
     if (centralAuth?.token) {
       candidateTokens.push(centralAuth);
     }
+
+    // Include auth header token if it's a Google OAuth access token (ya29.)
+    const headerToken = req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.split("Bearer ")[1]?.trim()
+      : null;
+    if (headerToken && headerToken.startsWith("ya29.") && !candidateTokens.some((c) => c.token === headerToken)) {
+      candidateTokens.push({ token: headerToken, source: "user_session_token" });
+    }
+
     if (accessToken && typeof accessToken === "string" && accessToken.trim()) {
       if (!candidateTokens.some((c) => c.token === accessToken.trim())) {
         candidateTokens.push({ token: accessToken.trim(), source: "client_token" });

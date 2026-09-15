@@ -284,7 +284,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <p className="text-slate-600 text-xs">Orientativo para administradores técnicos. Frontend React + TypeScript, backend Express que centraliza los servicios de Google; datos en Firebase Firestore.</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {[
-                ['🤖 IA — Google Gemini', 'Lee facturas (OCR), constancias, audio y texto. Modelo gemini-3.7-flash con respaldo. ~US$0,10/millón de tokens de entrada y ~US$0,40/salida.'],
+                ['🤖 IA — Google Gemini', 'Lee facturas (OCR), constancias, audio y texto. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
                 ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
                 ['✉️ Correos — Gmail API', 'Plantillas HTML institucionales. El CC automático combina usuarios «copiar en todo», emails del centro de costos y CC explícito.'],
                 ['☁️ Datos — Firestore', 'Centralizado y en tiempo real. Los archivos binarios nunca se guardan en Firestore, solo en Drive; en la base van los datos livianos y los enlaces.'],
