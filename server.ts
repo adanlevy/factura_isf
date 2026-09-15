@@ -602,6 +602,97 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
   return combined;
 }
 
+// ==========================================
+// SERVER-SIDE RBAC & AUTH CONFIGURATION
+// ==========================================
+// Bootstrap admin emails managed in server environment configuration (not hardcoded in client bundle)
+const BOOTSTRAP_ADMIN_EMAILS = (
+  process.env.ADMIN_EMAILS ||
+  process.env.BOOTSTRAP_ADMIN_EMAILS ||
+  'admin@isf-argentina.org,alevy@isf-argentina.org,finanzas@isf-argentina.org,adanlevy@gmail.com'
+)
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'user' | null; canSwitchRole: boolean }> {
+  if (!email) return { role: null, canSwitchRole: false };
+  const cleanEmail = email.toLowerCase().trim();
+
+  // 1. Check in Firestore REST app_users document
+  if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+    const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+    try {
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
+      const res = await fetch(docUrl);
+      if (res.ok) {
+        const json = await res.json();
+        const role = json.fields?.role?.stringValue;
+        if (role === 'admin' || role === 'user') {
+          return { role, canSwitchRole: role === 'admin' };
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 2. Check local server app_users cache
+  const localUsers = readCollection<any[]>('app-users', []);
+  const found = localUsers.find((u) => (u.email || '').toLowerCase().trim() === cleanEmail);
+  if (found && (found.role === 'admin' || found.role === 'user')) {
+    return { role: found.role, canSwitchRole: found.role === 'admin' };
+  }
+
+  // 3. Fallback to bootstrap admin emails configured in environment
+  if (BOOTSTRAP_ADMIN_EMAILS.includes(cleanEmail)) {
+    return { role: 'admin', canSwitchRole: true };
+  }
+
+  return { role: null, canSwitchRole: false };
+}
+
+// Endpoint: Resolve user role on server side
+app.post("/api/auth/resolve-role", async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await resolveRoleForEmail(email);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Error resolving role' });
+  }
+});
+
+// Endpoint: Fetch bootstrap admin list from server config
+app.get("/api/auth/bootstrap-admins", (_req, res) => {
+  res.json({ admins: BOOTSTRAP_ADMIN_EMAILS });
+});
+
+// Ensure bootstrap admins are seeded into Firestore app_users on server boot
+async function ensureBootstrapAdmins() {
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
+  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+  for (const email of BOOTSTRAP_ADMIN_EMAILS) {
+    try {
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(email)}?key=${firebaseConfigData.apiKey}`;
+      const checkRes = await fetch(docUrl);
+      if (!checkRes.ok) {
+        await fetch(docUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fields: {
+              email: { stringValue: email },
+              name: { stringValue: email.split('@')[0] },
+              role: { stringValue: 'admin' },
+              createdAt: { stringValue: new Date().toISOString() },
+            },
+          }),
+        });
+      }
+    } catch (_) {}
+  }
+}
+setTimeout(() => ensureBootstrapAdmins().catch(() => {}), 2000);
+
 // Endpoint: Clear API logs
 app.post("/api/system/clear-logs", async (_req, res) => {
   try {
@@ -1104,7 +1195,105 @@ app.post("/api/data/user-prefs", (req, res) => {
   res.json({ success: saved, email: normalizedEmail, data: allPrefs[normalizedEmail] });
 });
 
-// 6. BULK SYNC / INITIAL HYDRATION
+// 6. APP USERS COLLECTION (Gestión de usuarios y roles)
+app.get("/api/data/users", async (_req, res) => {
+  try {
+    let users = readCollection<any[]>("app-users", []);
+    // Fetch from Firestore if available
+    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+      try {
+        const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users?pageSize=100&key=${firebaseConfigData.apiKey}`;
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.documents && Array.isArray(json.documents)) {
+            const remoteUsers = json.documents.map((d: any) => {
+              const f = d.fields || {};
+              return {
+                email: f.email?.stringValue || d.name.split('/').pop(),
+                name: f.name?.stringValue || '',
+                role: f.role?.stringValue || 'user',
+                picture: f.picture?.stringValue,
+                createdAt: f.createdAt?.stringValue,
+                updatedAt: f.updatedAt?.stringValue,
+              };
+            });
+            if (remoteUsers.length > 0) {
+              users = remoteUsers;
+              writeCollection("app-users", users);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    res.json({ success: true, count: users.length, data: users });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/data/users", async (req, res) => {
+  try {
+    const user = req.body;
+    if (!user || !user.email) {
+      return res.status(400).json({ success: false, error: "Email es requerido para guardar usuario." });
+    }
+    const cleanEmail = user.email.toLowerCase().trim();
+    const existing = readCollection<any[]>("app-users", []);
+    const updated = mergeById(existing, [{ ...user, email: cleanEmail }]);
+    writeCollection("app-users", updated);
+
+    // Sync to Firestore REST
+    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
+      const fields: Record<string, any> = {
+        email: { stringValue: cleanEmail },
+        name: { stringValue: user.name || '' },
+        role: { stringValue: user.role || 'user' },
+        updatedAt: { stringValue: new Date().toISOString() },
+      };
+      if (user.picture) fields.picture = { stringValue: user.picture };
+      if (user.notes) fields.notes = { stringValue: user.notes };
+      if (user.createdAt) fields.createdAt = { stringValue: user.createdAt };
+      await fetch(docUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      }).catch(() => {});
+    }
+
+    res.json({ success: true, user: { ...user, email: cleanEmail } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/data/users/delete", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email requerido para borrar usuario." });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = readCollection<any[]>("app-users", []);
+    const remaining = existing.filter((u) => (u.email || '').toLowerCase().trim() !== cleanEmail);
+    writeCollection("app-users", remaining);
+
+    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
+      await fetch(docUrl, { method: 'DELETE' }).catch(() => {});
+    }
+
+    res.json({ success: true, email: cleanEmail });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. BULK SYNC / INITIAL HYDRATION
 app.get("/api/data/sync", (_req, res) => {
   const expenses = readCollection<any[]>("expenses", []);
   const vendors = readCollection<any[]>("vendors", []);

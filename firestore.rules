@@ -2,44 +2,150 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // Core authentication and identity helpers
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email != null;
     }
 
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isRegisteredUser() {
+      return isSignedIn() && exists(/databases/$(database)/documents/app_users/$(userEmail()));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/app_users/$(userEmail())).data;
+    }
+
+    function isBootstrapAdmin() {
+      return isSignedIn() && request.auth.token.email.lower() in [
+        'admin@isf-argentina.org',
+        'alevy@isf-argentina.org',
+        'finanzas@isf-argentina.org',
+        'adanlevy@gmail.com'
+      ];
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (isRegisteredUser() && getUserData().role == 'admin');
+    }
+
+    function isColaborador() {
+      return isBootstrapAdmin() || (isRegisteredUser() && (getUserData().role == 'user' || getUserData().role == 'admin'));
+    }
+
+    // Default deny for all unspecified collections and unauthenticated visitors
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Expenses collection:
+    // - Authenticated users can read expenses
+    // - Colaboradores can create/update their own expenses
+    // - Only Admins can delete expenses or approve/pay them
     match /expenses/{expenseId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (
+          isColaborador() &&
+          (
+            !('submittedByEmail' in request.resource.data) ||
+            request.resource.data.submittedByEmail.lower() == userEmail() ||
+            request.resource.data.userEmail.lower() == userEmail()
+          )
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          isColaborador() &&
+          (
+            resource.data.submittedByEmail.lower() == userEmail() ||
+            resource.data.userEmail.lower() == userEmail()
+          )
+        )
+      );
+
+      allow delete: if isAdmin();
     }
 
+    // Vendors catalog (contains sensitive banking details: CBU, Alias, CUIT):
+    // - Authenticated users can read vendors for invoice association
+    // - Colaboradores can register a new vendor during expense submission
+    // - Only Admins can modify existing vendors or delete them
     match /vendors/{vendorId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if isColaborador();
+      allow update, delete: if isAdmin();
     }
 
+    // Cost centers and projects:
+    // - Authenticated users can read cost centers
+    // - Only Admins can manage cost centers
     match /cost_centers/{costCenterId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
+    // Accounting categories:
+    // - Authenticated users can read categories
+    // - Only Admins can manage categories
     match /categories/{categoryId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
+    // User preferences:
+    // - Users can read and write their own UI preferences; Admins can access as well
     match /user_preferences/{prefId} {
-      allow read, write: if true;
+      allow read, write: if isSignedIn() && (
+        userEmail() == prefId.lower() || isAdmin()
+      );
     }
 
-    match /app_users/{userEmail} {
-      allow read, write: if true;
+    // App users and role management:
+    // - Authenticated users can read users to synchronize roles and directory
+    // - Only Admins can create, delete, or alter roles
+    // - Users can update their own display name or picture, but cannot escalate their role
+    match /app_users/{userDocId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        (userEmail() == userDocId || (resource != null && resource.data.email.lower() == userEmail())) &&
+        request.resource.data.role == resource.data.role
+      );
     }
 
+    // Audit logs:
+    // - Admins can read full audit logs
+    // - Any signed-in user can append audit entries
+    // - Only Admins can delete or alter audit history
     match /audit_logs/{logId} {
-      allow read, write: if true;
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
     }
 
+    // API usage logs:
+    // - Admins can read API logs and consumption metrics
+    // - Any signed-in user can record API calls
+    // - Only Admins can reset or delete logs
     match /api_usage_logs/{logId} {
-      allow read, write: if true;
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
     }
 
+    // System health diagnostics:
+    // - Signed-in users can read and write ping telemetry
     match /system_health/{docId} {
-      allow read, write: if true;
+      allow read, write: if isSignedIn();
     }
   }
 }

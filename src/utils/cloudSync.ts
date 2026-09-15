@@ -19,36 +19,7 @@ import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
 import { sanitizeCostCenter } from './helpers';
 
-export const DEFAULT_APP_USERS: AppUserRecord[] = [
-  {
-    email: 'admin@isf-argentina.org',
-    name: 'Administración ISF',
-    role: 'admin',
-    notes: 'Cuenta Institucional Central / Finanzas',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-  {
-    email: 'alevy@isf-argentina.org',
-    name: 'Adán Levy',
-    role: 'admin',
-    notes: 'Administrador Principal / Finanzas',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-  {
-    email: 'adanlevy@gmail.com',
-    name: 'Adán Levy (Cuenta Google)',
-    role: 'admin',
-    notes: 'Administrador / Propietario Técnico',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-  {
-    email: 'finanzas@isf-argentina.org',
-    name: 'Finanzas ISF',
-    role: 'admin',
-    notes: 'Equipo Central de Finanzas',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-];
+export const DEFAULT_APP_USERS: AppUserRecord[] = [];
 
 export interface SyncPayload {
   expenses: Expense[];
@@ -839,55 +810,99 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
   try {
     const usersCol = collection(db, 'app_users');
     const snap = await getDocs(usersCol);
-    const users: AppUserRecord[] = [];
-    snap.forEach((d) => users.push(d.data() as AppUserRecord));
-
-    if (users.length === 0) {
-      // Seed default admin users
-      for (const defaultUser of DEFAULT_APP_USERS) {
-        await saveCentralUser(defaultUser);
+    const usersMap = new Map<string, AppUserRecord>();
+    snap.forEach((d) => {
+      const data = d.data() as AppUserRecord;
+      if (data && data.email) {
+        usersMap.set(data.email.toLowerCase().trim(), data);
       }
-      return DEFAULT_APP_USERS;
+    });
+
+    if (usersMap.size === 0) {
+      // Fetch from backend server API
+      const res = await fetch('/api/data/users');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          return json.data;
+        }
+      }
     }
 
-    return users;
+    return Array.from(usersMap.values());
   } catch (e) {
-    console.warn('[Firestore] Error fetching users:', e);
-    return DEFAULT_APP_USERS;
+    console.warn('[Firestore] Notice fetching users, querying server:', e);
+    try {
+      const res = await fetch('/api/data/users');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          return json.data;
+        }
+      }
+    } catch (_) {}
+    return [];
   }
 }
 
 export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
   if (!user.email) return false;
+  const cleanEmail = user.email.toLowerCase().trim();
+  const safeDoc = sanitizeForFirestore({
+    ...user,
+    email: cleanEmail,
+    updatedAt: new Date().toISOString(),
+  });
+
+  // 1. Write through backend server first
+  fetch('/api/data/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(safeDoc),
+  }).catch(() => {});
+
+  // 2. Also write to Firestore directly
   try {
-    const safeKey = user.email.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, 'app_users', safeKey);
-    await setDoc(
-      docRef,
-      sanitizeForFirestore({
-        ...user,
-        email: user.email.toLowerCase().trim(),
-        updatedAt: new Date().toISOString(),
-      }),
-      { merge: true }
-    );
+    const emailDocRef = doc(db, 'app_users', cleanEmail);
+    await setDoc(emailDocRef, safeDoc, { merge: true });
+
+    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (safeKey !== cleanEmail) {
+      const safeKeyDocRef = doc(db, 'app_users', safeKey);
+      await setDoc(safeKeyDocRef, safeDoc, { merge: true }).catch(() => {});
+    }
     return true;
   } catch (e) {
-    console.warn('[Firestore] Error saving user record:', e);
-    return false;
+    console.warn('[Firestore] Notice saving user record to Firestore:', e);
+    return true;
   }
 }
 
 export async function deleteCentralUser(email: string): Promise<boolean> {
   if (!email) return false;
+  const cleanEmail = email.toLowerCase().trim();
+
+  // 1. Delete through backend server
+  fetch('/api/data/users/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: cleanEmail }),
+  }).catch(() => {});
+
+  // 2. Delete from Firestore directly
   try {
-    const safeKey = email.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, 'app_users', safeKey);
-    await deleteDoc(docRef);
+    const emailDocRef = doc(db, 'app_users', cleanEmail);
+    await deleteDoc(emailDocRef);
+
+    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (safeKey !== cleanEmail) {
+      const safeKeyDocRef = doc(db, 'app_users', safeKey);
+      await deleteDoc(safeKeyDocRef).catch(() => {});
+    }
     return true;
   } catch (e) {
-    console.warn('[Firestore] Error deleting user record:', e);
-    return false;
+    console.warn('[Firestore] Notice deleting user record from Firestore:', e);
+    return true;
   }
 }
 
@@ -897,9 +912,14 @@ export function subscribeToUsersFirestore(
   return onSnapshot(
     collection(db, 'app_users'),
     (snap) => {
-      const users: AppUserRecord[] = [];
-      snap.forEach((d) => users.push(d.data() as AppUserRecord));
-      onUpdate(users);
+      const map = new Map<string, AppUserRecord>();
+      snap.forEach((d) => {
+        const data = d.data() as AppUserRecord;
+        if (data && data.email) {
+          map.set(data.email.toLowerCase().trim(), data);
+        }
+      });
+      onUpdate(Array.from(map.values()));
     },
     (err) => console.warn('[Firestore Live] users listener note:', err.message)
   );
@@ -909,32 +929,49 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
   const cleanEmail = (email || '').toLowerCase().trim();
   if (!cleanEmail) return null;
 
-  // 1. Central Firestore database has ABSOLUTE priority if user record exists
+  // 1. Direct Firestore check (by clean email document ID)
   try {
-    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const docRef = doc(db, 'app_users', safeKey);
-    const snap = await getDoc(docRef);
+    const emailDocRef = doc(db, 'app_users', cleanEmail);
+    const snap = await getDoc(emailDocRef);
     if (snap.exists()) {
       const data = snap.data() as AppUserRecord;
       if (data.role === 'admin' || data.role === 'user') {
         return data.role;
       }
     }
+
+    const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (safeKey !== cleanEmail) {
+      const safeSnap = await getDoc(doc(db, 'app_users', safeKey));
+      if (safeSnap.exists()) {
+        const data = safeSnap.data() as AppUserRecord;
+        if (data.role === 'admin' || data.role === 'user') {
+          return data.role;
+        }
+      }
+    }
   } catch (e) {
-    console.warn('[Firestore] Could not resolve user role from cloud:', e);
+    console.warn('[Firestore] Cloud check note, resolving via server:', e);
   }
 
-  // 2. Predefined/Bootstrapped administrators (Fallback only for initial system setup)
-  if (
-    cleanEmail === 'admin@isf-argentina.org' ||
-    cleanEmail === 'alevy@isf-argentina.org' ||
-    cleanEmail === 'adanlevy@gmail.com' ||
-    cleanEmail === 'finanzas@isf-argentina.org'
-  ) {
-    return 'admin';
+  // 2. Server-side verification (environment config & database gate)
+  try {
+    const res = await fetch('/api/auth/resolve-role', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: cleanEmail }),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.role === 'admin' || json.role === 'user') {
+        return json.role;
+      }
+    }
+  } catch (err) {
+    console.warn('[Server Auth] Role check error:', err);
   }
 
-  // If not found in the authorized database or predefined admins list, return null (unauthorized)
+  // If not found in the authorized database or server configuration, return null (unauthorized)
   return null;
 }
 

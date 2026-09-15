@@ -1703,22 +1703,14 @@ export default function App() {
   const canSwitchRole = useMemo(() => {
     if (!currentUser?.email) return false;
     const cleanEmail = currentUser.email.toLowerCase().trim();
-    // 1. Central Firestore record in appUsers has ABSOLUTE priority
+    // 1. Central record in appUsers has absolute priority
     const record = appUsers.find((u) => u.email.toLowerCase().trim() === cleanEmail);
     if (record && record.role) {
       return record.role === 'admin';
     }
-    // 2. Fallback only if not yet registered in Firestore
-    if (
-      cleanEmail === 'admin@isf-argentina.org' ||
-      cleanEmail === 'alevy@isf-argentina.org' ||
-      cleanEmail === 'adanlevy@gmail.com' ||
-      cleanEmail === 'finanzas@isf-argentina.org'
-    ) {
-      return true;
-    }
-    return false;
-  }, [currentUser?.email, appUsers]);
+    // 2. Profile role established by backend authentication check
+    return currentUser.role === 'admin';
+  }, [currentUser?.email, currentUser?.role, appUsers]);
 
   const handleSwitchUserRole = (role: 'admin' | 'user') => {
     if (!currentUser) return;

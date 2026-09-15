@@ -2,9 +2,9 @@
  * Application Version & Build Tracking
  * Incremental versioning with semantic release tags and build timestamps.
  */
-export const APP_VERSION = '2.6.1';
-export const APP_BUILD_DATE = '2026.09.14';
-export const APP_BUILD_ID = 'build-20260914-rolesync';
+export const APP_VERSION = '2.7.0';
+export const APP_BUILD_DATE = '2026.09.15';
+export const APP_BUILD_ID = 'build-20260915-security-gate';
 
 export interface VersionInfo {
   version: string;

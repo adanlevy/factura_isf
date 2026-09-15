@@ -13,6 +13,8 @@ import { UserProfile } from '../types';
 import { FacturaAppIcon } from './FacturaIcon';
 import { requestGoogleWorkspaceAuth, getGoogleClientId, saveGoogleClientId } from '../utils/googleWorkspace';
 import { resolveUserRoleFromEmail, saveCentralUser } from '../utils/cloudSync';
+import { signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from '../lib/firebase';
 
 interface UserLoginGateProps {
   onLogin: (user: UserProfile) => void;
@@ -99,6 +101,17 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
         }
 
         const displayName = res.user.name || userEmail.split('@')[0];
+
+        // Ensure user is signed into Firebase Auth with the Google credential
+        if (res.accessToken) {
+          try {
+            const credential = GoogleAuthProvider.credential(null, res.accessToken);
+            await signInWithCredential(auth, credential);
+            console.log('[Firebase Auth] Authenticated as:', auth.currentUser?.email);
+          } catch (authErr) {
+            console.warn('[Firebase Auth] Notice on credential sign in:', authErr);
+          }
+        }
 
         // Register/update user in Firestore since they are authorized
         saveCentralUser({
