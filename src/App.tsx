@@ -26,6 +26,8 @@ import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
+import { signOut } from 'firebase/auth';
+import { auth } from './lib/firebase';
 import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
@@ -1776,6 +1778,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    signOut(auth).catch(console.warn);
     saveStoredAuth(null);
     saveStoredWorkspaceToken(null);
     setCurrentUser(null);

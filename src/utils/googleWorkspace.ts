@@ -4,6 +4,8 @@ import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
 import { syncApiLogToCloud } from './apiUsageLogger';
 import { authFetch } from './authFetch';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from '../lib/firebase';
 
 const CUSTOM_CLIENT_ID_KEY = 'isf_custom_google_client_id';
 const DEFAULT_CLIENT_ID =
@@ -87,57 +89,37 @@ export function getStoredWorkspaceUser(): GoogleWorkspaceUser | null {
 /**
  * Initiates the Google OAuth popup to request permissions for Gmail and Google Drive
  */
-export function requestGoogleWorkspaceAuth(): Promise<{ accessToken: string; user?: GoogleWorkspaceUser }> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !window.google || !window.google.accounts || !window.google.accounts.oauth2) {
-      return reject(
-        new Error('El cliente de Google Identity Services no está listo aún. Por favor espera un momento y vuelve a intentar.')
-      );
+export async function requestGoogleWorkspaceAuth(): Promise<{ accessToken: string; user?: GoogleWorkspaceUser }> {
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    provider.addScope('email');
+    provider.addScope('profile');
+
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const accessToken = credential?.accessToken || '';
+    if (accessToken) {
+      saveStoredWorkspaceToken(accessToken);
     }
 
-    try {
-      const currentClientId = getGoogleClientId();
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: currentClientId,
-        scope: GOOGLE_SCOPES,
-        callback: async (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            console.error('Google OAuth error:', tokenResponse);
-            return reject(new Error(tokenResponse.error_description || tokenResponse.error));
-          }
+    const user: GoogleWorkspaceUser = {
+      email: result.user.email || '',
+      name: result.user.displayName || (result.user.email ? result.user.email.split('@')[0] : ''),
+      picture: result.user.photoURL || undefined,
+    };
 
-          const accessToken = tokenResponse.access_token;
-          saveStoredWorkspaceToken(accessToken);
-
-          // Attempt to fetch user profile info
-          let user: GoogleWorkspaceUser | undefined;
-          try {
-            const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            if (userInfoRes.ok) {
-              const userInfo = await userInfoRes.json();
-              user = {
-                email: userInfo.email,
-                name: userInfo.name || userInfo.email.split('@')[0],
-                picture: userInfo.picture,
-              };
-              localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-            }
-          } catch (fetchErr) {
-            console.warn('Could not fetch Google user info:', fetchErr);
-          }
-
-          resolve({ accessToken, user });
-        },
-      });
-
-      client.requestAccessToken({ prompt: 'select_account' });
-    } catch (err: any) {
-      console.error('Error initializing Google token client:', err);
-      reject(err);
+    if (user.email) {
+      try {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+      } catch {}
     }
-  });
+
+    return { accessToken, user };
+  } catch (err: any) {
+    console.error('Error in requestGoogleWorkspaceAuth:', err);
+    throw err;
+  }
 }
 
 /**

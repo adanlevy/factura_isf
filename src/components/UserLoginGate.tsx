@@ -11,10 +11,11 @@ import {
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { FacturaAppIcon } from './FacturaIcon';
-import { requestGoogleWorkspaceAuth, getGoogleClientId, saveGoogleClientId } from '../utils/googleWorkspace';
+import { getGoogleClientId, saveGoogleClientId, saveStoredWorkspaceToken } from '../utils/googleWorkspace';
 import { resolveUserRoleFromEmail, saveCentralUser } from '../utils/cloudSync';
-import { signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 interface UserLoginGateProps {
   onLogin: (user: UserProfile) => void;
@@ -33,11 +34,34 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const currentClientId = getGoogleClientId();
 
+  // Auto-restore session if Firebase Auth already has an authenticated user
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email) {
+        const userEmail = firebaseUser.email.toLowerCase().trim();
+        try {
+          const detectedRole = await resolveUserRoleFromEmail(userEmail);
+          if (detectedRole) {
+            const displayName = firebaseUser.displayName || userEmail.split('@')[0];
+            onLogin({
+              name: displayName,
+              email: userEmail,
+              picture: firebaseUser.photoURL || undefined,
+              role: detectedRole,
+            });
+          }
+        } catch (e) {
+          console.warn('[UserLoginGate] No se pudo restaurar la sesión automáticamente:', e);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [onLogin]);
+
   // Recover from closed or cancelled Google popup
   useEffect(() => {
     const handleWindowFocus = () => {
       if (isGoogleLoading) {
-        // Give a brief moment for any pending callback, then release the loading/disabled state
         const timer = setTimeout(() => {
           setIsGoogleLoading(false);
         }, 1200);
@@ -87,66 +111,75 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
     setIsOriginMismatch(false);
 
     try {
-      const res = await requestGoogleWorkspaceAuth();
-      if (res.user && res.user.email) {
-        const userEmail = res.user.email.toLowerCase().trim();
-        const detectedRole = await resolveUserRoleFromEmail(userEmail);
+      // Direct Firebase Auth Google Sign-In popup with project audience
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      provider.addScope('email');
+      provider.addScope('profile');
 
-        if (!detectedRole) {
-          setErrorMsg(
-            `Acceso denegado: El correo "${userEmail}" no está habilitado como colaborador o administrador. Por favor, solicita a un administrador que te agregue en el panel de gestión de usuarios.`
-          );
-          setIsGoogleLoading(false);
-          return;
-        }
+      const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
 
-        const displayName = res.user.name || userEmail.split('@')[0];
-
-        // Ensure user is signed into Firebase Auth with the Google credential
-        if (!res.accessToken) {
-          setErrorMsg('No se obtuvo el token de acceso de Google. Por favor, reintenta iniciar sesión.');
-          setIsGoogleLoading(false);
-          return;
-        }
-
-        try {
-          const credential = GoogleAuthProvider.credential(null, res.accessToken);
-          const userCred = await signInWithCredential(auth, credential);
-          if (!userCred.user) {
-            throw new Error('Firebase Auth no retornó un usuario válido.');
-          }
-          console.log('[Firebase Auth] Sesión autenticada como:', userCred.user.email);
-        } catch (authErr: any) {
-          console.error('[Firebase Auth] Error crítico al autenticar credencial:', authErr);
-          const detail = authErr?.message || 'Error en Firebase Auth';
-          setErrorMsg(
-            `Fallo de autenticación segura: No se pudo validar la sesión en Firebase (${detail}). El acceso fue bloqueado para evitar rechazos de permisos en Firestore. Por favor, recarga y vuelve a intentar.`
-          );
-          setIsGoogleLoading(false);
-          return;
-        }
-
-        // Register/update user in Firestore since they are authorized
-        saveCentralUser({
-          email: userEmail,
-          name: displayName,
-          picture: res.user.picture,
-          role: detectedRole,
-        }).catch(console.warn);
-
-        onLogin({
-          name: displayName,
-          email: userEmail,
-          picture: res.user.picture,
-          role: detectedRole,
-        });
-      } else {
-        setErrorMsg('No se pudo obtener la identidad de Google. Por favor, selecciona tu cuenta para continuar.');
+      if (!firebaseUser || !firebaseUser.email) {
+        throw new Error('No se pudo obtener la cuenta de Google desde Firebase Auth.');
       }
+
+      const userEmail = firebaseUser.email.toLowerCase().trim();
+      const detectedRole = await resolveUserRoleFromEmail(userEmail);
+
+      if (!detectedRole) {
+        await signOut(auth);
+        setErrorMsg(
+          `Acceso denegado: El correo "${userEmail}" no está habilitado como colaborador o administrador. Por favor, solicita a un administrador que te agregue en el panel de gestión de usuarios.`
+        );
+        setIsGoogleLoading(false);
+        return;
+      }
+
+      const displayName = firebaseUser.displayName || userEmail.split('@')[0];
+      const picture = firebaseUser.photoURL || undefined;
+
+      // Extract and cache Google Workspace access token if provided
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        saveStoredWorkspaceToken(credential.accessToken);
+      }
+
+      // Register or update user record in Firestore
+      saveCentralUser({
+        email: userEmail,
+        name: displayName,
+        picture,
+        role: detectedRole,
+      }).catch(console.warn);
+
+      onLogin({
+        name: displayName,
+        email: userEmail,
+        picture,
+        role: detectedRole,
+      });
     } catch (err: any) {
       console.warn('Google login notice:', err);
+      const code = err?.code || '';
       const rawError = (err?.message || '').toLowerCase();
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setIsGoogleLoading(false);
+        return;
+      }
+
+      if (code === 'auth/popup-blocked') {
+        setErrorMsg(
+          'El navegador bloqueó la ventana emergente de inicio de sesión. Por favor, permite ventanas emergentes para este sitio o abre la aplicación en una pestaña nueva.'
+        );
+        setIsGoogleLoading(false);
+        return;
+      }
+
       const isMismatch =
+        code === 'auth/unauthorized-domain' ||
+        rawError.includes('unauthorized domain') ||
         rawError.includes('origin_mismatch') ||
         rawError.includes('400') ||
         rawError.includes('origen de javascript') ||
@@ -155,10 +188,10 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
       if (isMismatch) {
         setIsOriginMismatch(true);
         setErrorMsg(
-          'Error 400: origin_mismatch. El dominio de este navegador no está en los "Orígenes de JavaScript autorizados" en Google Cloud Console. Puedes registrar el origen o reintentar.'
+          `Dominio no autorizado en Firebase Auth (${currentOrigin}). Para autorizarlo, ve a Firebase Console > Authentication > Settings > Authorized domains y agrega "${currentOrigin}".`
         );
       } else {
-        setErrorMsg(err.message || 'Error al conectar con Google. Por favor intenta nuevamente.');
+        setErrorMsg(err?.message || 'Error al iniciar sesión con Google.');
       }
     } finally {
       setIsGoogleLoading(false);
