@@ -218,7 +218,7 @@ export async function fetchCentralAuditLogs(maxCount = 250): Promise<AuditLogEnt
 }
 
 /**
- * Real-time Subscription for audit logs (hybrid Server Poll + Firestore)
+ * Real-time Subscription for audit logs via Firestore onSnapshot
  */
 export function subscribeToAuditLogs(
   onUpdate: (logs: AuditLogEntry[]) => void,
@@ -233,17 +233,7 @@ export function subscribeToAuditLogs(
     }
   });
 
-  // Periodic poll to server for real-time updates across multiple tabs/devices
-  const pollInterval = setInterval(() => {
-    if (!isSubscribed) return;
-    fetchCentralAuditLogs(maxCount).then((logs) => {
-      if (isSubscribed) {
-        onUpdate(logs);
-      }
-    }).catch(() => {});
-  }, 4000);
-
-  // Also listen to Firestore live snapshot if available
+  // Real-time Firestore snapshot listener
   let unsubFirestore: (() => void) | null = null;
   try {
     unsubFirestore = onSnapshot(
@@ -266,7 +256,6 @@ export function subscribeToAuditLogs(
 
   return () => {
     isSubscribed = false;
-    clearInterval(pollInterval);
     if (unsubFirestore) {
       unsubFirestore();
     }

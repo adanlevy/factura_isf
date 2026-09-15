@@ -36,6 +36,16 @@ interface ExpenseListProps {
   onOpenNewModal: () => void;
   onDeleteExpense?: (id: string) => void;
   onReplaceReceipt?: (expense: Expense) => void;
+  // Server-side query filtering & pagination
+  queryPeriod?: string;
+  onPeriodChange?: (period: string) => void;
+  queryCostCenter?: string;
+  onCostCenterChange?: (costCenter: string) => void;
+  queryLimit?: number;
+  onLimitChange?: (limit: number) => void;
+  hasMoreExpenses?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export function ExpenseList({
@@ -48,11 +58,41 @@ export function ExpenseList({
   onOpenNewModal,
   onDeleteExpense,
   onReplaceReceipt,
+  queryPeriod = 'currentYear',
+  onPeriodChange,
+  queryCostCenter = 'ALL',
+  onCostCenterChange,
+  queryLimit = 50,
+  onLimitChange,
+  hasMoreExpenses = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: ExpenseListProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [periodFilter, setPeriodFilter] = useState<'all' | '30days' | 'currentYear'>('all');
+  const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('currentYear');
+  const [localCostCenterFilter, setLocalCostCenterFilter] = useState<string>('ALL');
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
   const [sortConfig, setSortConfig] = useState<ExpenseSortConfig>({ field: 'createdAt', direction: 'desc' });
+
+  // Effective period & cost center filters (server-side query if handler passed, otherwise local)
+  const activePeriod = onPeriodChange ? queryPeriod : localPeriodFilter;
+  const activeCostCenter = onCostCenterChange ? queryCostCenter : localCostCenterFilter;
+
+  const handlePeriodSelect = (val: string) => {
+    if (onPeriodChange) {
+      onPeriodChange(val);
+    } else {
+      setLocalPeriodFilter(val as any);
+    }
+  };
+
+  const handleCostCenterSelect = (val: string) => {
+    if (onCostCenterChange) {
+      onCostCenterChange(val);
+    } else {
+      setLocalCostCenterFilter(val);
+    }
+  };
 
   const handleSort = (field: ExpenseSortField) => {
     setSortConfig((prev) => {
@@ -91,15 +131,23 @@ export function ExpenseList({
     const term = searchTerm.toLowerCase().trim();
 
     const matching = [...userExpenses].filter((e) => {
-      // Period filter
-      if (periodFilter === '30days') {
+      // Local period filter (in case not filtered server-side)
+      if (activePeriod === '30days') {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
         if (e.date && e.date < minDateStr) return false;
-      } else if (periodFilter === 'currentYear') {
+      } else if (activePeriod === 'currentYear') {
         const currentYear = new Date().getFullYear().toString();
         if (e.date && !e.date.startsWith(currentYear)) return false;
+      } else if (activePeriod === 'lastYear') {
+        const prevYear = (new Date().getFullYear() - 1).toString();
+        if (e.date && !e.date.startsWith(prevYear)) return false;
+      }
+
+      // Local cost center filter
+      if (activeCostCenter && activeCostCenter !== 'ALL') {
+        if (e.project !== activeCostCenter) return false;
       }
 
       // Search term filter
@@ -126,7 +174,7 @@ export function ExpenseList({
     });
 
     return sortExpenses(matching, sortConfig);
-  }, [userExpenses, searchTerm, periodFilter, sortConfig]);
+  }, [userExpenses, searchTerm, activePeriod, activeCostCenter, sortConfig]);
 
   const totalAmount = useMemo(() => {
     return filteredExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
@@ -187,15 +235,45 @@ export function ExpenseList({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Period selector */}
+          <select
+            value={activePeriod}
+            onChange={(e) => handlePeriodSelect(e.target.value)}
+            className="px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none cursor-pointer"
+            title="Filtrar por período contable (consulta optimizada)"
+          >
+            <option value="currentYear">Año Actual ({new Date().getFullYear()})</option>
+            <option value="30days">Últimos 30 días</option>
+            <option value="lastYear">Año Anterior ({new Date().getFullYear() - 1})</option>
+            <option value="all">Histórico Completo</option>
+          </select>
+
+          {/* Cost center selector */}
+          {costCenters && costCenters.length > 0 && (
+            <select
+              value={activeCostCenter}
+              onChange={(e) => handleCostCenterSelect(e.target.value)}
+              className="px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none max-w-[170px] cursor-pointer"
+              title="Filtrar por centro de costos"
+            >
+              <option value="ALL">Todos los Centros</option>
+              {costCenters.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
+
           {/* Search bar */}
           <div className="relative flex-1 sm:flex-initial">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Buscar proveedor, centro de costos..."
+              placeholder="Buscar proveedor, nota..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none w-full sm:w-56"
+              className="pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none w-full sm:w-44"
             />
             {searchTerm && (
               <button
@@ -642,6 +720,51 @@ export function ExpenseList({
             );
           })
         )}
+      </div>
+
+      {/* Pagination & Query Limit Toolbar */}
+      <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+        <div className="flex items-center space-x-2">
+          <span className="font-medium">
+            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> comprobantes cargados
+          </span>
+          <span className="text-slate-300 hidden sm:inline">•</span>
+          <span className="text-slate-400 text-[11px] hidden sm:inline">
+            Período: <span className="font-semibold text-slate-700">{activePeriod === 'currentYear' ? 'Año Actual' : activePeriod === '30days' ? 'Últimos 30 días' : activePeriod === 'lastYear' ? 'Año Anterior' : 'Histórico'}</span>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Query limit selector */}
+          {onLimitChange && (
+            <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+              <span className="text-[11px] text-slate-400 font-medium">Límite:</span>
+              <select
+                value={queryLimit}
+                onChange={(e) => onLimitChange(Number(e.target.value))}
+                className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+                title="Comprobantes a consultar de la base central"
+              >
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+          )}
+
+          {/* Load More Button */}
+          {onLoadMore && (hasMoreExpenses || filteredExpenses.length >= queryLimit) && (
+            <button
+              onClick={onLoadMore}
+              disabled={isLoadingMore}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold border border-indigo-200 shadow-2xs transition active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingMore ? 'animate-spin' : ''}`} />
+              <span>{isLoadingMore ? 'Cargando...' : 'Cargar más (+50)'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Modal de confirmación de eliminación individual */}

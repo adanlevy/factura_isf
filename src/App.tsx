@@ -64,6 +64,8 @@ import {
   subscribeToUsersFirestore,
   DEFAULT_APP_USERS,
   subscribeToRealtimeFirestore,
+  fetchExpensesPage,
+  ExpenseQueryOptions,
   testFirestoreConnection,
   mergeExpensesList,
   mergeVendorsList,
@@ -150,7 +152,50 @@ export default function App() {
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
 
-  // Initial Cloud Hydration on App load - Pure Centralized Data Store
+  // Query-level filtering and pagination state (scales to large Firestore collections)
+  const [queryPeriod, setQueryPeriod] = useState<string>('currentYear');
+  const [queryCostCenter, setQueryCostCenter] = useState<string>('ALL');
+  const [queryLimit, setQueryLimit] = useState<number>(50);
+  const [hasMoreExpenses, setHasMoreExpenses] = useState<boolean>(false);
+  const [isLoadingMoreExpenses, setIsLoadingMoreExpenses] = useState<boolean>(false);
+
+  // Handlers for server-side query filtering and pagination
+  const handleLoadMoreExpenses = async () => {
+    setIsLoadingMoreExpenses(true);
+    try {
+      const nextLimit = queryLimit + 50;
+      setQueryLimit(nextLimit);
+      const res = await fetchExpensesPage({
+        period: queryPeriod,
+        costCenter: queryCostCenter,
+        limitCount: nextLimit,
+      });
+      if (res.expenses && res.expenses.length > 0) {
+        setExpenses((prev) => mergeExpensesList(prev, res.expenses));
+      }
+      setHasMoreExpenses(res.hasMore);
+    } catch (err) {
+      console.warn('Error fetching more expenses:', err);
+    } finally {
+      setIsLoadingMoreExpenses(false);
+    }
+  };
+
+  const handlePeriodChange = (period: string) => {
+    setQueryPeriod(period);
+    setQueryLimit(50);
+  };
+
+  const handleCostCenterFilterChange = (cc: string) => {
+    setQueryCostCenter(cc);
+    setQueryLimit(50);
+  };
+
+  const handleLimitChange = (limitCount: number) => {
+    setQueryLimit(limitCount);
+  };
+
+  // Initial Cloud Hydration & Real-time Sync on App load
   useEffect(() => {
     let isMounted = true;
 
@@ -171,10 +216,17 @@ export default function App() {
       setIsCloudSyncing(true);
       try {
         await testFirestoreConnection();
-        const cloudData = await fetchCentralSync();
+        const cloudData = await fetchCentralSync({
+          period: queryPeriod,
+          costCenter: queryCostCenter,
+          limitCount: queryLimit,
+        });
         if (cloudData && isMounted) {
           if (Array.isArray(cloudData.expenses)) {
             setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
+          }
+          if (cloudData.hasMore !== undefined) {
+            setHasMoreExpenses(cloudData.hasMore);
           }
 
           let cleanVendors: Vendor[] = [];
@@ -193,10 +245,6 @@ export default function App() {
           }
 
           setVendors(cleanVendors);
-
-          if (Array.isArray(cloudData.expenses)) {
-            setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
-          }
 
           if (Array.isArray(cloudData.costCenters) && cloudData.costCenters.length > 0) {
             setCostCenters(cloudData.costCenters.map(sanitizeCostCenter));
@@ -258,20 +306,30 @@ export default function App() {
 
     hydrateFromCloud();
 
-    // Real-time Firestore listener for multi-device sync
-    const unsubscribeRealtime = subscribeToRealtimeFirestore((incoming) => {
-      if (!isMounted) return;
-      if (incoming.expenses) {
-        setExpenses((prev) => mergeExpensesList(prev, incoming.expenses || []));
+    // Real-time Firestore listener with query-level filtering (period, cost center, limit)
+    const unsubscribeRealtime = subscribeToRealtimeFirestore(
+      (incoming) => {
+        if (!isMounted) return;
+        if (incoming.expenses) {
+          setExpenses((prev) => mergeExpensesList(prev, incoming.expenses || []));
+        }
+        if (incoming.hasMore !== undefined) {
+          setHasMoreExpenses(incoming.hasMore);
+        }
+        if (incoming.vendors !== undefined) {
+          setVendors((incoming.vendors || []).filter((v) => v && v.id && !sessionDeletedVendorIds.has(v.id)).map(normalizeVendorBankDetails));
+        }
+        if (incoming.costCenters && incoming.costCenters.length > 0) {
+          setCostCenters(incoming.costCenters.map(sanitizeCostCenter));
+        }
+        setLastSyncTime(new Date());
+      },
+      {
+        period: queryPeriod,
+        costCenter: queryCostCenter,
+        limitCount: queryLimit,
       }
-      if (incoming.vendors !== undefined) {
-        setVendors((incoming.vendors || []).filter((v) => v && v.id && !sessionDeletedVendorIds.has(v.id)).map(normalizeVendorBankDetails));
-      }
-      if (incoming.costCenters && incoming.costCenters.length > 0) {
-        setCostCenters(incoming.costCenters.map(sanitizeCostCenter));
-      }
-      setLastSyncTime(new Date());
-    });
+    );
 
     const unsubscribeUsers = subscribeToUsersFirestore((incomingUsers) => {
       if (!isMounted) return;
@@ -312,29 +370,13 @@ export default function App() {
       setAuditLogs(incomingLogs);
     });
 
-    // Periodic cloud poll interval to ensure 100% freshness across background tabs
-    const pollInterval = setInterval(() => {
-      if (!isMounted) return;
-      fetchCentralSync().then((cloudData) => {
-        if (!cloudData || !isMounted) return;
-        if (cloudData.expenses) {
-          setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
-        }
-        if (cloudData.vendors !== undefined) {
-          setVendors((cloudData.vendors || []).filter((v) => v && v.id && !sessionDeletedVendorIds.has(v.id)).map(normalizeVendorBankDetails));
-        }
-        setLastSyncTime(new Date());
-      }).catch(() => {});
-    }, 10000);
-
     return () => {
       isMounted = false;
-      clearInterval(pollInterval);
       unsubscribeRealtime();
       unsubscribeUsers();
       unsubscribeAuditLogs();
     };
-  }, [currentUser?.email]);
+  }, [currentUser?.email, queryPeriod, queryCostCenter, queryLimit]);
 
   // Sync current user to auth session storage
   useEffect(() => {
@@ -1794,6 +1836,15 @@ export default function App() {
               onOpenNewModal={() => setIsScannerModalOpen(true)}
               onDeleteExpense={handleDeleteExpense}
               onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
+              queryPeriod={queryPeriod}
+              onPeriodChange={handlePeriodChange}
+              queryCostCenter={queryCostCenter}
+              onCostCenterChange={handleCostCenterFilterChange}
+              queryLimit={queryLimit}
+              onLimitChange={handleLimitChange}
+              hasMoreExpenses={hasMoreExpenses}
+              isLoadingMore={isLoadingMoreExpenses}
+              onLoadMore={handleLoadMoreExpenses}
             />
           )}
 
@@ -1822,6 +1873,15 @@ export default function App() {
                 onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
                 onOpenWithholdingModal={(exp) => setWithholdingModalExpense(exp)}
                 initialFilterVendor={initialFilterVendor}
+                queryPeriod={queryPeriod}
+                onPeriodChange={handlePeriodChange}
+                queryCostCenter={queryCostCenter}
+                onCostCenterChange={handleCostCenterFilterChange}
+                queryLimit={queryLimit}
+                onLimitChange={handleLimitChange}
+                hasMoreExpenses={hasMoreExpenses}
+                isLoadingMore={isLoadingMoreExpenses}
+                onLoadMore={handleLoadMoreExpenses}
               />
             ) : (
               <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center max-w-lg mx-auto shadow-xs space-y-4">

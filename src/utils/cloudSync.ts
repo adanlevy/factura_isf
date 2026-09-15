@@ -12,6 +12,11 @@ import {
   writeBatch,
   onSnapshot,
   getDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  QueryConstraint,
 } from 'firebase/firestore';
 import { db, testFirestoreConnection } from '../lib/firebase';
 import { Expense, Vendor, CostCenter, AppUserRecord } from '../types';
@@ -21,11 +26,18 @@ import { sanitizeCostCenter } from './helpers';
 
 export const DEFAULT_APP_USERS: AppUserRecord[] = [];
 
+export interface ExpenseQueryOptions {
+  period?: '30days' | 'currentYear' | 'lastYear' | 'all' | string;
+  costCenter?: string;
+  limitCount?: number;
+}
+
 export interface SyncPayload {
   expenses: Expense[];
   vendors: Vendor[];
   costCenters: CostCenter[];
   categories: string[];
+  hasMore?: boolean;
 }
 
 export interface UserPreferencesPayload {
@@ -350,18 +362,99 @@ export function mergeVendorsList(local: Vendor[], incoming: Vendor[]): Vendor[] 
 }
 
 /**
- * Fetches all collections from Firestore, with fallback to backend API and initial seeding if empty
+ * Builds an optimized Firestore query for expenses based on period, cost center, and limit constraints.
  */
-export async function fetchCentralSync(): Promise<SyncPayload | null> {
+export function buildExpensesFirestoreQuery(options?: ExpenseQueryOptions) {
+  const expensesCol = collection(db, 'expenses');
+  const constraints: QueryConstraint[] = [];
+  const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
+
+  // 1. Period filter (by ISO date 'YYYY-MM-DD')
+  if (options?.period && options.period !== 'all') {
+    if (options.period === '30days') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+      constraints.push(where('date', '>=', minDateStr));
+    } else if (options.period === 'currentYear') {
+      const currYear = new Date().getFullYear();
+      constraints.push(where('date', '>=', `${currYear}-01-01`));
+    } else if (options.period === 'lastYear') {
+      const prevYear = new Date().getFullYear() - 1;
+      constraints.push(where('date', '>=', `${prevYear}-01-01`));
+      constraints.push(where('date', '<=', `${prevYear}-12-31`));
+    } else if (/^\d{4}$/.test(options.period)) {
+      constraints.push(where('date', '>=', `${options.period}-01-01`));
+      constraints.push(where('date', '<=', `${options.period}-12-31`));
+    }
+  }
+
+  // 2. Cost Center filter (project field)
+  if (options?.costCenter && options.costCenter !== 'ALL') {
+    constraints.push(where('project', '==', options.costCenter));
+  }
+
+  // 3. Order by document date descending
+  constraints.push(orderBy('date', 'desc'));
+
+  // 4. Limit to avoid loading entire databases into memory
+  constraints.push(limit(limitCount));
+
+  return query(expensesCol, ...constraints);
+}
+
+/**
+ * Fetches expenses with server-side query filtering and pagination.
+ */
+export async function fetchExpensesPage(options?: ExpenseQueryOptions): Promise<{ expenses: Expense[]; hasMore: boolean }> {
   try {
-    // 1. Try reading from Firestore
-    const expensesCol = collection(db, 'expenses');
+    const q = buildExpensesFirestoreQuery(options);
+    const snap = await getDocs(q);
+    const expenses: Expense[] = [];
+    snap.forEach((d) => expenses.push(d.data() as Expense));
+    const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
+    return {
+      expenses,
+      hasMore: snap.size >= limitCount,
+    };
+  } catch (err) {
+    console.warn('[Firestore] Query with constraints failed, trying fallback query:', err);
+    try {
+      const fallbackLimit = options?.limitCount || 50;
+      const fallbackQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(fallbackLimit));
+      const snap = await getDocs(fallbackQuery);
+      const expenses: Expense[] = [];
+      snap.forEach((d) => expenses.push(d.data() as Expense));
+      return { expenses, hasMore: snap.size >= fallbackLimit };
+    } catch (fallbackErr) {
+      console.error('[Firestore] Fallback query failed:', fallbackErr);
+      return { expenses: [], hasMore: false };
+    }
+  }
+}
+
+/**
+ * Fetches collections from Firestore using query-level filters for expenses,
+ * with fallback to backend API and initial seeding if empty.
+ */
+export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<SyncPayload | null> {
+  try {
+    // 1. Read expenses using query-level filtering (period, cost center, limit)
+    const expensesQuery = buildExpensesFirestoreQuery(options);
     const vendorsCol = collection(db, 'vendors');
     const costCentersCol = collection(db, 'cost_centers');
     const categoriesCol = collection(db, 'categories');
 
-    const [expensesSnap, vendorsSnap, costCentersSnap, categoriesSnap] = await Promise.all([
-      getDocs(expensesCol),
+    let expensesSnap;
+    try {
+      expensesSnap = await getDocs(expensesQuery);
+    } catch (queryErr) {
+      console.warn('[Firestore] Filtered query note, falling back to ordered limit:', queryErr);
+      const safeLimit = options?.limitCount || 50;
+      expensesSnap = await getDocs(query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(safeLimit)));
+    }
+
+    const [vendorsSnap, costCentersSnap, categoriesSnap] = await Promise.all([
       getDocs(vendorsCol),
       getDocs(costCentersCol),
       getDocs(categoriesCol),
@@ -369,6 +462,8 @@ export async function fetchCentralSync(): Promise<SyncPayload | null> {
 
     const expenses: Expense[] = [];
     expensesSnap.forEach((d) => expenses.push(d.data() as Expense));
+    const limitCount = options?.limitCount || 50;
+    const hasMore = expensesSnap.size >= limitCount;
 
     let vendors: Vendor[] = [];
     vendorsSnap.forEach((d) => vendors.push(normalizeVendorBankDetails(d.data() as Vendor)));
@@ -396,7 +491,6 @@ export async function fetchCentralSync(): Promise<SyncPayload | null> {
       costCenters = DEFAULT_COST_CENTERS_DATA.map(sanitizeCostCenter);
       saveCentralCostCenters(costCenters).catch(console.warn);
     } else if (hadDirtyCostCenters) {
-      // Automatically persist cleaned cost centers to Firestore
       saveCentralCostCenters(costCenters).catch(console.warn);
     }
     if (categories.length === 0 && DEFAULT_CATEGORIES.length > 0) {
@@ -409,13 +503,19 @@ export async function fetchCentralSync(): Promise<SyncPayload | null> {
       vendors,
       costCenters,
       categories,
+      hasMore,
     };
   } catch (firestoreErr) {
     console.warn('[Firestore] Sync direct read note:', firestoreErr);
     
     // Fallback to server JSON sync
     try {
-      const res = await fetch('/api/data/sync');
+      const queryParams = new URLSearchParams();
+      if (options?.period) queryParams.set('period', options.period);
+      if (options?.costCenter) queryParams.set('costCenter', options.costCenter);
+      if (options?.limitCount) queryParams.set('limit', String(options.limitCount));
+      const url = `/api/data/sync${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -430,19 +530,39 @@ export async function fetchCentralSync(): Promise<SyncPayload | null> {
 }
 
 /**
- * Real-time Firestore Subscriptions
+ * Real-time Firestore Subscriptions with query-level filtering and pagination support.
  */
 export function subscribeToRealtimeFirestore(
-  onUpdate: (payload: Partial<SyncPayload>) => void
+  onUpdate: (payload: Partial<SyncPayload> & { hasMore?: boolean }) => void,
+  options?: ExpenseQueryOptions
 ): () => void {
+  const currentLimit = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
+  let expensesQuery;
+  try {
+    expensesQuery = buildExpensesFirestoreQuery(options);
+  } catch {
+    expensesQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
+  }
+
   const unsubExpenses = onSnapshot(
-    collection(db, 'expenses'),
+    expensesQuery,
     (snap) => {
       const expenses: Expense[] = [];
       snap.forEach((d) => expenses.push(d.data() as Expense));
-      onUpdate({ expenses });
+      const hasMore = snap.size >= currentLimit;
+      onUpdate({ expenses, hasMore });
     },
-    (err) => console.warn('[Firestore Live] expenses listener note:', err.message)
+    (err) => {
+      console.warn('[Firestore Live] expenses listener note, fallbacking to ordered limit:', err.message);
+      try {
+        const fallbackQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
+        return onSnapshot(fallbackQuery, (fallbackSnap) => {
+          const fallbackExpenses: Expense[] = [];
+          fallbackSnap.forEach((d) => fallbackExpenses.push(d.data() as Expense));
+          onUpdate({ expenses: fallbackExpenses, hasMore: fallbackSnap.size >= currentLimit });
+        });
+      } catch {}
+    }
   );
 
   const unsubVendors = onSnapshot(

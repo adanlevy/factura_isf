@@ -1048,10 +1048,50 @@ function mergeById<T extends { id?: string }>(existingList: T[], incomingList: T
   return Array.from(map.values());
 }
 
+// Helper for server-side expense filtering and pagination
+function filterExpensesServer(expenses: any[], queryParams: any) {
+  let filtered = [...expenses];
+  const { period, costCenter, limit: limitParam } = queryParams;
+
+  if (costCenter && costCenter !== 'ALL') {
+    filtered = filtered.filter((e) => e && (e.project === costCenter || e.costCenter === costCenter));
+  }
+
+  if (period && period !== 'all') {
+    if (period === '30days') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+      filtered = filtered.filter((e) => e && e.date && e.date >= minDateStr);
+    } else if (period === 'currentYear') {
+      const currYear = String(new Date().getFullYear());
+      filtered = filtered.filter((e) => e && e.date && e.date.startsWith(currYear));
+    } else if (period === 'lastYear') {
+      const prevYear = String(new Date().getFullYear() - 1);
+      filtered = filtered.filter((e) => e && e.date && e.date.startsWith(prevYear));
+    } else if (/^\d{4}$/.test(String(period))) {
+      filtered = filtered.filter((e) => e && e.date && e.date.startsWith(String(period)));
+    }
+  }
+
+  // Sort by date descending
+  filtered.sort((a, b) => ((b && b.date) || '').localeCompare((a && a.date) || ''));
+
+  if (limitParam) {
+    const l = parseInt(String(limitParam), 10);
+    if (!isNaN(l) && l > 0) {
+      filtered = filtered.slice(0, l);
+    }
+  }
+
+  return filtered;
+}
+
 // 1. EXPENSES COLLECTION
-app.get("/api/data/expenses", (_req, res) => {
-  const expenses = readCollection<any[]>("expenses", []);
-  res.json({ success: true, count: expenses.length, data: expenses });
+app.get("/api/data/expenses", (req, res) => {
+  const allExpenses = readCollection<any[]>("expenses", []);
+  const expenses = filterExpensesServer(allExpenses, req.query);
+  res.json({ success: true, count: expenses.length, total: allExpenses.length, data: expenses });
 });
 
 // Non-destructive merge / update
@@ -1294,8 +1334,9 @@ app.post("/api/data/users/delete", async (req, res) => {
 });
 
 // 7. BULK SYNC / INITIAL HYDRATION
-app.get("/api/data/sync", (_req, res) => {
-  const expenses = readCollection<any[]>("expenses", []);
+app.get("/api/data/sync", (req, res) => {
+  const allExpenses = readCollection<any[]>("expenses", []);
+  const expenses = filterExpensesServer(allExpenses, req.query);
   const vendors = readCollection<any[]>("vendors", []);
   const costCenters = readCollection<any[]>("cost_centers", []);
   const categories = readCollection<any[]>("categories", []);
@@ -1306,6 +1347,7 @@ app.get("/api/data/sync", (_req, res) => {
       vendors,
       costCenters,
       categories,
+      hasMore: allExpenses.length > expenses.length,
     },
     timestamp: new Date().toISOString(),
   });
