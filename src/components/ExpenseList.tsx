@@ -58,7 +58,7 @@ export function ExpenseList({
   onOpenNewModal,
   onDeleteExpense,
   onReplaceReceipt,
-  queryPeriod = 'currentYear',
+  queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
   onCostCenterChange,
@@ -69,7 +69,7 @@ export function ExpenseList({
   onLoadMore,
 }: ExpenseListProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('currentYear');
+  const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('all');
   const [localCostCenterFilter, setLocalCostCenterFilter] = useState<string>('ALL');
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
   const [sortConfig, setSortConfig] = useState<ExpenseSortConfig>({ field: 'createdAt', direction: 'desc' });
@@ -122,6 +122,10 @@ export function ExpenseList({
       if (expName && userName) {
         return expName === userName;
       }
+      // If user is admin or if the expense has no recorded submitter email, include it
+      if (currentUser.role === 'admin' && !expEmail) {
+        return true;
+      }
       return false;
     });
   }, [expenses, currentUser]);
@@ -132,17 +136,22 @@ export function ExpenseList({
 
     const matching = [...userExpenses].filter((e) => {
       // Local period filter (in case not filtered server-side)
-      if (activePeriod === '30days') {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
-        if (e.date && e.date < minDateStr) return false;
-      } else if (activePeriod === 'currentYear') {
-        const currentYear = new Date().getFullYear().toString();
-        if (e.date && !e.date.startsWith(currentYear)) return false;
-      } else if (activePeriod === 'lastYear') {
-        const prevYear = (new Date().getFullYear() - 1).toString();
-        if (e.date && !e.date.startsWith(prevYear)) return false;
+      // Never hide expenses created within the last 24 hours so newly uploaded receipts are immediately visible
+      const isRecentlyCreated = e.createdAt && (Date.now() - new Date(e.createdAt).getTime() < 24 * 60 * 60 * 1000);
+
+      if (!isRecentlyCreated && activePeriod !== 'all') {
+        if (activePeriod === '30days') {
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+          if (e.date && e.date < minDateStr) return false;
+        } else if (activePeriod === 'currentYear') {
+          const currentYear = new Date().getFullYear().toString();
+          if (e.date && !e.date.startsWith(currentYear)) return false;
+        } else if (activePeriod === 'lastYear') {
+          const prevYear = (new Date().getFullYear() - 1).toString();
+          if (e.date && !e.date.startsWith(prevYear)) return false;
+        }
       }
 
       // Local cost center filter

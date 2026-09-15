@@ -11,8 +11,15 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
 
+    function isOrgMember() {
+      return isSignedIn() && request.auth.token.email.lower().matches('.*@isf-argentina\\.org$');
+    }
+
     function isRegisteredUser() {
-      return isSignedIn() && exists(/databases/$(database)/documents/app_users/$(userEmail()));
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/app_users/$(userEmail())) ||
+        isOrgMember()
+      );
     }
 
     function getUserData() {
@@ -29,11 +36,19 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isBootstrapAdmin() || (isRegisteredUser() && getUserData().role == 'admin');
+      return isBootstrapAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/app_users/$(userEmail())) &&
+        getUserData().role == 'admin'
+      );
     }
 
     function isColaborador() {
-      return isBootstrapAdmin() || (isRegisteredUser() && (getUserData().role == 'user' || getUserData().role == 'admin'));
+      return isBootstrapAdmin() || isOrgMember() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/app_users/$(userEmail())) &&
+        (getUserData().role == 'user' || getUserData().role == 'admin')
+      );
     }
 
     // Default deny for all unspecified collections and unauthenticated visitors
@@ -50,19 +65,17 @@ service cloud.firestore {
 
       allow create: if isColaborador() && (
         isAdmin() ||
-        (
-          !('submittedByEmail' in request.resource.data) ||
-          request.resource.data.submittedByEmail.lower() == userEmail() ||
-          request.resource.data.userEmail.lower() == userEmail()
-        )
+        !('submittedByEmail' in request.resource.data) ||
+        request.resource.data.submittedByEmail.lower() == userEmail() ||
+        ('userEmail' in request.resource.data && request.resource.data.userEmail.lower() == userEmail())
       );
 
       allow update: if isColaborador() && (
         isAdmin() ||
-        (
-          resource.data.submittedByEmail.lower() == userEmail() ||
-          resource.data.userEmail.lower() == userEmail()
-        )
+        !('submittedByEmail' in resource.data) ||
+        resource.data.submittedByEmail.lower() == userEmail() ||
+        ('userEmail' in resource.data && resource.data.userEmail.lower() == userEmail()) ||
+        ('submittedByEmail' in request.resource.data && request.resource.data.submittedByEmail.lower() == userEmail())
       );
 
       allow delete: if isAdmin();
@@ -104,14 +117,17 @@ service cloud.firestore {
 
     // App users and role management:
     // - Only Colaboradores and Admins can read the user directory
-    // - Only Admins can create, delete, or alter roles
-    // - Colaboradores can update their own display name or picture, but cannot escalate their role
+    // - Admins can create, delete, or alter roles
+    // - Colaboradores can self-register their own profile as 'user' role
     match /app_users/{userDocId} {
       allow read: if isColaborador() || (isSignedIn() && userDocId == userEmail());
-      allow create, delete: if isAdmin();
+      allow create: if isAdmin() || (
+        isSignedIn() && userDocId == userEmail() && request.resource.data.role == 'user'
+      );
+      allow delete: if isAdmin();
       allow update: if isAdmin() || (
         isColaborador() &&
-        (userEmail() == userDocId || (resource != null && resource.data.email.lower() == userEmail())) &&
+        (userEmail() == userDocId || (resource != null && 'email' in resource.data && resource.data.email.lower() == userEmail())) &&
         request.resource.data.role == resource.data.role
       );
     }

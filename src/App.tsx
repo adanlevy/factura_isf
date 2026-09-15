@@ -194,7 +194,7 @@ export default function App() {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
 
   // Query-level filtering and pagination state (scales to large Firestore collections)
-  const [queryPeriod, setQueryPeriod] = useState<string>('currentYear');
+  const [queryPeriod, setQueryPeriod] = useState<string>('all');
   const [queryCostCenter, setQueryCostCenter] = useState<string>('ALL');
   const [queryLimit, setQueryLimit] = useState<number>(50);
   const [hasMoreExpenses, setHasMoreExpenses] = useState<boolean>(false);
@@ -801,10 +801,13 @@ export default function App() {
     // If expense has a receipt, initialize driveUploadStatus to PENDING
     const initialExpense: Expense = {
       ...newExpense,
+      submittedByEmail: newExpense.submittedByEmail || currentUser?.email || undefined,
+      submittedByName: newExpense.submittedByName || currentUser?.name || currentUser?.email?.split('@')[0] || undefined,
+      submittedByPicture: newExpense.submittedByPicture || currentUser?.picture || undefined,
       driveUploadStatus: newExpense.receiptImage ? 'PENDING' : newExpense.driveUploadStatus,
     };
 
-    setExpenses((prev) => [initialExpense, ...prev]);
+    setExpenses((prev) => [initialExpense, ...prev.filter((e) => e.id !== initialExpense.id)]);
     upsertCentralExpenses([initialExpense]);
 
     // Auto upload to Google Drive ONLY on creation if receipt is attached

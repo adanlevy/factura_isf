@@ -1,8 +1,10 @@
 import { auth } from '../lib/firebase';
+import { getStoredWorkspaceToken } from './googleWorkspace';
 
 /**
- * Retrieves the current user's Firebase Auth ID token (JWT)
- * Automatically waits for authStateReady if Firebase Auth is initializing.
+ * Retrieves the current user's authentication token:
+ * 1. Firebase Auth ID token (JWT) if Firebase user is signed in
+ * 2. Google Workspace OAuth access token (starts with ya29.) if workspace session is active
  */
 export async function getFirebaseIdToken(): Promise<string | null> {
   try {
@@ -12,8 +14,12 @@ export async function getFirebaseIdToken(): Promise<string | null> {
     if (auth.currentUser) {
       return await auth.currentUser.getIdToken();
     }
+    const wsToken = getStoredWorkspaceToken();
+    if (wsToken) {
+      return wsToken;
+    }
   } catch (err) {
-    console.warn('[authFetch] Error retrieving Firebase ID token:', err);
+    console.warn('[authFetch] Error retrieving authentication token:', err);
   }
   return null;
 }

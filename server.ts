@@ -724,12 +724,17 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
     return { role: 'admin', canSwitchRole: true };
   }
 
+  // 5. Fallback for ISF team members (@isf-argentina.org)
+  if (cleanEmail.endsWith('@isf-argentina.org')) {
+    return { role: 'user', canSwitchRole: false };
+  }
+
   return { role: null, canSwitchRole: false };
 }
 
 /**
- * Middleware: Verify Firebase Auth ID Token (JWT) and enforce registered user membership.
- * Attaches req.user with decoded identity and RBAC role.
+ * Middleware: Verify Firebase Auth ID Token (JWT) or Google OAuth Access Token
+ * and enforce registered user membership. Attaches req.user with decoded identity and RBAC role.
  */
 async function authenticateFirebaseUser(
   req: express.Request,
@@ -740,7 +745,7 @@ async function authenticateFirebaseUser(
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       success: false,
-      error: "Acceso no autenticado: Se requiere token de sesión de Firebase en el encabezado Authorization.",
+      error: "Acceso no autenticado: Se requiere token de sesión en el encabezado Authorization.",
       code: "UNAUTHENTICATED",
     });
   }
@@ -754,17 +759,42 @@ async function authenticateFirebaseUser(
     });
   }
 
-  if (!adminAuth) {
-    return res.status(500).json({
-      success: false,
-      error: "Firebase Admin Auth no está inicializado en el servidor.",
-      code: "ADMIN_NOT_INITIALIZED",
-    });
-  }
-
   try {
-    const decodedToken = await adminAuth.verifyIdToken(idToken);
-    const userEmail = (decodedToken.email || "").toLowerCase().trim();
+    let userEmail = "";
+    let decodedUid = "";
+    let decodedName: string | undefined = undefined;
+    let decodedPicture: string | undefined = undefined;
+
+    // A. Check if token is a Google OAuth 2.0 Access Token (starts with ya29.)
+    if (idToken.startsWith("ya29.")) {
+      try {
+        const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(idToken)}`);
+        if (tokenInfoRes.ok) {
+          const tokenInfo = await tokenInfoRes.json();
+          userEmail = (tokenInfo.email || "").toLowerCase().trim();
+          decodedUid = tokenInfo.user_id || tokenInfo.sub || userEmail;
+        }
+      } catch (oauthErr) {
+        console.warn("[Auth Middleware] OAuth tokeninfo fetch notice:", oauthErr);
+      }
+    }
+
+    // B. If not resolved via Google OAuth, verify as Firebase ID Token (JWT)
+    if (!userEmail) {
+      if (!adminAuth) {
+        return res.status(500).json({
+          success: false,
+          error: "Firebase Admin Auth no está inicializado en el servidor.",
+          code: "ADMIN_NOT_INITIALIZED",
+        });
+      }
+
+      const decodedToken = await adminAuth.verifyIdToken(idToken);
+      userEmail = (decodedToken.email || "").toLowerCase().trim();
+      decodedUid = decodedToken.uid;
+      decodedName = decodedToken.name;
+      decodedPicture = decodedToken.picture;
+    }
 
     if (!userEmail) {
       return res.status(403).json({
@@ -784,10 +814,10 @@ async function authenticateFirebaseUser(
     }
 
     req.user = {
-      uid: decodedToken.uid,
+      uid: decodedUid || userEmail,
       email: userEmail,
-      name: decodedToken.name || userEmail.split("@")[0],
-      picture: decodedToken.picture,
+      name: decodedName || userEmail.split("@")[0],
+      picture: decodedPicture,
       role,
       canSwitchRole,
     };
@@ -799,8 +829,8 @@ async function authenticateFirebaseUser(
     return res.status(401).json({
       success: false,
       error: isExpired
-        ? "La sesión de Firebase ha expirado. Por favor, renueva tu sesión."
-        : "Token de Firebase inválido o no verificado.",
+        ? "La sesión de autenticación ha expirado. Por favor, renueva tu sesión."
+        : "Token de autenticación inválido o no verificado.",
       code: isExpired ? "TOKEN_EXPIRED" : "INVALID_TOKEN",
     });
   }

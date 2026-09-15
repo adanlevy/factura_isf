@@ -651,6 +651,15 @@ export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean>
 export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> {
   if (!items || items.length === 0) return true;
 
+  // Mirror to server-side JSON store in parallel for dual persistence
+  authFetch('/api/data/expenses/upsert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: items.map((i) => prepareExpenseForFirestore(i)) }),
+  }).catch((err) => {
+    console.warn('[Sync] Notice mirroring expenses to server store:', err);
+  });
+
   try {
     const batch = writeBatch(db);
     for (const item of items) {
@@ -662,13 +671,6 @@ export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> 
       }
     }
     await batch.commit();
-
-    authFetch('/api/data/expenses/upsert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: items.map((i) => prepareExpenseForFirestore(i)) }),
-    }).catch(() => {});
-
     return true;
   } catch (e) {
     console.warn('[Firestore] Error in batch upserting expenses, falling back to single setDoc:', e);

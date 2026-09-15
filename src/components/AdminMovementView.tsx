@@ -104,7 +104,7 @@ export function AdminMovementView({
   onReplaceReceipt,
   onOpenWithholdingModal,
   initialFilterVendor = '',
-  queryPeriod = 'currentYear',
+  queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
   onCostCenterChange,
@@ -117,7 +117,7 @@ export function AdminMovementView({
   const [searchTerm, setSearchTerm] = useState(initialFilterVendor);
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'PENDING' | 'REIMBURSED' | 'PENDING_WITHHOLDING' | 'NOT_APPLICABLE' | 'MISSING_BANK'>('ALL');
   const [localCostCenter, setLocalCostCenter] = useState<string>('ALL');
-  const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('currentYear');
+  const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('all');
   const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
   const [vendorSavedToast, setVendorSavedToast] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<ExpenseSortConfig>({ field: 'createdAt', direction: 'desc' });
@@ -275,17 +275,22 @@ export function AdminMovementView({
       }
 
       // Period filter (applied locally if not filtered at query level)
-      if (activePeriod === '30days') {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
-        if (e.date && e.date < minDateStr) return false;
-      } else if (activePeriod === 'currentYear') {
-        const currentYear = new Date().getFullYear().toString();
-        if (e.date && !e.date.startsWith(currentYear)) return false;
-      } else if (activePeriod === 'lastYear') {
-        const prevYear = (new Date().getFullYear() - 1).toString();
-        if (e.date && !e.date.startsWith(prevYear)) return false;
+      // Never hide expenses created within the last 24 hours so newly uploaded receipts are immediately visible
+      const isRecentlyCreated = e.createdAt && (Date.now() - new Date(e.createdAt).getTime() < 24 * 60 * 60 * 1000);
+
+      if (!isRecentlyCreated && activePeriod !== 'all') {
+        if (activePeriod === '30days') {
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          const minDateStr = thirtyDaysAgo.toISOString().slice(0, 10);
+          if (e.date && e.date < minDateStr) return false;
+        } else if (activePeriod === 'currentYear') {
+          const currentYear = new Date().getFullYear().toString();
+          if (e.date && !e.date.startsWith(currentYear)) return false;
+        } else if (activePeriod === 'lastYear') {
+          const prevYear = (new Date().getFullYear() - 1).toString();
+          if (e.date && !e.date.startsWith(prevYear)) return false;
+        }
       }
 
       if (activeCostCenter !== 'ALL' && (e.project || '') !== activeCostCenter) {
