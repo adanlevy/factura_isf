@@ -545,6 +545,8 @@ export function subscribeToRealtimeFirestore(
     expensesQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
   }
 
+  let unsubFallbackExpenses: (() => void) | null = null;
+
   const unsubExpenses = onSnapshot(
     expensesQuery,
     (snap) => {
@@ -554,15 +556,23 @@ export function subscribeToRealtimeFirestore(
       onUpdate({ expenses, hasMore });
     },
     (err) => {
-      console.warn('[Firestore Live] expenses listener note, fallbacking to ordered limit:', err.message);
-      try {
-        const fallbackQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
-        return onSnapshot(fallbackQuery, (fallbackSnap) => {
-          const fallbackExpenses: Expense[] = [];
-          fallbackSnap.forEach((d) => fallbackExpenses.push(d.data() as Expense));
-          onUpdate({ expenses: fallbackExpenses, hasMore: fallbackSnap.size >= currentLimit });
-        });
-      } catch {}
+      console.warn('[Firestore Live] expenses listener note:', err.message);
+      if (err.code !== 'permission-denied') {
+        try {
+          const fallbackQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
+          unsubFallbackExpenses = onSnapshot(
+            fallbackQuery,
+            (fallbackSnap) => {
+              const fallbackExpenses: Expense[] = [];
+              fallbackSnap.forEach((d) => fallbackExpenses.push(d.data() as Expense));
+              onUpdate({ expenses: fallbackExpenses, hasMore: fallbackSnap.size >= currentLimit });
+            },
+            (fallbackErr) => {
+              console.warn('[Firestore Live] fallback expenses listener note:', fallbackErr.message);
+            }
+          );
+        } catch {}
+      }
     }
   );
 
@@ -590,6 +600,9 @@ export function subscribeToRealtimeFirestore(
 
   return () => {
     unsubExpenses();
+    if (unsubFallbackExpenses) {
+      unsubFallbackExpenses();
+    }
     unsubVendors();
     unsubCostCenters();
   };

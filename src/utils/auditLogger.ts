@@ -249,7 +249,9 @@ export function subscribeToAuditLogs(
           });
         }
       },
-      () => {}
+      (err) => {
+        console.warn('[AuditLogger Live] listener note:', err?.message);
+      }
     );
   } catch {
     // Non-blocking

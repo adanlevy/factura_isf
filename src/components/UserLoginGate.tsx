@@ -34,30 +34,6 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const currentClientId = getGoogleClientId();
 
-  // Auto-restore session if Firebase Auth already has an authenticated user
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser && firebaseUser.email) {
-        const userEmail = firebaseUser.email.toLowerCase().trim();
-        try {
-          const detectedRole = await resolveUserRoleFromEmail(userEmail);
-          if (detectedRole) {
-            const displayName = firebaseUser.displayName || userEmail.split('@')[0];
-            onLogin({
-              name: displayName,
-              email: userEmail,
-              picture: firebaseUser.photoURL || undefined,
-              role: detectedRole,
-            });
-          }
-        } catch (e) {
-          console.warn('[UserLoginGate] No se pudo restaurar la sesión automáticamente:', e);
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, [onLogin]);
-
   // Recover from closed or cancelled Google popup
   useEffect(() => {
     const handleWindowFocus = () => {

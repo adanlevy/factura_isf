@@ -26,7 +26,7 @@ import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
-import { signOut } from 'firebase/auth';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName } from './utils/helpers';
 import {
@@ -73,6 +73,7 @@ import {
   mergeVendorsList,
   normalizeVendorBankDetails,
   sessionDeletedVendorIds,
+  resolveUserRoleFromEmail,
 } from './utils/cloudSync';
 import {
   removeCachedReceiptFile,
@@ -102,6 +103,43 @@ export default function App() {
     }
     return null;
   });
+
+  const [isFirebaseAuthReady, setIsFirebaseAuthReady] = useState(false);
+
+  // Synchronize Firebase Auth state as the single source of truth for Firestore permissions
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email) {
+        const userEmail = firebaseUser.email.toLowerCase().trim();
+        try {
+          const detectedRole = await resolveUserRoleFromEmail(userEmail);
+          if (detectedRole) {
+            const profile: UserProfile = {
+              name: firebaseUser.displayName || userEmail.split('@')[0],
+              email: userEmail,
+              picture: firebaseUser.photoURL || undefined,
+              role: detectedRole,
+            };
+            setCurrentUser(profile);
+            saveStoredAuth(profile);
+          } else {
+            console.info('[App Auth] Usuario no habilitado en app_users, cerrando sesión de Firebase Auth:', userEmail);
+            await signOut(auth);
+            setCurrentUser(null);
+            saveStoredAuth(null);
+          }
+        } catch (e) {
+          console.warn('[App Auth] Error verificando rol en auth state:', e);
+        }
+      } else {
+        setCurrentUser(null);
+        saveStoredAuth(null);
+      }
+      setIsFirebaseAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const currentUserRef = useRef<UserProfile | null>(currentUser);
   useEffect(() => {
@@ -200,6 +238,11 @@ export default function App() {
 
   // Initial Cloud Hydration & Real-time Sync on App load
   useEffect(() => {
+    // Strictly wait until Firebase Auth is confirmed ready and user is authenticated
+    if (!isFirebaseAuthReady || !currentUser || !currentUser.email) {
+      return;
+    }
+
     let isMounted = true;
 
     // Clean up any old legacy local storage keys to ensure only the central database is used
@@ -368,10 +411,14 @@ export default function App() {
       }
     });
 
-    const unsubscribeAuditLogs = subscribeToAuditLogs((incomingLogs) => {
-      if (!isMounted) return;
-      setAuditLogs(incomingLogs);
-    });
+    let unsubscribeAuditLogs = () => {};
+    // In Firestore rules, audit_logs collection is strictly restricted to admin role
+    if (currentUser.role === 'admin') {
+      unsubscribeAuditLogs = subscribeToAuditLogs((incomingLogs) => {
+        if (!isMounted) return;
+        setAuditLogs(incomingLogs);
+      });
+    }
 
     return () => {
       isMounted = false;
@@ -379,7 +426,7 @@ export default function App() {
       unsubscribeUsers();
       unsubscribeAuditLogs();
     };
-  }, [currentUser?.email, queryPeriod, queryCostCenter, queryLimit]);
+  }, [isFirebaseAuthReady, currentUser?.email, currentUser?.role, queryPeriod, queryCostCenter, queryLimit]);
 
   // Sync current user to auth session storage
   useEffect(() => {
@@ -1791,6 +1838,17 @@ export default function App() {
       .filter((e) => e.reimbursable && e.reimbursementStatus === 'PENDING')
       .reduce((sum, e) => sum + (e.amount || 0), 0);
   }, [expenses]);
+
+  if (!isFirebaseAuthReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-medium text-slate-600">Verificando sesión segura...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!currentUser || !currentUser.email) {
     return (
