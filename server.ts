@@ -1577,6 +1577,48 @@ app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_r
         }
       } catch (_) {}
     }
+    if (users.length === 0) {
+      const recoveredMap = new Map<string, any>();
+      // Baseline bootstrap admins
+      const defaultAdmins = [
+        { email: 'alevy@isf-argentina.org', name: 'Adan Levy', role: 'admin', notes: 'Administrador Principal ISF' },
+        { email: 'admin@isf-argentina.org', name: 'Administración ISF', role: 'admin', notes: 'Cuenta Administrativa Central' },
+        { email: 'finanzas@isf-argentina.org', name: 'Finanzas ISF', role: 'admin', notes: 'Equipo de Finanzas y Contabilidad' },
+        { email: 'adanlevy@gmail.com', name: 'Adan Levy (Backup)', role: 'admin', notes: 'Administrador de Contingencia' },
+      ];
+      for (const adm of defaultAdmins) {
+        recoveredMap.set(adm.email, { ...adm, createdAt: '2026-01-01T00:00:00.000Z' });
+      }
+
+      // Reconstruct from audit logs
+      const auditLogs = readCollection<any[]>("audit_logs", []);
+      for (const log of auditLogs) {
+        const isUserAction =
+          log.action === 'USER_ROLE_CHANGE' ||
+          log.actionLabel === 'Alta de Usuario' ||
+          log.entityType === 'user' ||
+          (log.summary && log.summary.toLowerCase().includes('registró al usuario'));
+        if (isUserAction) {
+          let email = (log.entityId || '').toLowerCase().trim();
+          if (!email || !email.includes('@')) {
+            const match = log.summary?.match(/[\w.-]+@[\w.-]+\.\w+/);
+            if (match) email = match[0].toLowerCase();
+          }
+          if (email && email.includes('@')) {
+            const role = /admin/i.test(log.summary || '') || /administrador/i.test(log.summary || '') ? 'admin' : 'user';
+            recoveredMap.set(email, {
+              email,
+              name: log.entityName || email.split('@')[0],
+              role,
+              createdAt: log.timestamp || new Date().toISOString(),
+              addedBy: log.userEmail,
+            });
+          }
+        }
+      }
+      users = Array.from(recoveredMap.values());
+      writeCollection("app-users", users);
+    }
     res.json({ success: true, count: users.length, data: users });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

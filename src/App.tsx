@@ -65,6 +65,7 @@ import {
   deleteCentralUser,
   subscribeToUsersFirestore,
   DEFAULT_APP_USERS,
+  getLocalUsersCache,
   subscribeToRealtimeFirestore,
   fetchExpensesPage,
   ExpenseQueryOptions,
@@ -158,7 +159,7 @@ export default function App() {
   const [availableCategories, setAvailableCategories] = useState<string[]>(DEFAULT_CATEGORIES);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [appUsers, setAppUsers] = useState<AppUserRecord[]>(DEFAULT_APP_USERS);
+  const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => getLocalUsersCache());
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
