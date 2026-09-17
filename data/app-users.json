@@ -1,0 +1,23 @@
+[
+  {
+    "email": "alevy@isf-argentina.org",
+    "name": "Adan Levy",
+    "role": "admin",
+    "notes": "Administrador Principal ISF",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "email": "admin@isf-argentina.org",
+    "name": "Administración ISF",
+    "role": "admin",
+    "notes": "Cuenta Administrativa Central",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "email": "adanlevy@gmail.com",
+    "name": "Adán Levy",
+    "role": "admin",
+    "createdAt": "2026-09-17T19:53:56.199Z",
+    "addedBy": "alevy@isf-argentina.org"
+  }
+]

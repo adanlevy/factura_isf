@@ -40,89 +40,87 @@ export const DEFAULT_APP_USERS: AppUserRecord[] = [
     createdAt: '2026-01-01T00:00:00.000Z',
     notes: 'Cuenta Administrativa Central',
   },
-  {
-    email: 'finanzas@isf-argentina.org',
-    name: 'Finanzas ISF',
-    role: 'admin',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    notes: 'Equipo de Finanzas y Contabilidad',
-  },
-  {
-    email: 'adanlevy@gmail.com',
-    name: 'Adan Levy (Backup)',
-    role: 'admin',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    notes: 'Administrador de Contingencia',
-  },
 ];
 
 const USERS_CACHE_KEY = 'isf_app_users_cache_v2';
+const DELETED_USERS_KEY = 'isf_deleted_user_emails_v1';
+
+export function getDeletedUsersSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_USERS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return new Set(arr.map((e) => String(e).toLowerCase().trim()));
+      }
+    }
+  } catch (_) {}
+  // Pre-seed with finanzas@isf-argentina.org since user deleted it
+  const defaultDeleted = new Set<string>(['finanzas@isf-argentina.org']);
+  return defaultDeleted;
+}
+
+export function markUserAsDeleted(email: string): void {
+  if (!email) return;
+  const cleanEmail = email.toLowerCase().trim();
+  const set = getDeletedUsersSet();
+  set.add(cleanEmail);
+  try {
+    localStorage.setItem(DELETED_USERS_KEY, JSON.stringify(Array.from(set)));
+  } catch (_) {}
+}
+
+export function unmarkUserAsDeleted(email: string): void {
+  if (!email) return;
+  const cleanEmail = email.toLowerCase().trim();
+  const set = getDeletedUsersSet();
+  set.delete(cleanEmail);
+  try {
+    localStorage.setItem(DELETED_USERS_KEY, JSON.stringify(Array.from(set)));
+  } catch (_) {}
+}
+
+export function isUserDeletedLocally(email: string): boolean {
+  if (!email) return false;
+  return getDeletedUsersSet().has(email.toLowerCase().trim());
+}
+
+export function deduplicateUsers(users: AppUserRecord[]): AppUserRecord[] {
+  if (!Array.isArray(users)) return [];
+  const map = new Map<string, AppUserRecord>();
+  const deleted = getDeletedUsersSet();
+  for (const u of users) {
+    if (u && u.email) {
+      const emailClean = u.email.toLowerCase().trim();
+      if (!deleted.has(emailClean)) {
+        const existing = map.get(emailClean);
+        map.set(emailClean, existing ? { ...existing, ...u } : { ...u, email: emailClean });
+      }
+    }
+  }
+  return Array.from(map.values());
+}
 
 export function getLocalUsersCache(): AppUserRecord[] {
   try {
     const raw = localStorage.getItem(USERS_CACHE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return deduplicateUsers(parsed);
+      }
     }
   } catch (_) {}
-  return DEFAULT_APP_USERS;
+  return deduplicateUsers(DEFAULT_APP_USERS);
 }
 
 export function saveLocalUsersCache(users: AppUserRecord[]): void {
   try {
-    if (Array.isArray(users) && users.length > 0) {
-      localStorage.setItem(USERS_CACHE_KEY, JSON.stringify(users));
+    if (Array.isArray(users)) {
+      const clean = deduplicateUsers(users);
+      localStorage.setItem(USERS_CACHE_KEY, JSON.stringify(clean));
     }
   } catch (_) {}
-}
-
-/**
- * Reconstruye usuarios registrados que figuran en el log de cambios / auditoría
- * pero que no pudieron persistir por desconexión o restricciones temporales de Firestore.
- */
-export function extractUsersFromAuditLogs(): AppUserRecord[] {
-  const recovered: AppUserRecord[] = [];
-  try {
-    const raw = localStorage.getItem('isf_audit_logs_cache_v1');
-    if (!raw) return recovered;
-    const logs = JSON.parse(raw);
-    if (!Array.isArray(logs)) return recovered;
-
-    const seenEmails = new Set<string>();
-    for (const entry of logs) {
-      const isUserAction =
-        entry.action === 'USER_ROLE_CHANGE' ||
-        entry.actionLabel === 'Alta de Usuario' ||
-        entry.entityType === 'user' ||
-        (entry.summary && entry.summary.toLowerCase().includes('registró al usuario'));
-
-      if (isUserAction) {
-        let email = (entry.entityId || '').toLowerCase().trim();
-        if (!email || !email.includes('@')) {
-          const match = entry.summary?.match(/[\w.-]+@[\w.-]+\.\w+/);
-          if (match) email = match[0].toLowerCase();
-        }
-
-        if (email && email.includes('@') && !seenEmails.has(email)) {
-          seenEmails.add(email);
-          const role: 'admin' | 'user' =
-            /admin/i.test(entry.summary || '') || /administrador/i.test(entry.summary || '')
-              ? 'admin'
-              : 'user';
-
-          recovered.push({
-            email,
-            name: entry.entityName || email.split('@')[0],
-            role,
-            createdAt: entry.timestamp || new Date().toISOString(),
-            addedBy: entry.userEmail,
-          });
-        }
-      }
-    }
-  } catch (_) {}
-  return recovered;
 }
 
 export interface ExpenseQueryOptions {
@@ -614,7 +612,7 @@ export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<S
       if (options?.costCenter) queryParams.set('costCenter', options.costCenter);
       if (options?.limitCount) queryParams.set('limit', String(options.limitCount));
       const url = `/api/data/sync${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-      const res = await fetch(url);
+      const res = await authFetch(url);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -1039,45 +1037,45 @@ export async function saveUserCloudPreferences(userEmail: string, preferences: U
 
 /**
  * App Users / Administrators Cloud Storage
- * Centralized store with multi-tier resilience: Local Cache + Audit Log Recovery + Firestore + Server API
+ * Centralized store with single source of truth: Firestore + Server API + Local Cache & Deletion Tombstones
  */
 export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
+  const deleted = getDeletedUsersSet();
   const usersMap = new Map<string, AppUserRecord>();
 
-  // 1. Initial baseline from bootstrap administrators
-  for (const u of DEFAULT_APP_USERS) {
-    if (u && u.email) usersMap.set(u.email.toLowerCase().trim(), u);
-  }
-
-  // 2. Load from local cache for immediate access
+  // 1. Load from local cache for immediate display
   for (const u of getLocalUsersCache()) {
-    if (u && u.email) usersMap.set(u.email.toLowerCase().trim(), u);
-  }
-
-  // 3. Recover any users recorded in the audit logs (e.g., from prior registrations)
-  for (const u of extractUsersFromAuditLogs()) {
-    const key = u.email.toLowerCase().trim();
-    if (!usersMap.has(key)) {
-      usersMap.set(key, u);
+    if (u && u.email && !deleted.has(u.email.toLowerCase().trim())) {
+      usersMap.set(u.email.toLowerCase().trim(), u);
     }
   }
 
-  // 4. Fetch directly from Firestore
+  // 2. Fetch directly from Firestore (authoritative)
   try {
     const usersCol = collection(db, 'app_users');
     const snap = await getDocs(usersCol);
-    snap.forEach((d) => {
-      const data = d.data() as AppUserRecord;
-      if (data && data.email) {
-        const key = data.email.toLowerCase().trim();
-        usersMap.set(key, { ...(usersMap.get(key) || {}), ...data });
+    if (!snap.empty) {
+      const firestoreUsers = new Map<string, AppUserRecord>();
+      snap.forEach((d) => {
+        const data = d.data() as AppUserRecord;
+        if (data && data.email) {
+          const key = data.email.toLowerCase().trim();
+          if (!deleted.has(key)) {
+            firestoreUsers.set(key, data);
+          }
+        }
+      });
+      if (firestoreUsers.size > 0) {
+        const result = Array.from(firestoreUsers.values());
+        saveLocalUsersCache(result);
+        return result;
       }
-    });
+    }
   } catch (e) {
     console.warn('[Firestore] Notice fetching users from Firestore:', e);
   }
 
-  // 5. Query backend server API
+  // 3. Query backend server API
   try {
     const res = await authFetch('/api/data/users');
     if (res.ok) {
@@ -1086,12 +1084,24 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
         json.data.forEach((u: AppUserRecord) => {
           if (u && u.email) {
             const key = u.email.toLowerCase().trim();
-            usersMap.set(key, { ...(usersMap.get(key) || {}), ...u });
+            if (!deleted.has(key)) {
+              usersMap.set(key, u);
+            }
           }
         });
       }
     }
   } catch (_) {}
+
+  // 4. Default seed if completely empty
+  if (usersMap.size === 0) {
+    for (const u of DEFAULT_APP_USERS) {
+      const key = u.email.toLowerCase().trim();
+      if (!deleted.has(key)) {
+        usersMap.set(key, u);
+      }
+    }
+  }
 
   const result = Array.from(usersMap.values());
   saveLocalUsersCache(result);
@@ -1101,6 +1111,10 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
 export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
   if (!user.email) return false;
   const cleanEmail = user.email.toLowerCase().trim();
+
+  // If user was previously deleted, unmark so they are restored cleanly
+  unmarkUserAsDeleted(cleanEmail);
+
   const safeDoc: AppUserRecord = sanitizeForFirestore({
     ...user,
     email: cleanEmail,
@@ -1128,10 +1142,11 @@ export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
     const emailDocRef = doc(db, 'app_users', cleanEmail);
     await setDoc(emailDocRef, safeDoc, { merge: true });
 
+    // Clean up any legacy sanitized safeKey document to prevent duplicate entries
     const safeKey = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
     if (safeKey !== cleanEmail) {
       const safeKeyDocRef = doc(db, 'app_users', safeKey);
-      await setDoc(safeKeyDocRef, safeDoc, { merge: true }).catch(() => {});
+      await deleteDoc(safeKeyDocRef).catch(() => {});
     }
     return true;
   } catch (e) {
@@ -1144,21 +1159,24 @@ export async function deleteCentralUser(email: string): Promise<boolean> {
   if (!email) return false;
   const cleanEmail = email.toLowerCase().trim();
 
-  // 1. Immediately update local cache
+  // 1. Mark in tombstone set so it can NEVER be resurrected by cache, defaults, or stale queries
+  markUserAsDeleted(cleanEmail);
+
+  // 2. Immediately update local cache
   try {
     const current = getLocalUsersCache();
     const updated = current.filter((u) => u.email.toLowerCase().trim() !== cleanEmail);
     saveLocalUsersCache(updated);
   } catch (_) {}
 
-  // 2. Delete through backend server
+  // 3. Delete through backend server
   authFetch('/api/data/users/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: cleanEmail }),
   }).catch(() => {});
 
-  // 3. Delete from Firestore directly
+  // 4. Delete from Firestore directly
   try {
     const emailDocRef = doc(db, 'app_users', cleanEmail);
     await deleteDoc(emailDocRef);
@@ -1181,25 +1199,21 @@ export function subscribeToUsersFirestore(
   return onSnapshot(
     collection(db, 'app_users'),
     (snap) => {
-      const map = new Map<string, AppUserRecord>();
-      // Seed with local cache and defaults first
-      for (const u of getLocalUsersCache()) {
-        if (u && u.email) map.set(u.email.toLowerCase().trim(), u);
-      }
-      for (const u of extractUsersFromAuditLogs()) {
-        const key = u.email.toLowerCase().trim();
-        if (!map.has(key)) map.set(key, u);
-      }
+      const usersMap = new Map<string, AppUserRecord>();
+      const deleted = getDeletedUsersSet();
       snap.forEach((d) => {
         const data = d.data() as AppUserRecord;
         if (data && data.email) {
           const key = data.email.toLowerCase().trim();
-          map.set(key, { ...(map.get(key) || {}), ...data });
+          if (!deleted.has(key)) {
+            const existing = usersMap.get(key);
+            usersMap.set(key, existing ? { ...existing, ...data } : { ...data, email: key });
+          }
         }
       });
-      const combined = Array.from(map.values());
-      saveLocalUsersCache(combined);
-      onUpdate(combined);
+      const uniqueUsers = deduplicateUsers(Array.from(usersMap.values()));
+      saveLocalUsersCache(uniqueUsers);
+      onUpdate(uniqueUsers);
     },
     (err) => console.warn('[Firestore Live] users listener note:', err.message)
   );

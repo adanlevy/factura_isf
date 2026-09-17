@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { AppUserRecord, UserProfile } from '../types';
 import { matchesSearch } from '../utils/helpers';
+import { deduplicateUsers } from '../utils/cloudSync';
 
 interface AdminUsersViewProps {
   users: AppUserRecord[];
@@ -48,8 +49,9 @@ export function AdminUsersView({
   const [userToDelete, setUserToDelete] = useState<AppUserRecord | null>(null);
 
   const filteredUsers = useMemo(() => {
-    if (!searchTerm.trim()) return users;
-    return users.filter((u) => matchesSearch([u.name, u.email, u.notes, u.role], searchTerm));
+    const list = deduplicateUsers(users);
+    if (!searchTerm.trim()) return list;
+    return list.filter((u) => matchesSearch([u.name, u.email, u.notes, u.role], searchTerm));
   }, [users, searchTerm]);
 
   const handleAddSubmit = async (e: React.FormEvent) => {
@@ -318,13 +320,13 @@ export function AdminUsersView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {filteredUsers.map((user) => {
+              {filteredUsers.map((user, idx) => {
                 const isCurrent = user.email.toLowerCase() === currentUser.email.toLowerCase();
                 const isAdmin = user.role === 'admin';
                 const isCcAll = Boolean(user.ccAllOutgoingEmails);
 
                 return (
-                  <tr key={user.email} className="hover:bg-slate-50/60 transition-colors">
+                  <tr key={`${user.email.toLowerCase().trim()}_${idx}`} className="hover:bg-slate-50/60 transition-colors">
                     
                     {/* User info */}
                     <td className="py-3.5 px-4 sm:px-6">

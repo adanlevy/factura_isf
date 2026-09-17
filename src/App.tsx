@@ -66,6 +66,7 @@ import {
   subscribeToUsersFirestore,
   DEFAULT_APP_USERS,
   getLocalUsersCache,
+  deduplicateUsers,
   subscribeToRealtimeFirestore,
   fetchExpensesPage,
   ExpenseQueryOptions,
@@ -159,7 +160,7 @@ export default function App() {
   const [availableCategories, setAvailableCategories] = useState<string[]>(DEFAULT_CATEGORIES);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => getLocalUsersCache());
+  const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
@@ -312,13 +313,14 @@ export default function App() {
         // Hydrate users/administrators from Firestore
         const cloudUsers = await fetchCentralUsers();
         if (cloudUsers && cloudUsers.length > 0 && isMounted) {
-          setAppUsers(cloudUsers);
+          const uniqueCloudUsers = deduplicateUsers(cloudUsers);
+          setAppUsers(uniqueCloudUsers);
 
           // Synchronize active session role with Firestore
           const current = currentUserRef.current;
           if (current?.email) {
             const currentEmailClean = current.email.toLowerCase().trim();
-            const meInCloud = cloudUsers.find(
+            const meInCloud = uniqueCloudUsers.find(
               (u) => u.email.toLowerCase().trim() === currentEmailClean
             );
             if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {
@@ -381,13 +383,14 @@ export default function App() {
     const unsubscribeUsers = subscribeToUsersFirestore((incomingUsers) => {
       if (!isMounted) return;
       if (incomingUsers && incomingUsers.length > 0) {
-        setAppUsers(incomingUsers);
+        const uniqueIncoming = deduplicateUsers(incomingUsers);
+        setAppUsers(uniqueIncoming);
 
         // Real-time synchronization of current active user session role
         const current = currentUserRef.current;
         if (current?.email) {
           const currentEmailClean = current.email.toLowerCase().trim();
-          const meInCloud = incomingUsers.find(
+          const meInCloud = uniqueIncoming.find(
             (u) => u.email.toLowerCase().trim() === currentEmailClean
           );
           if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {

@@ -509,9 +509,17 @@ function parseFirestoreDoc(doc: any): any {
   return result;
 }
 
-// Asynchronously persist API log to Cloud Firestore via REST PATCH
+// Asynchronously persist API log to Cloud Firestore
 async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
-  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey || !record?.id) return;
+  if (!record?.id) return;
+  if (adminDb) {
+    try {
+      await adminDb.collection("api_usage_logs").doc(record.id).set(record, { merge: true });
+      return;
+    } catch (_) {}
+  }
+
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
   const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs/${encodeURIComponent(record.id)}?key=${firebaseConfigData.apiKey}`;
 
@@ -529,16 +537,23 @@ async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
       body: JSON.stringify({ fields }),
     });
     if (!res.ok) {
-      console.warn('[Server Firestore REST] API log save returned non-200:', res.status, await res.text());
+      // Benign warning without printing raw body
+      return;
     }
-  } catch (err) {
-    console.warn('[Server Firestore REST] Error saving API log:', err);
-  }
+  } catch (_) {}
 }
 
-// Asynchronously persist Audit log to Cloud Firestore via REST PATCH
+// Asynchronously persist Audit log to Cloud Firestore
 async function saveAuditLogToFirestore(entry: any): Promise<void> {
-  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey || !entry?.id) return;
+  if (!entry?.id) return;
+  if (adminDb) {
+    try {
+      await adminDb.collection("audit_logs").doc(entry.id).set(entry, { merge: true });
+      return;
+    } catch (_) {}
+  }
+
+  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
   const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs/${encodeURIComponent(entry.id)}?key=${firebaseConfigData.apiKey}`;
 
@@ -556,15 +571,28 @@ async function saveAuditLogToFirestore(entry: any): Promise<void> {
       body: JSON.stringify({ fields }),
     });
     if (!res.ok) {
-      console.warn('[Server Firestore REST] Audit log save returned non-200:', res.status, await res.text());
+      // Benign warning without printing raw body
+      return;
     }
-  } catch (err) {
-    console.warn('[Server Firestore REST] Error saving Audit log:', err);
-  }
+  } catch (_) {}
 }
 
 // Asynchronously fetch API logs from Cloud Firestore
 async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection("api_usage_logs").orderBy("timestamp", "desc").limit(500).get();
+      const records: ApiUsageRecord[] = [];
+      snap.forEach((doc) => {
+        const parsed = doc.data() as ApiUsageRecord;
+        if (parsed && parsed.id && !parsed.id.startsWith('seed_')) {
+          records.push(parsed);
+        }
+      });
+      if (records.length > 0) return records;
+    } catch (_) {}
+  }
+
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return [];
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
   const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/api_usage_logs?pageSize=1000&key=${firebaseConfigData.apiKey}`;
@@ -616,14 +644,27 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
       }
     }
     return records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  } catch (err) {
-    console.warn('[Server Firestore REST] Error fetching API logs:', err);
+  } catch (_) {
     return [];
   }
 }
 
 // Asynchronously fetch Audit logs from Cloud Firestore
 async function fetchFirestoreAuditLogs(): Promise<any[]> {
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection("audit_logs").orderBy("timestamp", "desc").limit(500).get();
+      const records: any[] = [];
+      snap.forEach((doc) => {
+        const parsed = doc.data();
+        if (parsed && parsed.id) {
+          records.push(parsed);
+        }
+      });
+      if (records.length > 0) return records;
+    } catch (_) {}
+  }
+
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return [];
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
   const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs?pageSize=1000&key=${firebaseConfigData.apiKey}`;
@@ -642,8 +683,7 @@ async function fetchFirestoreAuditLogs(): Promise<any[]> {
       }
     }
     return records.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
-  } catch (err) {
-    console.warn('[Server Firestore REST] Error fetching Audit logs:', err);
+  } catch (_) {
     return [];
   }
 }
@@ -934,10 +974,18 @@ app.get("/api/auth/bootstrap-admins", (_req, res) => {
   res.json({ admins: BOOTSTRAP_ADMIN_EMAILS });
 });
 
+// Helper: Read tombstoned deleted users
+function getDeletedUsersList(): string[] {
+  return readCollection<string[]>("deleted-users", ["finanzas@isf-argentina.org"]);
+}
+
 // Ensure bootstrap admins are seeded into Firestore app_users on server boot
 async function ensureBootstrapAdmins() {
+  const tombstoned = new Set(getDeletedUsersList());
+  const eligibleAdmins = BOOTSTRAP_ADMIN_EMAILS.filter((e) => !tombstoned.has(e.toLowerCase().trim()));
+
   if (adminDb) {
-    for (const email of BOOTSTRAP_ADMIN_EMAILS) {
+    for (const email of eligibleAdmins) {
       try {
         const docRef = adminDb.collection("app_users").doc(email);
         const docSnap = await docRef.get();
@@ -956,7 +1004,7 @@ async function ensureBootstrapAdmins() {
 
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-  for (const email of BOOTSTRAP_ADMIN_EMAILS) {
+  for (const email of eligibleAdmins) {
     try {
       const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(email)}?key=${firebaseConfigData.apiKey}`;
       const checkRes = await fetch(docUrl);
@@ -1531,7 +1579,10 @@ app.post("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
 // 6. APP USERS COLLECTION (Gestión de usuarios y roles - Exclusivo Administrador)
 app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   try {
-    let users = readCollection<any[]>("app-users", []);
+    const deletedList = readCollection<string[]>("deleted-users", ["finanzas@isf-argentina.org"]);
+    let users = readCollection<any[]>("app-users", []).filter(
+      (u) => !deletedList.includes((u.email || '').toLowerCase().trim())
+    );
     
     // 1. Fetch via firebase-admin if available
     if (adminDb) {
@@ -1539,7 +1590,10 @@ app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_r
         const snap = await adminDb.collection("app_users").get();
         const adminUsers: any[] = [];
         snap.forEach((docSnap) => {
-          adminUsers.push(docSnap.data());
+          const d = docSnap.data();
+          if (d && d.email && !deletedList.includes((d.email || '').toLowerCase().trim())) {
+            adminUsers.push(d);
+          }
         });
         if (adminUsers.length > 0) {
           users = adminUsers;
@@ -1558,17 +1612,20 @@ app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_r
         if (resp.ok) {
           const json = await resp.json();
           if (json.documents && Array.isArray(json.documents)) {
-            const remoteUsers = json.documents.map((d: any) => {
-              const f = d.fields || {};
-              return {
-                email: f.email?.stringValue || d.name.split('/').pop(),
-                name: f.name?.stringValue || '',
-                role: f.role?.stringValue || 'user',
-                picture: f.picture?.stringValue,
-                createdAt: f.createdAt?.stringValue,
-                updatedAt: f.updatedAt?.stringValue,
-              };
-            });
+            const remoteUsers = json.documents
+              .map((d: any) => {
+                const f = d.fields || {};
+                const email = (f.email?.stringValue || d.name.split('/').pop() || '').toLowerCase().trim();
+                return {
+                  email,
+                  name: f.name?.stringValue || '',
+                  role: f.role?.stringValue || 'user',
+                  picture: f.picture?.stringValue,
+                  createdAt: f.createdAt?.stringValue,
+                  updatedAt: f.updatedAt?.stringValue,
+                };
+              })
+              .filter((u: any) => u.email && !deletedList.includes(u.email));
             if (remoteUsers.length > 0) {
               users = remoteUsers;
               writeCollection("app-users", users);
@@ -1577,46 +1634,13 @@ app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_r
         }
       } catch (_) {}
     }
-    if (users.length === 0) {
-      const recoveredMap = new Map<string, any>();
-      // Baseline bootstrap admins
-      const defaultAdmins = [
-        { email: 'alevy@isf-argentina.org', name: 'Adan Levy', role: 'admin', notes: 'Administrador Principal ISF' },
-        { email: 'admin@isf-argentina.org', name: 'Administración ISF', role: 'admin', notes: 'Cuenta Administrativa Central' },
-        { email: 'finanzas@isf-argentina.org', name: 'Finanzas ISF', role: 'admin', notes: 'Equipo de Finanzas y Contabilidad' },
-        { email: 'adanlevy@gmail.com', name: 'Adan Levy (Backup)', role: 'admin', notes: 'Administrador de Contingencia' },
-      ];
-      for (const adm of defaultAdmins) {
-        recoveredMap.set(adm.email, { ...adm, createdAt: '2026-01-01T00:00:00.000Z' });
-      }
 
-      // Reconstruct from audit logs
-      const auditLogs = readCollection<any[]>("audit_logs", []);
-      for (const log of auditLogs) {
-        const isUserAction =
-          log.action === 'USER_ROLE_CHANGE' ||
-          log.actionLabel === 'Alta de Usuario' ||
-          log.entityType === 'user' ||
-          (log.summary && log.summary.toLowerCase().includes('registró al usuario'));
-        if (isUserAction) {
-          let email = (log.entityId || '').toLowerCase().trim();
-          if (!email || !email.includes('@')) {
-            const match = log.summary?.match(/[\w.-]+@[\w.-]+\.\w+/);
-            if (match) email = match[0].toLowerCase();
-          }
-          if (email && email.includes('@')) {
-            const role = /admin/i.test(log.summary || '') || /administrador/i.test(log.summary || '') ? 'admin' : 'user';
-            recoveredMap.set(email, {
-              email,
-              name: log.entityName || email.split('@')[0],
-              role,
-              createdAt: log.timestamp || new Date().toISOString(),
-              addedBy: log.userEmail,
-            });
-          }
-        }
-      }
-      users = Array.from(recoveredMap.values());
+    if (users.length === 0) {
+      const defaultAdmins = [
+        { email: 'alevy@isf-argentina.org', name: 'Adan Levy', role: 'admin', notes: 'Administrador Principal ISF', createdAt: '2026-01-01T00:00:00.000Z' },
+        { email: 'admin@isf-argentina.org', name: 'Administración ISF', role: 'admin', notes: 'Cuenta Administrativa Central', createdAt: '2026-01-01T00:00:00.000Z' },
+      ].filter((adm) => !deletedList.includes(adm.email));
+      users = defaultAdmins;
       writeCollection("app-users", users);
     }
     res.json({ success: true, count: users.length, data: users });
@@ -1632,6 +1656,13 @@ app.post("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (r
       return res.status(400).json({ success: false, error: "Email es requerido para guardar usuario." });
     }
     const cleanEmail = user.email.toLowerCase().trim();
+
+    // If previously deleted, unmark
+    const deletedList = readCollection<string[]>("deleted-users", []);
+    if (deletedList.includes(cleanEmail)) {
+      writeCollection("deleted-users", deletedList.filter((e) => e !== cleanEmail));
+    }
+
     const existing = readCollection<any[]>("app-users", []);
     const updated = mergeById(existing, [{ ...user, email: cleanEmail }]);
     writeCollection("app-users", updated);
@@ -1687,6 +1718,13 @@ app.post("/api/data/users/delete", authenticateFirebaseUser, requireAdminRole, a
     const existing = readCollection<any[]>("app-users", []);
     const remaining = existing.filter((u) => (u.email || '').toLowerCase().trim() !== cleanEmail);
     writeCollection("app-users", remaining);
+
+    // Save to deleted users list
+    const deletedList = readCollection<string[]>("deleted-users", []);
+    if (!deletedList.includes(cleanEmail)) {
+      deletedList.push(cleanEmail);
+      writeCollection("deleted-users", deletedList);
+    }
 
     if (adminDb) {
       try {

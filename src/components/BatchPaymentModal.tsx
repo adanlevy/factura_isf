@@ -478,9 +478,9 @@ export function BatchPaymentModal({
                   Destinatarios ({recipientGroups.length}):
                 </span>
                 <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                  {recipientGroups.map((g) => (
+                  {recipientGroups.map((g, idx) => (
                     <div
-                      key={g.email}
+                      key={`${g.email}_${idx}`}
                       className="bg-white border border-slate-200 rounded-xl p-2.5 text-xs flex items-center justify-between shadow-2xs"
                     >
                       <div className="min-w-0 flex-1 mr-2">

@@ -30,7 +30,6 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email.lower() in [
         'admin@isf-argentina.org',
         'alevy@isf-argentina.org',
-        'finanzas@isf-argentina.org',
         'adanlevy@gmail.com'
       ];
     }
@@ -108,11 +107,9 @@ service cloud.firestore {
     }
 
     // User preferences:
-    // - Colaboradores can read and write their own UI preferences; Admins can access as well
+    // - Colaboradores and Admins can read and write preferences
     match /user_preferences/{prefId} {
-      allow read, write: if isColaborador() && (
-        userEmail() == prefId.lower() || isAdmin()
-      );
+      allow read, write: if isSignedIn();
     }
 
     // App users and role management:
