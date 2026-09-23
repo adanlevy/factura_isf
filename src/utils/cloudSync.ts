@@ -1356,6 +1356,29 @@ export function subscribeToUsersFirestore(
   );
 }
 
+/**
+ * Las primeras versiones de la app guardaban a cada usuario con una clave "limpia"
+ * (p. ej. juan_gmail_com). Las reglas de Firestore identifican a cada usuario por
+ * app_users/{email}, así que se crea ese documento canónico copiando el mismo rol
+ * (las reglas solo permiten copiar el rol que ya asignó un admin).
+ */
+async function migrateLegacyUserDoc(cleanEmail: string, legacy: AppUserRecord): Promise<void> {
+  if ((auth.currentUser?.email || '').toLowerCase().trim() !== cleanEmail) return;
+  const canonical: Record<string, unknown> = {
+    email: cleanEmail,
+    role: legacy.role,
+    updatedAt: new Date().toISOString(),
+  };
+  if (legacy.name) canonical.name = legacy.name;
+  if (legacy.picture) canonical.picture = legacy.picture;
+  if (legacy.createdAt) canonical.createdAt = legacy.createdAt;
+  try {
+    await setDoc(doc(db, 'app_users', cleanEmail), canonical, { merge: true });
+  } catch (e) {
+    console.warn('[Firestore] No se pudo migrar el registro de usuario al formato actual:', e);
+  }
+}
+
 export async function resolveUserRoleFromEmail(email: string): Promise<'admin' | 'user' | null> {
   const cleanEmail = (email || '').toLowerCase().trim();
   if (!cleanEmail) return null;
@@ -1376,7 +1399,8 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
       const safeSnap = await getDoc(doc(db, 'app_users', safeKey));
       if (safeSnap.exists()) {
         const data = safeSnap.data() as AppUserRecord;
-        if (data.role === 'admin' || data.role === 'user') {
+        if ((data.role === 'admin' || data.role === 'user') && (data.email || '').toLowerCase().trim() === cleanEmail) {
+          await migrateLegacyUserDoc(cleanEmail, data);
           return data.role;
         }
       }

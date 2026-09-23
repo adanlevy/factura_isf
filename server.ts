@@ -788,6 +788,39 @@ const BOOTSTRAP_ADMIN_EMAILS = (
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
+function legacyUserKey(email: string): string {
+  return email.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/**
+ * Crea el documento canónico app_users/{email} para usuarios registrados con la clave de las
+ * primeras versiones (p. ej. juan_gmail_com). Las reglas de Firestore identifican a los usuarios
+ * por email: sin esto, un usuario @gmail.com registrado hace tiempo no podría leer datos.
+ * No toca los documentos viejos y saltea usuarios dados de baja.
+ */
+async function migrateLegacyUserDocs() {
+  if (!adminDb) return;
+  try {
+    const deleted = new Set(getDeletedUsersList().map((e) => e.toLowerCase().trim()));
+    const snap = await adminDb.collection("app_users").get();
+    const canonicalIds = new Set(snap.docs.map((d) => d.id));
+    let migrated = 0;
+    for (const legacyDoc of snap.docs) {
+      const data = legacyDoc.data() || {};
+      const email = String(data.email || "").toLowerCase().trim();
+      if (!email || legacyDoc.id === email || canonicalIds.has(email) || deleted.has(email)) continue;
+      if (legacyDoc.id !== legacyUserKey(email)) continue;
+      if (data.role !== "admin" && data.role !== "user") continue;
+      await adminDb.collection("app_users").doc(email).set({ ...data, email, updatedAt: new Date().toISOString() });
+      canonicalIds.add(email);
+      migrated++;
+    }
+    if (migrated > 0) console.log(`[Users] Migrados ${migrated} usuario(s) del formato de clave viejo a app_users/{email}.`);
+  } catch (e: any) {
+    console.warn("[Users] No se pudo migrar usuarios con clave vieja:", e?.message || e);
+  }
+}
+
 async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'user' | null; canSwitchRole: boolean }> {
   if (!email) return { role: null, canSwitchRole: false };
   const cleanEmail = email.toLowerCase().trim();
@@ -800,6 +833,15 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
         const data = docSnap.data();
         const role = data?.role;
         if (role === 'admin' || role === 'user') {
+          return { role, canSwitchRole: role === 'admin' };
+        }
+      }
+      // Registro con la clave de las primeras versiones (p. ej. juan_gmail_com)
+      const legacySnap = await adminDb.collection("app_users").doc(legacyUserKey(cleanEmail)).get();
+      if (legacySnap.exists) {
+        const data = legacySnap.data();
+        const role = data?.role;
+        if ((role === 'admin' || role === 'user') && String(data?.email || '').toLowerCase().trim() === cleanEmail) {
           return { role, canSwitchRole: role === 'admin' };
         }
       }
@@ -1088,7 +1130,11 @@ async function ensureBootstrapAdmins() {
     } catch (_) {}
   }
 }
-setTimeout(() => ensureBootstrapAdmins().catch(() => {}), 2000);
+setTimeout(() => {
+  ensureBootstrapAdmins()
+    .catch(() => {})
+    .then(() => migrateLegacyUserDocs());
+}, 2000);
 
 // Endpoint: Clear API logs
 app.post("/api/system/clear-logs", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {

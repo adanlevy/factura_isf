@@ -137,6 +137,40 @@ await expectAllowed('Admin crea 15 comprobantes nuevos en un batch', async () =>
   await batch.commit();
 });
 
+// ------------------------------------ usuarios fuera de @isf-argentina.org
+await seed();
+await env.withSecurityRulesDisabled(async (ctx) => {
+  const db = ctx.firestore();
+  await db.doc('app_users/maria@hotmail.com').set({ email: 'maria@hotmail.com', name: 'María', role: 'user' });
+  // Registros de las primeras versiones de la app: clave "limpia" en vez del email
+  await db.doc('app_users/legacy_gmail_com').set({ email: 'legacy@gmail.com', name: 'Legacy', role: 'user' });
+  await db.doc('app_users/legacyadmin_gmail_com').set({ email: 'legacyadmin@gmail.com', name: 'Legacy Admin', role: 'admin' });
+  await db.doc('app_users/a_b_gmail_com').set({ email: 'a.b@gmail.com', name: 'A.B', role: 'user' });
+});
+const maria = as('maria@hotmail.com');
+await expectAllowed('Usuario registrado con cuenta Google de otro dominio (@hotmail.com) lee comprobantes', () => maria.doc('expenses/exp-otro').get());
+await expectAllowed('Usuario registrado @hotmail.com crea su comprobante', () => maria.doc('expenses/exp-maria').set({ id: 'exp-maria', submittedByEmail: 'maria@hotmail.com', amount: 10, reimbursementStatus: 'PENDING' }));
+await expectAllowed('Usuario registrado @gmail.com lee proveedores', () => colab.doc('vendors/v1').get());
+
+const legacy = as('legacy@gmail.com');
+const colision = as('a_b@gmail.com');
+await expectDenied('Usuario @gmail.com con registro viejo (sin migrar) todavía no lee comprobantes', () => legacy.doc('expenses/exp-otro').get());
+await expectAllowed('Registro viejo: el usuario lee su propio documento viejo (para migrarlo)', () => legacy.doc('app_users/legacy_gmail_com').get());
+await expectDenied('Registro viejo: no puede leer el documento viejo de otra persona', () => colision.doc('app_users/a_b_gmail_com').get().then((d) => { if (!d.exists) throw new Error('no'); }));
+await expectDenied('Registro viejo: no puede migrarse escalando el rol a admin', () => legacy.doc('app_users/legacy@gmail.com').set({ email: 'legacy@gmail.com', role: 'admin' }));
+await expectAllowed('Registro viejo: se migra a app_users/{email} con el mismo rol', () => legacy.doc('app_users/legacy@gmail.com').set({ email: 'legacy@gmail.com', name: 'Legacy', role: 'user', updatedAt: 'now' }, { merge: true }));
+await expectAllowed('...y ya migrado lee comprobantes', () => legacy.doc('expenses/exp-otro').get());
+
+const legacyAdmin = as('legacyadmin@gmail.com');
+await expectAllowed('Admin con registro viejo se migra conservando el rol admin', () => legacyAdmin.doc('app_users/legacyadmin@gmail.com').set({ email: 'legacyadmin@gmail.com', role: 'admin', updatedAt: 'now' }));
+await expectAllowed('...y ya migrado liquida comprobantes ajenos', () => legacyAdmin.doc('expenses/exp-otro').update({ ...PAID }));
+
+await expectDenied('Clave vieja que colisiona (a_b@ vs a.b@) no permite apropiarse del registro ajeno', () => colision.doc('app_users/a_b@gmail.com').set({ email: 'a_b@gmail.com', role: 'user' }));
+const gmailNuevo = as('nuevo.sin.registro@gmail.com');
+await expectDenied('Cuenta @gmail.com sin registro no puede auto-registrarse', () => gmailNuevo.doc('app_users/nuevo.sin.registro@gmail.com').set({ email: 'nuevo.sin.registro@gmail.com', role: 'user' }));
+await expectAllowed('Admin registra un usuario @gmail.com nuevo', () => jefe.doc('app_users/nuevo.sin.registro@gmail.com').set({ email: 'nuevo.sin.registro@gmail.com', role: 'user' }));
+await expectAllowed('...y ese usuario ya puede leer comprobantes', () => gmailNuevo.doc('expenses/exp-otro').get());
+
 // ------------------------------------------------------------------ reporte
 await env.cleanup();
 console.log('\n=== Reglas de Firestore ===');

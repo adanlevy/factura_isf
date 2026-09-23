@@ -174,13 +174,41 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
+    // Clave de documento que usaban las primeras versiones de la app (p. ej. juan_gmail_com)
+    function legacyUserKey() {
+      return userEmail().replace('[^a-zA-Z0-9_-]', '_');
+    }
+
+    function legacyUserDoc() {
+      return get(/databases/$(database)/documents/app_users/$(legacyUserKey())).data;
+    }
+
+    // Migración de usuarios registrados con el formato viejo (cualquier dominio, p. ej. @gmail.com):
+    // crean su documento canónico (ID = email) copiando EXACTAMENTE el rol que ya les asignó un admin.
+    // Se exige que el email del documento viejo sea el suyo (claves como a.b@x / a_b@x colisionan).
+    function isLegacyUserMigration(userDocId) {
+      return isSignedIn() &&
+        userDocId == userEmail() &&
+        exists(/databases/$(database)/documents/app_users/$(legacyUserKey())) &&
+        legacyUserDoc().get('email', '') is string &&
+        legacyUserDoc().get('email', '').lower() == userEmail() &&
+        legacyUserDoc().get('role', '') in ['user', 'admin'] &&
+        request.resource.data.get('role', '') == legacyUserDoc().get('role', '') &&
+        request.resource.data.keys().hasOnly(['email', 'name', 'picture', 'role', 'createdAt', 'updatedAt']);
+    }
+
     // Usuarios y roles (app_users):
     // - Colaboradores y Admins leen el directorio; cada uno puede leer su propio registro
-    // - Alta: Admins, o un miembro verificado de @isf-argentina.org registrándose a sí mismo con rol 'user'
+    // - Alta: Admins (cualquier dominio: @gmail.com, etc.), un miembro verificado de @isf-argentina.org
+    //   registrándose a sí mismo con rol 'user', o la migración de un usuario con registro en formato viejo
     // - Auto-actualización: solo nombre/foto/fecha; nunca rol ni copia global (ccAllOutgoingEmails)
     match /app_users/{userDocId} {
-      allow read: if isColaborador() || (isSignedIn() && userDocId == userEmail());
-      allow create: if isAdmin() || (
+      allow read: if isColaborador() ||
+        (isSignedIn() && userDocId == userEmail()) ||
+        // su propio registro en formato viejo (para poder migrarlo al iniciar sesión)
+        (isSignedIn() && userDocId == legacyUserKey() && resource != null &&
+          resource.data.get('email', '') is string && resource.data.get('email', '').lower() == userEmail());
+      allow create: if isAdmin() || isLegacyUserMigration(userDocId) || (
         isOrgMember() &&
         userDocId == userEmail() &&
         request.resource.data.get('role', '') == 'user' &&
