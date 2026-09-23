@@ -135,6 +135,7 @@ export interface SyncPayload {
   costCenters: CostCenter[];
   categories: string[];
   hasMore?: boolean;
+  removedExpenseIds?: string[];
 }
 
 export interface UserPreferencesPayload {
@@ -144,16 +145,60 @@ export interface UserPreferencesPayload {
   theme?: string;
 }
 
-// Track IDs of expenses and vendors deleted in this session to prevent race condition resurrection
+// Persistent tombstone tracking of deleted expenses across sessions and browser tabs
+const DELETED_EXPENSES_STORAGE_KEY = 'isf_deleted_expense_ids_v2';
 const sessionDeletedExpenseIds = new Set<string>();
 export const sessionDeletedVendorIds = new Set<string>();
 
+function initDeletedExpensesFromStorage() {
+  try {
+    const raw = localStorage.getItem(DELETED_EXPENSES_STORAGE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        arr.forEach((id) => {
+          if (typeof id === 'string' && id.trim()) {
+            sessionDeletedExpenseIds.add(id.trim());
+          }
+        });
+      }
+    }
+  } catch {}
+}
+initDeletedExpensesFromStorage();
+
+export function getDeletedExpensesSet(): Set<string> {
+  initDeletedExpensesFromStorage();
+  return sessionDeletedExpenseIds;
+}
+
 export function trackDeletedExpenseId(id: string) {
-  sessionDeletedExpenseIds.add(id);
+  if (!id || typeof id !== 'string') return;
+  const cleanId = id.trim();
+  if (!cleanId) return;
+  sessionDeletedExpenseIds.add(cleanId);
+  try {
+    const arr = Array.from(sessionDeletedExpenseIds).slice(-3000);
+    localStorage.setItem(DELETED_EXPENSES_STORAGE_KEY, JSON.stringify(arr));
+  } catch {}
+}
+
+export function clearDeletedExpenseId(id: string) {
+  if (!id) return;
+  sessionDeletedExpenseIds.delete(id.trim());
+  try {
+    const arr = Array.from(sessionDeletedExpenseIds);
+    localStorage.setItem(DELETED_EXPENSES_STORAGE_KEY, JSON.stringify(arr));
+  } catch {}
+}
+
+export function isExpenseDeletedInSession(id: string): boolean {
+  return getDeletedExpensesSet().has(id?.trim?.() || id);
 }
 
 export function trackDeletedVendorId(id: string) {
-  sessionDeletedVendorIds.add(id);
+  if (!id) return;
+  sessionDeletedVendorIds.add(id.trim());
 }
 
 // Helper to remove undefined fields which Firestore rejects
@@ -232,6 +277,7 @@ export function prepareExpenseForFirestore(expense: Expense): any {
  */
 export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expense[] {
   const map = new Map<string, Expense>();
+  const deletedSet = getDeletedExpensesSet();
 
   // Helper to extract highest modification timestamp
   const getTimestamp = (exp: Expense): number => {
@@ -253,10 +299,10 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
     return max;
   };
 
-  // 1. Populate map with local expenses
+  // 1. Populate map with local expenses (strictly excluding any tombstoned / deleted IDs)
   if (Array.isArray(local)) {
     for (const exp of local) {
-      if (exp && exp.id && !sessionDeletedExpenseIds.has(exp.id)) {
+      if (exp && exp.id && !deletedSet.has(exp.id)) {
         const b = exp.bankDetails;
         const hasBank = Boolean(
           b &&
@@ -271,10 +317,10 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
     }
   }
 
-  // 2. Incoming cloud expenses: merge respecting latest timestamps & preserving local cache
+  // 2. Incoming cloud expenses: merge respecting latest timestamps & strictly excluding deleted
   if (Array.isArray(incoming)) {
     for (const cloudExp of incoming) {
-      if (cloudExp && cloudExp.id && !sessionDeletedExpenseIds.has(cloudExp.id)) {
+      if (cloudExp && cloudExp.id && !deletedSet.has(cloudExp.id)) {
         const cloudB = cloudExp.bankDetails;
         const hasCloudBank = Boolean(
           cloudB &&
@@ -646,10 +692,22 @@ export function subscribeToRealtimeFirestore(
   const unsubExpenses = onSnapshot(
     expensesQuery,
     (snap) => {
+      const removedIds: string[] = [];
+      snap.docChanges().forEach((change) => {
+        if (change.type === 'removed' && change.doc.id) {
+          trackDeletedExpenseId(change.doc.id);
+          removedIds.push(change.doc.id);
+        }
+      });
+      const deletedSet = getDeletedExpensesSet();
       const expenses: Expense[] = [];
-      snap.forEach((d) => expenses.push(d.data() as Expense));
+      snap.forEach((d) => {
+        if (d.id && !deletedSet.has(d.id)) {
+          expenses.push(d.data() as Expense);
+        }
+      });
       const hasMore = snap.size >= currentLimit;
-      onUpdate({ expenses, hasMore });
+      onUpdate({ expenses, removedExpenseIds: removedIds, hasMore });
     },
     (err) => {
       console.warn('[Firestore Live] expenses listener note:', err.message);
@@ -659,9 +717,21 @@ export function subscribeToRealtimeFirestore(
           unsubFallbackExpenses = onSnapshot(
             fallbackQuery,
             (fallbackSnap) => {
+              const removedIds: string[] = [];
+              fallbackSnap.docChanges().forEach((change) => {
+                if (change.type === 'removed' && change.doc.id) {
+                  trackDeletedExpenseId(change.doc.id);
+                  removedIds.push(change.doc.id);
+                }
+              });
+              const deletedSet = getDeletedExpensesSet();
               const fallbackExpenses: Expense[] = [];
-              fallbackSnap.forEach((d) => fallbackExpenses.push(d.data() as Expense));
-              onUpdate({ expenses: fallbackExpenses, hasMore: fallbackSnap.size >= currentLimit });
+              fallbackSnap.forEach((d) => {
+                if (d.id && !deletedSet.has(d.id)) {
+                  fallbackExpenses.push(d.data() as Expense);
+                }
+              });
+              onUpdate({ expenses: fallbackExpenses, removedExpenseIds: removedIds, hasMore: fallbackSnap.size >= currentLimit });
             },
             (fallbackErr) => {
               console.warn('[Firestore Live] fallback expenses listener note:', fallbackErr.message);
@@ -795,32 +865,42 @@ export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> 
 }
 
 export async function deleteCentralExpenses(ids: string[]): Promise<boolean> {
-  try {
-    ids.forEach((id) => trackDeletedExpenseId(id));
-    const batch = writeBatch(db);
-    for (const id of ids) {
-      if (id) {
-        const docRef = doc(db, 'expenses', id);
-        batch.delete(docRef);
-      }
-    }
-    await batch.commit();
+  const cleanIds = Array.from(
+    new Set((ids || []).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
+  );
+  if (cleanIds.length === 0) return true;
 
-    authFetch('/api/data/expenses/delete', {
+  // 1. Immediately track as deleted locally and in localStorage
+  cleanIds.forEach((id) => trackDeletedExpenseId(id));
+
+  // 2. Persist deletion to backend server store immediately
+  try {
+    await authFetch('/api/data/expenses/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    }).catch(() => {});
+      body: JSON.stringify({ ids: cleanIds }),
+    });
+  } catch (serverErr) {
+    console.warn('[Delete] Notice mirroring deletion to server store:', serverErr);
+  }
 
+  // 3. Delete from Firestore in batches or individual fallback
+  try {
+    for (let i = 0; i < cleanIds.length; i += 400) {
+      const chunk = cleanIds.slice(i, i + 400);
+      const batch = writeBatch(db);
+      for (const id of chunk) {
+        batch.delete(doc(db, 'expenses', id));
+      }
+      await batch.commit();
+    }
     return true;
   } catch (e) {
-    console.warn('[Firestore] Error deleting expenses batch:', e);
-    for (const id of ids) {
-      if (id) {
-        deleteDoc(doc(db, 'expenses', id)).catch(() => {});
-      }
-    }
-    return false;
+    console.warn('[Firestore] Error deleting expenses batch, executing individual deleteDoc fallback:', e);
+    await Promise.allSettled(
+      cleanIds.map((id) => deleteDoc(doc(db, 'expenses', id)))
+    );
+    return true;
   }
 }
 

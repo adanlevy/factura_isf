@@ -355,22 +355,24 @@ export function AdminMovementView({
 
   const handleConfirmBatchDelete = () => {
     if (selectedIds.length === 0) return;
-    if (onBatchDeleteExpenses) {
-      onBatchDeleteExpenses(selectedIds);
-    } else if (onDeleteExpense) {
-      selectedIds.forEach((id) => onDeleteExpense(id));
-    }
+    const targetIds = [...selectedIds];
     setSelectedIds([]);
     setShowBatchDeleteModal(false);
+    if (onBatchDeleteExpenses) {
+      onBatchDeleteExpenses(targetIds);
+    } else if (onDeleteExpense) {
+      targetIds.forEach((id) => onDeleteExpense(id));
+    }
   };
 
   const handleConfirmSingleDelete = () => {
     if (!expenseToDelete) return;
-    if (onDeleteExpense) {
-      onDeleteExpense(expenseToDelete.id);
-    }
-    setSelectedIds((prev) => prev.filter((id) => id !== expenseToDelete.id));
+    const targetId = expenseToDelete.id;
     setExpenseToDelete(null);
+    setSelectedIds((prev) => prev.filter((id) => id !== targetId));
+    if (onDeleteExpense) {
+      onDeleteExpense(targetId);
+    }
   };
 
   const handleExportSelectedCSV = () => {

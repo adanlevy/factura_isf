@@ -58,7 +58,7 @@ service cloud.firestore {
     // Expenses collection:
     // - Only Colaboradores and Admins can read expenses (contains sensitive financial amounts, vendors, banking info)
     // - Colaboradores can create/update their own expenses
-    // - Only Admins can delete expenses or approve/pay them
+    // - Admins, organization members, and expense submitters can delete expenses
     match /expenses/{expenseId} {
       allow read: if isColaborador();
 
@@ -77,7 +77,15 @@ service cloud.firestore {
         ('submittedByEmail' in request.resource.data && request.resource.data.submittedByEmail.lower() == userEmail())
       );
 
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && (
+        isAdmin() ||
+        isOrgMember() ||
+        (isColaborador() && (
+          !('submittedByEmail' in resource.data) ||
+          resource.data.submittedByEmail.lower() == userEmail() ||
+          ('userEmail' in resource.data && resource.data.userEmail.lower() == userEmail())
+        ))
+      );
     }
 
     // Vendors catalog (contains sensitive banking details: CBU, Alias, CUIT):

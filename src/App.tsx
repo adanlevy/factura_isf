@@ -58,6 +58,8 @@ import {
   upsertCentralExpenses,
   deleteCentralExpenses,
   deleteCentralVendors,
+  trackDeletedExpenseId,
+  getDeletedExpensesSet,
   fetchUserCloudPreferences,
   saveUserCloudPreferences,
   fetchCentralUsers,
@@ -270,8 +272,13 @@ export default function App() {
           limitCount: queryLimit,
         });
         if (cloudData && isMounted) {
+          const deletedSet = getDeletedExpensesSet();
           if (Array.isArray(cloudData.expenses)) {
-            setExpenses((prev) => mergeExpensesList(prev, cloudData.expenses));
+            setExpenses((prev) => {
+              const filteredPrev = prev.filter((e) => e && e.id && !deletedSet.has(e.id));
+              const filteredIncoming = cloudData.expenses.filter((e) => e && e.id && !deletedSet.has(e.id));
+              return mergeExpensesList(filteredPrev, filteredIncoming);
+            });
           }
           if (cloudData.hasMore !== undefined) {
             setHasMoreExpenses(cloudData.hasMore);
@@ -359,8 +366,17 @@ export default function App() {
     const unsubscribeRealtime = subscribeToRealtimeFirestore(
       (incoming) => {
         if (!isMounted) return;
+        const deletedSet = getDeletedExpensesSet();
+        const removedIds = incoming.removedExpenseIds || [];
+        if (removedIds.length > 0) {
+          setExpenses((prev) => prev.filter((e) => !removedIds.includes(e.id)));
+        }
         if (incoming.expenses) {
-          setExpenses((prev) => mergeExpensesList(prev, incoming.expenses || []));
+          setExpenses((prev) => {
+            const filteredPrev = prev.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id));
+            const filteredIncoming = incoming.expenses!.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id));
+            return mergeExpensesList(filteredPrev, filteredIncoming);
+          });
         }
         if (incoming.hasMore !== undefined) {
           setHasMoreExpenses(incoming.hasMore);
@@ -1242,10 +1258,42 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (id: string) => {
+    if (!id) return;
     const toDelete = expenses.find((e) => e.id === id);
+    // 1. Immediate optimistic UI update and persistent tombstone tracking
     setExpenses((prev) => prev.filter((e) => e.id !== id));
-    await deleteCentralExpenses([id]);
+    trackDeletedExpenseId(id);
     removeCachedReceiptFile(id).catch(() => {});
+    removeCachedPaymentProofFile(id).catch(() => {});
+    removeCachedWithholdingCertificateFile(id).catch(() => {});
+
+    // 2. Cleanup associated files in Google Drive if present
+    if (toDelete) {
+      const driveFileId = extractDriveFileId(toDelete.driveUploadedUrl);
+      if (driveFileId || toDelete.driveUploadedFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: driveFileId || undefined,
+          fileName: toDelete.driveUploadedFileName,
+        }).catch(() => {});
+      }
+      const paymentProofId = extractDriveFileId(toDelete.paymentProofDriveUrl);
+      if (paymentProofId || toDelete.paymentProofFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: paymentProofId || undefined,
+          fileName: toDelete.paymentProofFileName,
+        }).catch(() => {});
+      }
+      const certId = extractDriveFileId(toDelete.withholdingCertificateDriveUrl);
+      if (certId || toDelete.withholdingCertificateFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: certId || undefined,
+          fileName: toDelete.withholdingCertificateFileName,
+        }).catch(() => {});
+      }
+    }
+
+    // 3. Delete across cloud Firestore and server JSON
+    await deleteCentralExpenses([id]);
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1262,9 +1310,44 @@ export default function App() {
   };
 
   const handleBatchDeleteExpenses = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const toDeleteItems = expenses.filter((e) => ids.includes(e.id));
+    // 1. Immediate optimistic UI update and persistent tombstone tracking
     setExpenses((prev) => prev.filter((e) => !ids.includes(e.id)));
+    ids.forEach((id) => {
+      trackDeletedExpenseId(id);
+      removeCachedReceiptFile(id).catch(() => {});
+      removeCachedPaymentProofFile(id).catch(() => {});
+      removeCachedWithholdingCertificateFile(id).catch(() => {});
+    });
+
+    // 2. Cleanup associated files in Google Drive in background
+    for (const item of toDeleteItems) {
+      const driveFileId = extractDriveFileId(item.driveUploadedUrl);
+      if (driveFileId || item.driveUploadedFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: driveFileId || undefined,
+          fileName: item.driveUploadedFileName,
+        }).catch(() => {});
+      }
+      const paymentProofId = extractDriveFileId(item.paymentProofDriveUrl);
+      if (paymentProofId || item.paymentProofFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: paymentProofId || undefined,
+          fileName: item.paymentProofFileName,
+        }).catch(() => {});
+      }
+      const certId = extractDriveFileId(item.withholdingCertificateDriveUrl);
+      if (certId || item.withholdingCertificateFileName) {
+        deleteReceiptFromGoogleDrive({
+          fileId: certId || undefined,
+          fileName: item.withholdingCertificateFileName,
+        }).catch(() => {});
+      }
+    }
+
+    // 3. Delete across cloud Firestore and server JSON
     await deleteCentralExpenses(ids);
-    ids.forEach((id) => removeCachedReceiptFile(id).catch(() => {}));
 
     await logAuditEvent({
       userEmail: currentUser?.email,

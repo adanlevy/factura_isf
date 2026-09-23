@@ -1453,9 +1453,26 @@ function filterExpensesServer(expenses: any[], queryParams: any) {
   return filtered;
 }
 
+// Persistent Deleted Expenses Tombstones
+function getDeletedExpensesList(): string[] {
+  return readCollection<string[]>("deleted-expenses", []);
+}
+
+function addDeletedExpenses(ids: string[]): void {
+  const existing = getDeletedExpensesList();
+  const set = new Set(existing);
+  for (const id of ids) {
+    if (typeof id === 'string' && id.trim().length > 0) {
+      set.add(id.trim());
+    }
+  }
+  writeCollection("deleted-expenses", Array.from(set));
+}
+
 // 1. EXPENSES COLLECTION
 app.get("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
-  const allExpenses = readCollection<any[]>("expenses", []);
+  const deletedSet = new Set(getDeletedExpensesList());
+  const allExpenses = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
   const expenses = filterExpensesServer(allExpenses, req.query);
   res.json({ success: true, count: expenses.length, total: allExpenses.length, data: expenses });
 });
@@ -1467,12 +1484,15 @@ app.post("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
     return res.status(400).json({ success: false, error: "Formato inválido. 'expenses' debe ser un array." });
   }
   
+  const deletedSet = new Set(getDeletedExpensesList());
+  const sanitized = expenses.filter((e) => e && e.id && !deletedSet.has(e.id));
+
   let finalExpenses: any[];
   if (replace) {
-    finalExpenses = expenses;
+    finalExpenses = sanitized;
   } else {
-    const existing = readCollection<any[]>("expenses", []);
-    finalExpenses = mergeById(existing, expenses);
+    const existing = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
+    finalExpenses = mergeById(existing, sanitized);
   }
 
   const saved = writeCollection("expenses", finalExpenses);
@@ -1487,8 +1507,11 @@ app.post("/api/data/expenses/upsert", authenticateFirebaseUser, (req, res) => {
     return res.status(400).json({ success: false, error: "No items provided." });
   }
 
-  const existing = readCollection<any[]>("expenses", []);
-  const updated = mergeById(existing, itemsArray);
+  const deletedSet = new Set(getDeletedExpensesList());
+  const sanitized = itemsArray.filter((e) => e && e.id && !deletedSet.has(e.id));
+
+  const existing = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
+  const updated = mergeById(existing, sanitized);
   const saved = writeCollection("expenses", updated);
   res.json({ success: saved, count: updated.length });
 });
@@ -1499,11 +1522,13 @@ app.post("/api/data/expenses/delete", authenticateFirebaseUser, (req, res) => {
   if (!Array.isArray(ids)) {
     return res.status(400).json({ success: false, error: "ids must be an array" });
   }
-  const idSet = new Set(ids);
+  const cleanIds = ids.filter((id) => typeof id === 'string' && id.trim().length > 0);
+  addDeletedExpenses(cleanIds);
+  const idSet = new Set(cleanIds);
   const existing = readCollection<any[]>("expenses", []);
   const remaining = existing.filter((e) => !idSet.has(e.id));
   const saved = writeCollection("expenses", remaining);
-  res.json({ success: saved, count: remaining.length });
+  res.json({ success: saved, count: remaining.length, deleted: cleanIds.length });
 });
 
 // 2. VENDORS COLLECTION
@@ -1771,7 +1796,8 @@ app.post("/api/data/users/delete", authenticateFirebaseUser, requireAdminRole, a
 
 // 7. BULK SYNC / INITIAL HYDRATION
 app.get("/api/data/sync", authenticateFirebaseUser, (req, res) => {
-  const allExpenses = readCollection<any[]>("expenses", []);
+  const deletedSet = new Set(getDeletedExpensesList());
+  const allExpenses = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
   const expenses = filterExpensesServer(allExpenses, req.query);
   const vendors = readCollection<any[]>("vendors", []);
   const costCenters = readCollection<any[]>("cost_centers", []);
