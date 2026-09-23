@@ -4,7 +4,9 @@ service cloud.firestore {
     
     // Core authentication and identity helpers
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email != null;
+      return request.auth != null &&
+        request.auth.token.email != null &&
+        request.auth.token.email_verified == true;
     }
 
     function userEmail() {
@@ -12,14 +14,7 @@ service cloud.firestore {
     }
 
     function isOrgMember() {
-      return isSignedIn() && request.auth.token.email.lower().matches('.*@isf-argentina\\.org$');
-    }
-
-    function isRegisteredUser() {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/app_users/$(userEmail())) ||
-        isOrgMember()
-      );
+      return isSignedIn() && request.auth.token.email.lower().matches('.*@isf-argentina[.]org$');
     }
 
     function getUserData() {
@@ -55,37 +50,96 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Expenses collection:
-    // - Only Colaboradores and Admins can read expenses (contains sensitive financial amounts, vendors, banking info)
-    // - Colaboradores can create/update their own expenses
-    // - Admins, organization members, and expense submitters can delete expenses
+    // ---------------------------------------------------------------
+    // Comprobantes (expenses)
+    // ---------------------------------------------------------------
+    // Campos de liquidación / pago: solo Administración puede escribirlos.
+    function paymentFields() {
+      return [
+        'reimbursedAt', 'paymentConfirmedAt',
+        'paymentProofFileName', 'paymentProofAt', 'paymentProofDriveUrl',
+        'withholdingCertificateFileName', 'withholdingCertificateUploadedAt',
+        'withholdingCertificateDriveUrl', 'withholdingCertificateSentAt',
+        'bankDetailsRequestedAt'
+      ];
+    }
+
+    // Campos que el dueño puede seguir actualizando en un comprobante ya pagado
+    // (reemplazo de foto / estado de subida a Drive), sin tocar datos contables.
+    function receiptFields() {
+      return [
+        'receiptFileName', 'driveFileId', 'driveUploadedFileName', 'driveFolderTarget',
+        'driveFolderUrl', 'driveUploadedUrl', 'driveUploadStatus', 'driveUploadedAt', 'updatedAt'
+      ];
+    }
+
+    function isExpenseOwner(data) {
+      return (data.get('submittedByEmail', '') is string && data.get('submittedByEmail', '').lower() == userEmail()) ||
+             (data.get('userEmail', '') is string && data.get('userEmail', '').lower() == userEmail());
+    }
+
+    function isPaidExpense(data) {
+      return data.get('reimbursementStatus', '') == 'REIMBURSED';
+    }
+
+    // Un comprobante borrado deja un tombstone compartido: nunca puede volver a crearse
+    // (evita que escrituras tardías, p. ej. el callback de subida a Drive, lo resuciten).
+    function isTombstoned(expenseId) {
+      return exists(/databases/$(database)/documents/deleted_expenses/$(expenseId));
+    }
+
+    function ownerCanUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return isExpenseOwner(resource.data) &&
+        // el dueño no puede cambiar de dueño (evita adueñarse de comprobantes ajenos)
+        !changed.hasAny(['submittedByEmail', 'userEmail']) &&
+        (
+          // pendiente: puede editar datos, pero nunca liquidarlo ni tocar campos de pago
+          (!isPaidExpense(resource.data) && !isPaidExpense(request.resource.data) && !changed.hasAny(paymentFields())) ||
+          // pagado: solo foto / estado de Drive
+          (isPaidExpense(resource.data) && changed.hasOnly(receiptFields()))
+        );
+    }
+
     match /expenses/{expenseId} {
+      // Solo Colaboradores y Admins leen comprobantes (montos, proveedores, datos bancarios)
       allow read: if isColaborador();
 
-      allow create: if isColaborador() && (
-        isAdmin() ||
-        !('submittedByEmail' in request.resource.data) ||
-        request.resource.data.submittedByEmail.lower() == userEmail() ||
-        ('userEmail' in request.resource.data && request.resource.data.userEmail.lower() == userEmail())
+      // Alta: un colaborador solo crea comprobantes propios, pendientes y sin datos de pago.
+      // set(merge) sobre un documento borrado también es un 'create', por eso se chequea el tombstone.
+      allow create: if isColaborador() && !isTombstoned(expenseId) && (
+        isAdmin() || (
+          isExpenseOwner(request.resource.data) &&
+          !isPaidExpense(request.resource.data) &&
+          !request.resource.data.keys().hasAny(paymentFields())
+        )
       );
 
-      allow update: if isColaborador() && (
-        isAdmin() ||
-        !('submittedByEmail' in resource.data) ||
-        resource.data.submittedByEmail.lower() == userEmail() ||
-        ('userEmail' in resource.data && resource.data.userEmail.lower() == userEmail()) ||
-        ('submittedByEmail' in request.resource.data && request.resource.data.submittedByEmail.lower() == userEmail())
-      );
+      allow update: if isColaborador() && (isAdmin() || ownerCanUpdate());
 
-      allow delete: if isSignedIn() && (
-        isAdmin() ||
-        isOrgMember() ||
-        (isColaborador() && (
-          !('submittedByEmail' in resource.data) ||
-          resource.data.submittedByEmail.lower() == userEmail() ||
-          ('userEmail' in resource.data && resource.data.userEmail.lower() == userEmail())
-        ))
+      // Baja: Admin, o el dueño mientras el comprobante no esté pagado
+      allow delete: if isAdmin() || (
+        isColaborador() && isExpenseOwner(resource.data) && !isPaidExpense(resource.data)
       );
+    }
+
+    // Tombstones de comprobantes borrados (se crean en el mismo batch que el borrado)
+    match /deleted_expenses/{expenseId} {
+      allow read: if isColaborador();
+      allow create: if isColaborador() &&
+        !existsAfter(/databases/$(database)/documents/expenses/$(expenseId)) &&
+        request.resource.data.keys().hasOnly(['id', 'deletedAt', 'deletedBy']) &&
+        request.resource.data.get('id', expenseId) == expenseId &&
+        request.resource.data.get('deletedBy', '') == userEmail() &&
+        (
+          isAdmin() || (
+            isExpenseOwner(get(/databases/$(database)/documents/expenses/$(expenseId)).data) &&
+            !isPaidExpense(get(/databases/$(database)/documents/expenses/$(expenseId)).data)
+          )
+        );
+      allow update: if false;
+      // Solo un Admin puede quitar un tombstone (restauración manual)
+      allow delete: if isAdmin();
     }
 
     // Vendors catalog (contains sensitive banking details: CBU, Alias, CUIT):
@@ -120,20 +174,23 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
-    // App users and role management:
-    // - Only Colaboradores and Admins can read the user directory
-    // - Admins can create, delete, or alter roles
-    // - Colaboradores can self-register their own profile as 'user' role
+    // Usuarios y roles (app_users):
+    // - Colaboradores y Admins leen el directorio; cada uno puede leer su propio registro
+    // - Alta: Admins, o un miembro verificado de @isf-argentina.org registrándose a sí mismo con rol 'user'
+    // - Auto-actualización: solo nombre/foto/fecha; nunca rol ni copia global (ccAllOutgoingEmails)
     match /app_users/{userDocId} {
       allow read: if isColaborador() || (isSignedIn() && userDocId == userEmail());
       allow create: if isAdmin() || (
-        isSignedIn() && userDocId == userEmail() && request.resource.data.role == 'user'
+        isOrgMember() &&
+        userDocId == userEmail() &&
+        request.resource.data.get('role', '') == 'user' &&
+        request.resource.data.keys().hasOnly(['email', 'name', 'picture', 'role', 'createdAt', 'updatedAt'])
       );
       allow delete: if isAdmin();
       allow update: if isAdmin() || (
         isColaborador() &&
-        (userEmail() == userDocId || (resource != null && 'email' in resource.data && resource.data.email.lower() == userEmail())) &&
-        request.resource.data.role == resource.data.role
+        (userEmail() == userDocId || (resource.data.get('email', '') is string && resource.data.get('email', '').lower() == userEmail())) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'picture', 'updatedAt'])
       );
     }
 

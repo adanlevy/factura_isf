@@ -1,0 +1,14 @@
+{
+  "name": "factura-isf-firestore-rules-tests",
+  "private": true,
+  "type": "module",
+  "description": "Pruebas de firestore.rules contra el emulador oficial de Firestore (requiere Java 11+).",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-factura-isf \"node rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.18.0",
+    "firebase-tools": "^13.0.0"
+  }
+}

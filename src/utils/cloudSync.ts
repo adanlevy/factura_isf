@@ -12,13 +12,16 @@ import {
   writeBatch,
   onSnapshot,
   getDoc,
+  getDocFromServer,
   query,
   where,
   orderBy,
   limit,
   QueryConstraint,
+  QuerySnapshot,
+  DocumentData,
 } from 'firebase/firestore';
-import { db, testFirestoreConnection } from '../lib/firebase';
+import { db, auth, testFirestoreConnection } from '../lib/firebase';
 import { Expense, Vendor, CostCenter, AppUserRecord } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '../data/initialData';
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
@@ -146,12 +149,17 @@ export interface UserPreferencesPayload {
 }
 
 // Persistent tombstone tracking of deleted expenses across sessions and browser tabs
-const DELETED_EXPENSES_STORAGE_KEY = 'isf_deleted_expense_ids_v2';
+// v3: solo contiene borrados confirmados. La v2 podía incluir comprobantes que solo salieron
+// de la ventana de la query (falsos positivos), por eso se descarta.
+const DELETED_EXPENSES_STORAGE_KEY = 'isf_deleted_expense_ids_v3';
+const LEGACY_DELETED_EXPENSES_STORAGE_KEYS = ['isf_deleted_expense_ids_v2'];
+export const DELETED_EXPENSES_COLLECTION = 'deleted_expenses';
 const sessionDeletedExpenseIds = new Set<string>();
 export const sessionDeletedVendorIds = new Set<string>();
 
 function initDeletedExpensesFromStorage() {
   try {
+    LEGACY_DELETED_EXPENSES_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
     const raw = localStorage.getItem(DELETED_EXPENSES_STORAGE_KEY);
     if (raw) {
       const arr = JSON.parse(raw);
@@ -673,6 +681,56 @@ export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<S
 }
 
 /**
+ * Firestore emite 'removed' tanto cuando un comprobante se borra como cuando solo sale de la
+ * ventana de la query (limit de paginación, filtro de período o de centro de costos). Solo un
+ * documento que ya no existe en el servidor es un borrado real; el resto no se toca.
+ */
+async function confirmServerDeletedExpenseIds(ids: string[]): Promise<string[]> {
+  const confirmed: string[] = [];
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const snap = await getDocFromServer(doc(db, 'expenses', id));
+        if (!snap.exists()) confirmed.push(id);
+      } catch {
+        // Sin conexión o sin permisos: no se asume borrado
+      }
+    })
+  );
+  return confirmed;
+}
+
+type RealtimeUpdate = Partial<SyncPayload> & { hasMore?: boolean };
+
+function handleExpensesSnapshot(
+  snap: QuerySnapshot<DocumentData>,
+  currentLimit: number,
+  onUpdate: (payload: RealtimeUpdate) => void
+) {
+  const removedCandidates = snap
+    .docChanges()
+    .filter((change) => change.type === 'removed' && change.doc.id)
+    .map((change) => change.doc.id);
+
+  const deletedSet = getDeletedExpensesSet();
+  const expenses: Expense[] = [];
+  snap.forEach((d) => {
+    if (d.id && !deletedSet.has(d.id)) {
+      expenses.push(d.data() as Expense);
+    }
+  });
+  onUpdate({ expenses, hasMore: snap.size >= currentLimit });
+
+  if (removedCandidates.length > 0) {
+    confirmServerDeletedExpenseIds(removedCandidates).then((confirmed) => {
+      if (confirmed.length === 0) return;
+      confirmed.forEach((id) => trackDeletedExpenseId(id));
+      onUpdate({ removedExpenseIds: confirmed });
+    });
+  }
+}
+
+/**
  * Real-time Firestore Subscriptions with query-level filtering and pagination support.
  */
 export function subscribeToRealtimeFirestore(
@@ -691,24 +749,7 @@ export function subscribeToRealtimeFirestore(
 
   const unsubExpenses = onSnapshot(
     expensesQuery,
-    (snap) => {
-      const removedIds: string[] = [];
-      snap.docChanges().forEach((change) => {
-        if (change.type === 'removed' && change.doc.id) {
-          trackDeletedExpenseId(change.doc.id);
-          removedIds.push(change.doc.id);
-        }
-      });
-      const deletedSet = getDeletedExpensesSet();
-      const expenses: Expense[] = [];
-      snap.forEach((d) => {
-        if (d.id && !deletedSet.has(d.id)) {
-          expenses.push(d.data() as Expense);
-        }
-      });
-      const hasMore = snap.size >= currentLimit;
-      onUpdate({ expenses, removedExpenseIds: removedIds, hasMore });
-    },
+    (snap) => handleExpensesSnapshot(snap, currentLimit, onUpdate),
     (err) => {
       console.warn('[Firestore Live] expenses listener note:', err.message);
       if (err.code !== 'permission-denied') {
@@ -716,23 +757,7 @@ export function subscribeToRealtimeFirestore(
           const fallbackQuery = query(collection(db, 'expenses'), orderBy('date', 'desc'), limit(currentLimit));
           unsubFallbackExpenses = onSnapshot(
             fallbackQuery,
-            (fallbackSnap) => {
-              const removedIds: string[] = [];
-              fallbackSnap.docChanges().forEach((change) => {
-                if (change.type === 'removed' && change.doc.id) {
-                  trackDeletedExpenseId(change.doc.id);
-                  removedIds.push(change.doc.id);
-                }
-              });
-              const deletedSet = getDeletedExpensesSet();
-              const fallbackExpenses: Expense[] = [];
-              fallbackSnap.forEach((d) => {
-                if (d.id && !deletedSet.has(d.id)) {
-                  fallbackExpenses.push(d.data() as Expense);
-                }
-              });
-              onUpdate({ expenses: fallbackExpenses, removedExpenseIds: removedIds, hasMore: fallbackSnap.size >= currentLimit });
-            },
+            (fallbackSnap) => handleExpensesSnapshot(fallbackSnap, currentLimit, onUpdate),
             (fallbackErr) => {
               console.warn('[Firestore Live] fallback expenses listener note:', fallbackErr.message);
             }
@@ -774,134 +799,166 @@ export function subscribeToRealtimeFirestore(
   };
 }
 
-export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean> {
-  try {
-    const batch = writeBatch(db);
-    for (const exp of expenses) {
-      if (exp && exp.id) {
-        sessionDeletedExpenseIds.delete(exp.id);
-        const docRef = doc(db, 'expenses', exp.id);
-        const safeDoc = prepareExpenseForFirestore(exp);
-        batch.set(docRef, safeDoc, { merge: true });
-      }
+// Firestore limita a 20 lecturas de reglas (get/exists) por batch; con lotes chicos cada
+// escritura queda holgada incluso con el chequeo de tombstone y de rol.
+const EXPENSE_WRITE_CHUNK = 15;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+/**
+ * Nunca reescribe comprobantes borrados: una escritura tardía (p. ej. el callback de la subida a
+ * Drive o un modal abierto con una copia vieja) no debe resucitarlos. Las reglas de Firestore lo
+ * bloquean igualmente para todos los dispositivos mediante el tombstone en `deleted_expenses`.
+ */
+function withoutDeletedExpenses(items: Expense[]): Expense[] {
+  const deletedSet = getDeletedExpensesSet();
+  return (items || []).filter((item) => {
+    if (!item || !item.id) return false;
+    if (deletedSet.has(item.id)) {
+      console.info(`[Firestore] Se omite la escritura del comprobante borrado ${item.id}.`);
+      return false;
     }
-    await batch.commit();
-
-    // Also notify server backend with lightweight metadata
-    authFetch('/api/data/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expenses: expenses.map((e) => prepareExpenseForFirestore(e)) }),
-    }).catch(() => {});
-
     return true;
-  } catch (e) {
-    console.warn('[Firestore] Error saving all expenses with batch, falling back to individual docs:', e);
-    let allOk = true;
-    for (const exp of expenses) {
-      if (exp && exp.id) {
+  });
+}
+
+async function writeExpensesToFirestore(items: Expense[]): Promise<boolean> {
+  let allOk = true;
+  for (const chunk of chunkArray(items, EXPENSE_WRITE_CHUNK)) {
+    try {
+      const batch = writeBatch(db);
+      for (const item of chunk) {
+        batch.set(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
+      }
+      await batch.commit();
+    } catch (e) {
+      console.warn('[Firestore] Error en batch de comprobantes, reintentando uno por uno:', e);
+      for (const item of chunk) {
         try {
-          const docRef = doc(db, 'expenses', exp.id);
-          const safeDoc = prepareExpenseForFirestore(exp);
-          await setDoc(docRef, safeDoc, { merge: true });
+          await setDoc(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
         } catch (err) {
-          console.error(`[Firestore] Could not save expense ${exp.id}:`, err);
+          console.error(`[Firestore] No se pudo guardar el comprobante ${item.id}:`, err);
           allOk = false;
         }
       }
     }
-    return allOk;
   }
+  return allOk;
+}
+
+export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean> {
+  const items = withoutDeletedExpenses(expenses);
+  if (items.length === 0) return true;
+  const ok = await writeExpensesToFirestore(items);
+
+  // Also notify server backend with lightweight metadata
+  authFetch('/api/data/expenses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expenses: items.map((e) => prepareExpenseForFirestore(e)) }),
+  }).catch(() => {});
+
+  return ok;
 }
 
 export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> {
-  if (!items || items.length === 0) return true;
+  const valid = withoutDeletedExpenses(items);
+  if (valid.length === 0) return true;
 
   // Mirror to server-side JSON store in parallel for dual persistence
   authFetch('/api/data/expenses/upsert', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items: items.map((i) => prepareExpenseForFirestore(i)) }),
+    body: JSON.stringify({ items: valid.map((i) => prepareExpenseForFirestore(i)) }),
   }).catch((err) => {
     console.warn('[Sync] Notice mirroring expenses to server store:', err);
   });
 
-  try {
-    const batch = writeBatch(db);
-    for (const item of items) {
-      if (item && item.id) {
-        sessionDeletedExpenseIds.delete(item.id);
-        const docRef = doc(db, 'expenses', item.id);
-        const safeDoc = prepareExpenseForFirestore(item);
-        batch.set(docRef, safeDoc, { merge: true });
-      }
-    }
-    await batch.commit();
-    return true;
-  } catch (e) {
-    console.warn('[Firestore] Error in batch upserting expenses, falling back to single setDoc:', e);
-    let allOk = true;
-    for (const item of items) {
-      if (item && item.id) {
+  return writeExpensesToFirestore(valid);
+}
+
+export interface DeleteExpensesResult {
+  deletedIds: string[];
+  failedIds: string[];
+}
+
+// El tombstone se crea en el mismo batch que el borrado; las reglas validan ambos juntos.
+// Lotes de 5 comprobantes (10 escrituras) para no superar el límite de accesos de reglas por batch.
+const EXPENSE_DELETE_CHUNK = 5;
+
+/**
+ * Borra comprobantes de Firestore y deja un tombstone compartido en `deleted_expenses/{id}`.
+ * Devuelve qué IDs se borraron realmente y cuáles fallaron (p. ej. sin permisos o sin conexión),
+ * para que la UI no informe un borrado que no ocurrió.
+ */
+export async function deleteCentralExpenses(ids: string[]): Promise<DeleteExpensesResult> {
+  const cleanIds = Array.from(
+    new Set((ids || []).filter((id): id is string => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim()))
+  );
+  const result: DeleteExpensesResult = { deletedIds: [], failedIds: [] };
+  if (cleanIds.length === 0) return result;
+
+  // Tombstone local optimista: evita que listeners o escrituras en curso lo vuelvan a mostrar
+  cleanIds.forEach((id) => trackDeletedExpenseId(id));
+
+  const deletedBy = (auth.currentUser?.email || '').toLowerCase().trim();
+  const deletedAt = new Date().toISOString();
+  const addToBatch = (batch: ReturnType<typeof writeBatch>, id: string) => {
+    batch.delete(doc(db, 'expenses', id));
+    batch.set(doc(db, DELETED_EXPENSES_COLLECTION, id), { id, deletedAt, deletedBy });
+  };
+
+  for (const chunk of chunkArray(cleanIds, EXPENSE_DELETE_CHUNK)) {
+    try {
+      const batch = writeBatch(db);
+      chunk.forEach((id) => addToBatch(batch, id));
+      await batch.commit();
+      result.deletedIds.push(...chunk);
+    } catch (chunkErr) {
+      console.warn('[Firestore] Error borrando lote de comprobantes, reintentando uno por uno:', chunkErr);
+      for (const id of chunk) {
         try {
-          const docRef = doc(db, 'expenses', item.id);
-          const safeDoc = prepareExpenseForFirestore(item);
-          await setDoc(docRef, safeDoc, { merge: true });
+          const batch = writeBatch(db);
+          addToBatch(batch, id);
+          await batch.commit();
+          result.deletedIds.push(id);
         } catch (err) {
-          console.error(`[Firestore] Failed to upsert expense ${item.id}:`, err);
+          // Si el documento ya no existe en el servidor, el objetivo del borrado se cumplió
           try {
-            // Extreme fallback: ensure all binary files are stripped
-            const fallbackDoc = prepareExpenseForFirestore(item);
-            await setDoc(doc(db, 'expenses', item.id), fallbackDoc, { merge: true });
-          } catch (criticalErr) {
-            console.error(`[Firestore] Critical error saving ${item.id}:`, criticalErr);
-            allOk = false;
+            const snap = await getDocFromServer(doc(db, 'expenses', id));
+            if (!snap.exists()) {
+              result.deletedIds.push(id);
+              continue;
+            }
+          } catch {
+            // sin conexión: se considera fallido
           }
+          console.error(`[Firestore] No se pudo eliminar el comprobante ${id}:`, err);
+          result.failedIds.push(id);
         }
       }
     }
-    return allOk;
   }
-}
 
-export async function deleteCentralExpenses(ids: string[]): Promise<boolean> {
-  const cleanIds = Array.from(
-    new Set((ids || []).filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
-  );
-  if (cleanIds.length === 0) return true;
+  // Lo que no se pudo borrar vuelve a ser visible
+  result.failedIds.forEach((id) => clearDeletedExpenseId(id));
 
-  // 1. Immediately track as deleted locally and in localStorage
-  cleanIds.forEach((id) => trackDeletedExpenseId(id));
-
-  // 2. Persist deletion to backend server store immediately
-  try {
-    await authFetch('/api/data/expenses/delete', {
+  // Espejo del servidor: solo los borrados confirmados en Firestore
+  if (result.deletedIds.length > 0) {
+    authFetch('/api/data/expenses/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: cleanIds }),
+      body: JSON.stringify({ ids: result.deletedIds }),
+    }).catch((serverErr) => {
+      console.warn('[Delete] Notice mirroring deletion to server store:', serverErr);
     });
-  } catch (serverErr) {
-    console.warn('[Delete] Notice mirroring deletion to server store:', serverErr);
   }
 
-  // 3. Delete from Firestore in batches or individual fallback
-  try {
-    for (let i = 0; i < cleanIds.length; i += 400) {
-      const chunk = cleanIds.slice(i, i + 400);
-      const batch = writeBatch(db);
-      for (const id of chunk) {
-        batch.delete(doc(db, 'expenses', id));
-      }
-      await batch.commit();
-    }
-    return true;
-  } catch (e) {
-    console.warn('[Firestore] Error deleting expenses batch, executing individual deleteDoc fallback:', e);
-    await Promise.allSettled(
-      cleanIds.map((id) => deleteDoc(doc(db, 'expenses', id)))
-    );
-    return true;
-  }
+  return result;
 }
 
 export async function saveCentralVendors(vendors: Vendor[]): Promise<boolean> {

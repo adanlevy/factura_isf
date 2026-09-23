@@ -524,8 +524,8 @@ export function ExpenseList({
                             </span>
                           )}
 
-                          {/* Botón Eliminar */}
-                          {onDeleteExpense && (
+                          {/* Botón Eliminar (un colaborador no puede borrar un comprobante ya pagado) */}
+                          {onDeleteExpense && (!isPaid || currentUser?.role === 'admin') && (
                             <button
                               onClick={() => setExpenseToDelete(expense)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
@@ -655,7 +655,7 @@ export function ExpenseList({
                         </span>
                       )}
 
-                      {onDeleteExpense && (
+                      {onDeleteExpense && (!isPaid || currentUser?.role === 'admin') && (
                         <button
                           onClick={() => setExpenseToDelete(expense)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200 bg-white"

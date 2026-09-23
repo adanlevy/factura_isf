@@ -58,8 +58,8 @@ import {
   upsertCentralExpenses,
   deleteCentralExpenses,
   deleteCentralVendors,
-  trackDeletedExpenseId,
   getDeletedExpensesSet,
+  isExpenseDeletedInSession,
   fetchUserCloudPreferences,
   saveUserCloudPreferences,
   fetchCentralUsers,
@@ -817,6 +817,19 @@ export default function App() {
     }
   };
 
+  // Si el comprobante se borró mientras su archivo subía a Drive, no se reescribe (lo resucitaría)
+  // y se elimina el archivo que quedó huérfano en Drive.
+  const discardUploadIfExpenseDeleted = (
+    expenseId: string,
+    res: { success: boolean; fileId?: string; fileName?: string }
+  ): boolean => {
+    if (!isExpenseDeletedInSession(expenseId)) return false;
+    if (res.success && (res.fileId || res.fileName)) {
+      deleteReceiptFromGoogleDrive({ fileId: res.fileId, fileName: res.fileName }).catch(() => {});
+    }
+    return true;
+  };
+
   const handleSaveNewExpense = (newExpense: Expense) => {
     // If expense has a receipt, initialize driveUploadStatus to PENDING
     const initialExpense: Expense = {
@@ -840,6 +853,7 @@ export default function App() {
         costCenter: matchingCc,
       })
         .then((res) => {
+          if (discardUploadIfExpenseDeleted(newExpense.id, res)) return;
           if (res.success) {
             const updatedDriveFields = {
               driveUploadStatus: 'SUCCESS' as const,
@@ -970,6 +984,7 @@ export default function App() {
           costCenter: matchingCc,
         })
           .then((res) => {
+            if (discardUploadIfExpenseDeleted(exp.id, res)) return;
             if (res.success) {
               const updatedDriveFields = {
                 driveUploadStatus: 'SUCCESS' as const,
@@ -1257,43 +1272,62 @@ export default function App() {
     showToast('✅ Foto reemplazada en Google Drive y plataforma sin alterar los datos contables.');
   };
 
+  // Borra de Drive y de la caché local los archivos de un comprobante YA eliminado de la base.
+  // Se ejecuta solo tras confirmar el borrado: si Firestore lo rechaza, los archivos se conservan.
+  const cleanupDeletedExpenseFiles = (item: Expense) => {
+    removeCachedReceiptFile(item.id).catch(() => {});
+    removeCachedPaymentProofFile(item.id).catch(() => {});
+    removeCachedWithholdingCertificateFile(item.id).catch(() => {});
+
+    const driveFileId = extractDriveFileId(item.driveUploadedUrl);
+    if (driveFileId || item.driveUploadedFileName) {
+      deleteReceiptFromGoogleDrive({
+        fileId: driveFileId || undefined,
+        fileName: item.driveUploadedFileName,
+      }).catch(() => {});
+    }
+    const paymentProofId = extractDriveFileId(item.paymentProofDriveUrl);
+    if (paymentProofId || item.paymentProofFileName) {
+      deleteReceiptFromGoogleDrive({
+        fileId: paymentProofId || undefined,
+        fileName: item.paymentProofFileName,
+      }).catch(() => {});
+    }
+    const certId = extractDriveFileId(item.withholdingCertificateDriveUrl);
+    if (certId || item.withholdingCertificateFileName) {
+      deleteReceiptFromGoogleDrive({
+        fileId: certId || undefined,
+        fileName: item.withholdingCertificateFileName,
+      }).catch(() => {});
+    }
+  };
+
+  // Vuelve a mostrar comprobantes cuyo borrado fue rechazado (sin duplicarlos)
+  const restoreExpensesInState = (items: Expense[]) => {
+    if (items.length === 0) return;
+    setExpenses((prev) => {
+      const present = new Set(prev.map((e) => e.id));
+      return [...items.filter((e) => !present.has(e.id)), ...prev];
+    });
+  };
+
   const handleDeleteExpense = async (id: string) => {
     if (!id) return;
     const toDelete = expenses.find((e) => e.id === id);
-    // 1. Immediate optimistic UI update and persistent tombstone tracking
-    setExpenses((prev) => prev.filter((e) => e.id !== id));
-    trackDeletedExpenseId(id);
-    removeCachedReceiptFile(id).catch(() => {});
-    removeCachedPaymentProofFile(id).catch(() => {});
-    removeCachedWithholdingCertificateFile(id).catch(() => {});
 
-    // 2. Cleanup associated files in Google Drive if present
-    if (toDelete) {
-      const driveFileId = extractDriveFileId(toDelete.driveUploadedUrl);
-      if (driveFileId || toDelete.driveUploadedFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: driveFileId || undefined,
-          fileName: toDelete.driveUploadedFileName,
-        }).catch(() => {});
-      }
-      const paymentProofId = extractDriveFileId(toDelete.paymentProofDriveUrl);
-      if (paymentProofId || toDelete.paymentProofFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: paymentProofId || undefined,
-          fileName: toDelete.paymentProofFileName,
-        }).catch(() => {});
-      }
-      const certId = extractDriveFileId(toDelete.withholdingCertificateDriveUrl);
-      if (certId || toDelete.withholdingCertificateFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: certId || undefined,
-          fileName: toDelete.withholdingCertificateFileName,
-        }).catch(() => {});
-      }
+    // 1. Actualización optimista de la UI
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+
+    // 2. Borrado en Firestore (+ tombstone compartido) y espejo del servidor
+    const { deletedIds } = await deleteCentralExpenses([id]);
+    if (!deletedIds.includes(id)) {
+      if (toDelete) restoreExpensesInState([toDelete]);
+      showToast('⚠️ No se pudo eliminar el comprobante (sin permisos o sin conexión). No se hicieron cambios.');
+      return;
     }
 
-    // 3. Delete across cloud Firestore and server JSON
-    await deleteCentralExpenses([id]);
+    // 3. Recién con el borrado confirmado: archivos de Drive y log de cambios
+    if (toDelete) cleanupDeletedExpenseFiles(toDelete);
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1312,42 +1346,22 @@ export default function App() {
   const handleBatchDeleteExpenses = async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
     const toDeleteItems = expenses.filter((e) => ids.includes(e.id));
-    // 1. Immediate optimistic UI update and persistent tombstone tracking
-    setExpenses((prev) => prev.filter((e) => !ids.includes(e.id)));
-    ids.forEach((id) => {
-      trackDeletedExpenseId(id);
-      removeCachedReceiptFile(id).catch(() => {});
-      removeCachedPaymentProofFile(id).catch(() => {});
-      removeCachedWithholdingCertificateFile(id).catch(() => {});
-    });
 
-    // 2. Cleanup associated files in Google Drive in background
-    for (const item of toDeleteItems) {
-      const driveFileId = extractDriveFileId(item.driveUploadedUrl);
-      if (driveFileId || item.driveUploadedFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: driveFileId || undefined,
-          fileName: item.driveUploadedFileName,
-        }).catch(() => {});
-      }
-      const paymentProofId = extractDriveFileId(item.paymentProofDriveUrl);
-      if (paymentProofId || item.paymentProofFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: paymentProofId || undefined,
-          fileName: item.paymentProofFileName,
-        }).catch(() => {});
-      }
-      const certId = extractDriveFileId(item.withholdingCertificateDriveUrl);
-      if (certId || item.withholdingCertificateFileName) {
-        deleteReceiptFromGoogleDrive({
-          fileId: certId || undefined,
-          fileName: item.withholdingCertificateFileName,
-        }).catch(() => {});
-      }
+    // 1. Actualización optimista de la UI
+    setExpenses((prev) => prev.filter((e) => !ids.includes(e.id)));
+
+    // 2. Borrado en Firestore (+ tombstones) y espejo del servidor
+    const { deletedIds, failedIds } = await deleteCentralExpenses(ids);
+    const deletedSet = new Set(deletedIds);
+    restoreExpensesInState(toDeleteItems.filter((e) => !deletedSet.has(e.id)));
+
+    if (deletedIds.length === 0) {
+      showToast('⚠️ No se pudo eliminar ningún comprobante (sin permisos o sin conexión). No se hicieron cambios.');
+      return;
     }
 
-    // 3. Delete across cloud Firestore and server JSON
-    await deleteCentralExpenses(ids);
+    // 3. Solo lo confirmado: archivos de Drive y log de cambios
+    toDeleteItems.filter((e) => deletedSet.has(e.id)).forEach(cleanupDeletedExpenseFiles);
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1356,11 +1370,16 @@ export default function App() {
       actionLabel: 'Eliminación en Lote de Comprobantes',
       entityType: 'expense',
       entityId: 'batch-delete',
-      entityName: `${ids.length} comprobantes`,
-      summary: `Se eliminaron ${ids.length} comprobantes en lote.`,
+      entityName: `${deletedIds.length} comprobantes`,
+      summary: `Se eliminaron ${deletedIds.length} comprobantes en lote.${failedIds.length > 0 ? ` ${failedIds.length} no pudieron eliminarse.` : ''}`,
+      metadata: { deletedIds, failedIds },
     });
 
-    showToast(`🗑️ ${ids.length} comprobante(s) eliminados.`);
+    showToast(
+      failedIds.length > 0
+        ? `⚠️ Se eliminaron ${deletedIds.length} comprobante(s); ${failedIds.length} no se pudieron eliminar (sin permisos o sin conexión).`
+        : `🗑️ ${deletedIds.length} comprobante(s) eliminados.`
+    );
   };
 
   const handleToggleReimbursementStatus = async (id: string) => {
@@ -2356,10 +2375,10 @@ export default function App() {
         expense={viewingReceiptExpense}
         costCenters={costCenters}
         onClose={() => setViewingReceiptExpense(null)}
-        onProcessPayment={handleDirectPayExpense}
+        onProcessPayment={currentUser.role === 'admin' ? handleDirectPayExpense : undefined}
         onUploadToDrive={handleUploadExpenseToDrive}
         onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
-        onOpenWithholdingModal={(exp) => setWithholdingModalExpense(exp)}
+        onOpenWithholdingModal={currentUser.role === 'admin' ? (exp) => setWithholdingModalExpense(exp) : undefined}
       />
 
       <WithholdingCertificateModal
