@@ -2,9 +2,9 @@
  * Application Version & Build Tracking
  * Incremental versioning with semantic release tags and build timestamps.
  */
-export const APP_VERSION = '2.8.12';
+export const APP_VERSION = '2.8.14';
 export const APP_BUILD_DATE = '2026.09.17';
-export const APP_BUILD_ID = 'build-20260917-dedup-keys-fix';
+export const APP_BUILD_ID = 'build-20260917-table-kpi-exact-parity-and-in-out-tokens';
 
 export interface VersionInfo {
   version: string;

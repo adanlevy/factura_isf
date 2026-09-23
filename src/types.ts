@@ -219,6 +219,8 @@ export interface ServiceUsageSummary {
   serviceName: string;
   calls: number;
   tokens: number;
+  promptTokens?: number;
+  candidatesTokens?: number;
   costUsd: number;
   costArs: number;
 }
@@ -228,6 +230,8 @@ export interface MonthApiUsage {
   monthLabel: string;
   totalCalls: number;
   totalTokens: number;
+  promptTokens?: number;
+  candidatesTokens?: number;
   totalCostUsd: number;
   totalCostArs: number;
   byService: Record<string, ServiceUsageSummary>;

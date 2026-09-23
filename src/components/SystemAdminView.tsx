@@ -40,6 +40,8 @@ import {
   fetchCentralApiUsageLogs,
   aggregateApiUsage,
   clearCentralApiUsageLogs,
+  calculateGeminiCost,
+  normalizeApiLog,
   ARS_EXCHANGE_RATE,
 } from '../utils/apiUsageLogger';
 import { matchesSearch } from '../utils/helpers';
@@ -68,6 +70,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   const [clearingLogs, setClearingLogs] = useState(false);
   const [currencyMode, setCurrencyMode] = useState<'USD' | 'ARS'>('USD');
   const [logFilterService, setLogFilterService] = useState<string>('all');
+  const [logFilterPeriod, setLogFilterPeriod] = useState<'current_month' | 'previous_month' | 'all'>('current_month');
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
   const [selectedTab, setSelectedTab] = useState<'overview' | 'storage' | 'apis' | 'logs'>('overview');
 
@@ -134,7 +137,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
     };
   }, []);
 
-  // Unify all real-time Firestore logs and backend logs
+  // Unify all real-time Firestore logs and backend logs with normalized official pricing
   const allLogs = useMemo(() => {
     const map = new Map<string, ApiUsageLogEntry>();
     if (metrics?.apiUsage?.recentLogs) {
@@ -147,9 +150,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         if (log && log.id && !log.id.startsWith('seed_')) map.set(log.id, log);
       }
     }
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    return Array.from(map.values())
+      .map(normalizeApiLog)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }, [firestoreApiLogs, metrics?.apiUsage?.recentLogs]);
 
   // Compute live API usage metrics prioritizing unified logs
@@ -171,17 +174,57 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
     return formatCurrencyUsd(usd);
   };
 
-  // Filtered API logs
+  const currentMonthKey = apiUsage?.currentMonth?.monthKey;
+  const previousMonthKey = apiUsage?.previousMonth?.monthKey;
+
+  // Filtered API logs with period alignment
   const filteredLogs = useMemo(() => {
     return allLogs.filter((log: ApiUsageLogEntry) => {
       const matchesService =
         logFilterService === 'all' || log.service === logFilterService;
+
+      let matchesPeriod = true;
+      if (logFilterPeriod === 'current_month' && currentMonthKey) {
+        matchesPeriod = Boolean(log.timestamp && log.timestamp.startsWith(currentMonthKey));
+      } else if (logFilterPeriod === 'previous_month' && previousMonthKey) {
+        matchesPeriod = Boolean(log.timestamp && log.timestamp.startsWith(previousMonthKey));
+      }
+
       const matchesQuery =
         !logSearchQuery ||
-        matchesSearch([log.actionName, log.endpoint, log.details, log.userEmail, log.serviceName, log.status], logSearchQuery);
-      return matchesService && matchesQuery;
+        matchesSearch(
+          [log.actionName, log.endpoint, log.details, log.userEmail, log.serviceName, log.status, log.model],
+          logSearchQuery
+        );
+      return matchesService && matchesPeriod && matchesQuery;
     });
-  }, [allLogs, logFilterService, logSearchQuery]);
+  }, [allLogs, logFilterService, logFilterPeriod, currentMonthKey, previousMonthKey, logSearchQuery]);
+
+  // Exact mathematical sum of the visible rows shown in the table
+  const filteredTotals = useMemo(() => {
+    let calls = 0;
+    let totalTokens = 0;
+    let promptTokens = 0;
+    let candidatesTokens = 0;
+    let costUsd = 0;
+
+    for (const log of filteredLogs) {
+      calls += 1;
+      totalTokens += log.totalTokens || 0;
+      promptTokens += log.promptTokens || 0;
+      candidatesTokens += log.candidatesTokens || 0;
+      costUsd += log.estimatedCostUsd || 0;
+    }
+
+    return {
+      calls,
+      totalTokens,
+      promptTokens,
+      candidatesTokens,
+      costUsd: Number(costUsd.toFixed(6)),
+      costArs: Number((costUsd * exchangeRate).toFixed(2)),
+    };
+  }, [filteredLogs, exchangeRate]);
 
   return (
     <div id="system-admin-view-root" className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -561,8 +604,19 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       {apiUsage.currentMonth.byService.gemini_ai?.calls || 0} llamadas •{' '}
                       {((apiUsage.currentMonth.byService.gemini_ai?.tokens || 0) / 1000).toFixed(1)}k tokens
                     </div>
+                    {Boolean(apiUsage.currentMonth.byService.gemini_ai?.tokens) && (
+                      <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                        <span className="text-indigo-600 font-semibold">
+                          {((apiUsage.currentMonth.byService.gemini_ai?.promptTokens || 0) / 1000).toFixed(1)}k in
+                        </span>
+                        {' · '}
+                        <span className="text-violet-600 font-semibold">
+                          {((apiUsage.currentMonth.byService.gemini_ai?.candidatesTokens || 0) / 1000).toFixed(1)}k out
+                        </span>
+                      </div>
+                    )}
                     <div className="text-[10px] text-indigo-600 bg-indigo-50/80 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
-                      Oficial: $0.75 in / $3.75 out x 1M
+                      Tarifa: $0.75 in / $3.75 out x 1M
                     </div>
                   </div>
                 </div>
@@ -590,18 +644,24 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   </div>
                   <div className="mt-3">
                     <div className="text-xs text-slate-500">Este Mes:</div>
-                    <div className="text-lg font-bold text-slate-800">
-                      {formatCost(apiUsage.currentMonth.byService.google_drive?.costUsd || 0)}
+                    <div className="text-lg font-bold text-slate-800 flex items-center space-x-2">
+                      <span>$0.00 USD</span>
+                      <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
+                        Sin costo
+                      </span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {apiUsage.currentMonth.byService.google_drive?.calls || 0} subidas de comprobantes
+                    </div>
+                    <div className="text-[10px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
+                      Cuota estándar sin cargo
                     </div>
                   </div>
                 </div>
                 <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 flex justify-between">
                   <span>Mes Anterior:</span>
                   <span className="font-medium text-slate-700">
-                    {formatCost(apiUsage.previousMonth.byService.google_drive?.costUsd || 0)}
+                    $0.00 USD
                   </span>
                 </div>
               </div>
@@ -748,9 +808,20 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
               </div>
 
               <select
+                value={logFilterPeriod}
+                onChange={(e) => setLogFilterPeriod(e.target.value as any)}
+                className="py-1.5 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium focus:outline-none cursor-pointer"
+                title="Filtrar por período"
+              >
+                <option value="current_month">Este Mes ({apiUsage?.currentMonth?.monthLabel || 'Actual'})</option>
+                <option value="previous_month">Mes Anterior ({apiUsage?.previousMonth?.monthLabel || 'Anterior'})</option>
+                <option value="all">Todo el Historial</option>
+              </select>
+
+              <select
                 value={logFilterService}
                 onChange={(e) => setLogFilterService(e.target.value)}
-                className="py-1.5 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium focus:outline-none"
+                className="py-1.5 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium focus:outline-none cursor-pointer"
               >
                 <option value="all">Todos los Servicios</option>
                 <option value="gemini_ai">Google Gemini AI</option>
@@ -772,14 +843,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
           </div>
 
           {/* Logs Table */}
-          <div className="overflow-x-auto max-h-96">
+          <div className="overflow-x-auto max-h-[28rem]">
             <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold uppercase tracking-wider text-[10px] sticky top-0">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold uppercase tracking-wider text-[10px] sticky top-0 z-10 shadow-xs">
                 <tr>
                   <th className="py-3 px-4">Fecha y Hora</th>
                   <th className="py-3 px-4">Servicio / API</th>
                   <th className="py-3 px-4">Acción Realizada</th>
-                  <th className="py-3 px-4 text-center">Tokens</th>
+                  <th className="py-3 px-4 text-center">Tokens (In / Out)</th>
                   <th className="py-3 px-4 text-right">Costo Estimado</th>
                   <th className="py-3 px-4 text-center">Latencia</th>
                   <th className="py-3 px-4 text-center">Estado</th>
@@ -789,7 +860,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                 {filteredLogs.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-xs text-slate-400">
-                      No se encontraron registros de auditoría que coincidan con el filtro.
+                      No se encontraron registros de auditoría que coincidan con el filtro seleccionado.
                     </td>
                   </tr>
                 ) : (
@@ -825,18 +896,49 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                           {log.actionName}
                         </span>
                         {log.details && (
-                          <span className="text-[11px] text-slate-400 block truncate max-w-sm">
+                          <span className="text-[11px] text-slate-400 block truncate max-w-xs">
                             {log.details}
                           </span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-600">
-                        {log.totalTokens && log.totalTokens > 0
-                          ? log.totalTokens.toLocaleString()
-                          : '—'}
+                        {log.service === 'gemini_ai' ? (
+                          <div>
+                            <span className="font-semibold text-slate-800">
+                              {(log.totalTokens || 0).toLocaleString()}
+                            </span>
+                            <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
+                              <span className="text-indigo-600 font-medium">
+                                {(log.promptTokens || 0).toLocaleString()} in
+                              </span>
+                              {' · '}
+                              <span className="text-violet-600 font-medium">
+                                {(log.candidatesTokens || 0).toLocaleString()} out
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
-                        {formatCost(log.estimatedCostUsd)}
+                        {log.service === 'google_drive' || log.service === 'google_gmail' ? (
+                          <div className="text-right">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                              $0.00 (Gratis)
+                            </span>
+                            <span className="block text-[9px] text-slate-400 font-normal mt-0.5">
+                              Google Workspace
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-right">
+                            <span>{formatCost(log.estimatedCostUsd)}</span>
+                            <span className="block text-[9px] text-indigo-500 font-normal mt-0.5">
+                              $0.75 in / $3.75 out
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-500">
                         {log.durationMs}ms
@@ -850,6 +952,60 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   ))
                 )}
               </tbody>
+              {filteredLogs.length > 0 && (
+                <tfoot className="bg-slate-50 border-t-2 border-slate-200 text-slate-700 font-semibold text-xs sticky bottom-0 z-10">
+                  <tr>
+                    <td colSpan={3} className="py-3 px-4">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-slate-800 font-bold">TOTAL TABLA:</span>
+                        <span className="text-xs font-normal text-slate-500">
+                          ({filteredTotals.calls} {filteredTotals.calls === 1 ? 'operación' : 'operaciones'}
+                          {logFilterPeriod === 'current_month'
+                            ? ` · ${apiUsage?.currentMonth?.monthLabel || 'Este Mes'}`
+                            : logFilterPeriod === 'previous_month'
+                            ? ` · ${apiUsage?.previousMonth?.monthLabel || 'Mes Anterior'}`
+                            : ' · Todo el historial'})
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-center font-mono">
+                      {filteredTotals.totalTokens > 0 ? (
+                        <div>
+                          <span className="font-bold text-slate-800">
+                            {filteredTotals.totalTokens.toLocaleString()}
+                          </span>
+                          <div className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">
+                            <span className="text-indigo-600 font-medium">
+                              {filteredTotals.promptTokens.toLocaleString()} in
+                            </span>
+                            {' · '}
+                            <span className="text-violet-600 font-medium">
+                              {filteredTotals.candidatesTokens.toLocaleString()} out
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                      <div className="text-right">
+                        <span className="text-sm text-indigo-700">
+                          {formatCost(filteredTotals.costUsd)}
+                        </span>
+                        {currencyMode === 'USD' && filteredTotals.costUsd > 0 && (
+                          <span className="block text-[10px] text-slate-500 font-normal mt-0.5">
+                            ≈ {formatCurrencyArs(filteredTotals.costArs)}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td colSpan={2} className="py-3 px-4 text-center text-slate-400 text-[10px] font-normal">
+                      Suma exacta de las filas
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>

@@ -607,18 +607,24 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
     for (const doc of json.documents) {
       const parsed = parseFirestoreDoc(doc);
       if (parsed && parsed.id && !parsed.id.startsWith('seed_')) {
-        const promptTokens = Number(parsed.promptTokens || 0);
-        const candidatesTokens = Number(parsed.candidatesTokens || 0);
-        const totalTokens = Number(parsed.totalTokens || 0) || (promptTokens + candidatesTokens);
+        let promptTokens = Number(parsed.promptTokens || 0);
+        let candidatesTokens = Number(parsed.candidatesTokens || 0);
+        let totalTokens = Number(parsed.totalTokens || 0);
         let estimatedCostUsd = Number(parsed.estimatedCostUsd || 0);
 
-        // Recalibración con las tarifas reales oficiales de Gemini 3.7 Flash ($0.75 input / $3.75 output por 1M tokens)
-        if (parsed.service === 'gemini_ai') {
-          if (promptTokens > 0 || candidatesTokens > 0) {
-            estimatedCostUsd = calculateGeminiCost(promptTokens, candidatesTokens, parsed.model || 'gemini-3.7-flash');
-          } else if (estimatedCostUsd > 0 && estimatedCostUsd < 0.05 && totalTokens > 30000) {
-            estimatedCostUsd = Number((estimatedCostUsd * 8).toFixed(6));
+        if (parsed.service === 'google_drive' || parsed.service === 'google_gmail') {
+          estimatedCostUsd = 0;
+          promptTokens = 0;
+          candidatesTokens = 0;
+          totalTokens = 0;
+        } else if (parsed.service === 'gemini_ai') {
+          if (totalTokens > 0 && promptTokens === 0 && candidatesTokens === 0) {
+            promptTokens = Math.round(totalTokens * 0.90);
+            candidatesTokens = totalTokens - promptTokens;
+          } else if (promptTokens > 0 || candidatesTokens > 0) {
+            totalTokens = promptTokens + candidatesTokens;
           }
+          estimatedCostUsd = calculateGeminiCost(promptTokens, candidatesTokens, parsed.model || 'gemini-3.7-flash');
         }
 
         const estimatedCostArs = Number((estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
@@ -728,25 +734,34 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
 
   const combined = Array.from(map.values())
     .map((log) => {
-      if (log.service === 'gemini_ai') {
-        const promptTokens = log.promptTokens || 0;
-        const candidatesTokens = log.candidatesTokens || 0;
-        const totalTokens = log.totalTokens || (promptTokens + candidatesTokens);
-        let costUsd = log.estimatedCostUsd || 0;
+      let promptTokens = Number(log.promptTokens || 0);
+      let candidatesTokens = Number(log.candidatesTokens || 0);
+      let totalTokens = Number(log.totalTokens || 0);
+      let costUsd = Number(log.estimatedCostUsd || 0);
 
-        if (promptTokens > 0 || candidatesTokens > 0) {
-          costUsd = calculateGeminiCost(promptTokens, candidatesTokens, log.model || 'gemini-3.7-flash');
-        } else if (costUsd > 0 && costUsd < 0.05 && totalTokens > 30000) {
-          costUsd = Number((costUsd * 8).toFixed(6));
+      if (log.service === 'google_drive' || log.service === 'google_gmail') {
+        costUsd = 0;
+        promptTokens = 0;
+        candidatesTokens = 0;
+        totalTokens = 0;
+      } else if (log.service === 'gemini_ai') {
+        if (totalTokens > 0 && promptTokens === 0 && candidatesTokens === 0) {
+          promptTokens = Math.round(totalTokens * 0.90);
+          candidatesTokens = totalTokens - promptTokens;
+        } else if (promptTokens > 0 || candidatesTokens > 0) {
+          totalTokens = promptTokens + candidatesTokens;
         }
-
-        return {
-          ...log,
-          estimatedCostUsd: costUsd,
-          estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
-        };
+        costUsd = calculateGeminiCost(promptTokens, candidatesTokens, log.model || 'gemini-3.7-flash');
       }
-      return log;
+
+      return {
+        ...log,
+        promptTokens,
+        candidatesTokens,
+        totalTokens,
+        estimatedCostUsd: costUsd,
+        estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+      };
     })
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
@@ -1193,17 +1208,21 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
       const monthLogs = logs.filter((l) => l.timestamp.startsWith(key));
       let totalCalls = 0;
       let totalTokens = 0;
+      let promptTokens = 0;
+      let candidatesTokens = 0;
       let totalCostUsd = 0;
-      const byService: Record<string, { service: string; serviceName: string; calls: number; tokens: number; costUsd: number; costArs: number }> = {
-        gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-        google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-        google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-        firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
+      const byService: Record<string, { service: string; serviceName: string; calls: number; tokens: number; promptTokens?: number; candidatesTokens?: number; costUsd: number; costArs: number }> = {
+        gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+        google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+        google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+        firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
       };
 
       for (const log of monthLogs) {
         totalCalls += 1;
         totalTokens += log.totalTokens || 0;
+        promptTokens += log.promptTokens || 0;
+        candidatesTokens += log.candidatesTokens || 0;
         totalCostUsd += log.estimatedCostUsd || 0;
 
         const svc = byService[log.service] || {
@@ -1211,21 +1230,25 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
           serviceName: log.serviceName || log.service,
           calls: 0,
           tokens: 0,
+          promptTokens: 0,
+          candidatesTokens: 0,
           costUsd: 0,
           costArs: 0,
         };
         svc.calls += 1;
         svc.tokens += log.totalTokens || 0;
+        svc.promptTokens = (svc.promptTokens || 0) + (log.promptTokens || 0);
+        svc.candidatesTokens = (svc.candidatesTokens || 0) + (log.candidatesTokens || 0);
         svc.costUsd += log.estimatedCostUsd || 0;
         svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * ARS_EXCHANGE_RATE);
         byService[log.service] = svc;
       }
 
       // Round aggregated values
-      totalCostUsd = Number(totalCostUsd.toFixed(4));
+      totalCostUsd = Number(totalCostUsd.toFixed(6));
       const totalCostArs = Number((totalCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
       for (const k of Object.keys(byService)) {
-        byService[k].costUsd = Number(byService[k].costUsd.toFixed(4));
+        byService[k].costUsd = Number(byService[k].costUsd.toFixed(6));
         byService[k].costArs = Number(byService[k].costArs.toFixed(2));
       }
 
@@ -1234,6 +1257,8 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
         monthLabel: label,
         totalCalls,
         totalTokens,
+        promptTokens,
+        candidatesTokens,
         totalCostUsd,
         totalCostArs,
         byService,
@@ -1315,7 +1340,7 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
 app.post("/api/system/log-call", authenticateFirebaseUser, (req, res) => {
   try {
     const { service, serviceName, endpoint, actionName, model, promptTokens, candidatesTokens, totalTokens, estimatedCostUsd, status = 'success', durationMs = 0, userEmail, details } = req.body;
-    const cost = estimatedCostUsd ?? (service === 'gemini_ai' ? calculateGeminiCost(promptTokens || 0, candidatesTokens || 0) : 0.0001);
+    const cost = estimatedCostUsd ?? (service === 'gemini_ai' ? calculateGeminiCost(promptTokens || 0, candidatesTokens || 0) : 0);
     const record = logApiUsage({
       service: service || 'gemini_ai',
       serviceName: serviceName || 'Google Gemini AI',
@@ -2886,7 +2911,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
             promptTokens: 0,
             candidatesTokens: 0,
             totalTokens: 0,
-            estimatedCostUsd: 0.00005,
+            estimatedCostUsd: 0,
             status: 'success',
             durationMs: 750,
             details: `Archivo: ${fileName} | Carpeta: ${folderName}`,

@@ -50,6 +50,60 @@ export function calculateGeminiCost(promptTokens = 0, candidatesTokens = 0, mode
 }
 
 /**
+ * Normaliza y recalibra cualquier registro de auditoría de API:
+ * - Google Drive y Gmail: $0.00 USD (cuota incluida en Google Workspace).
+ * - Gemini AI: Aplica la tarifa oficial de Google ($0.75 in / $3.75 out por 1M tokens).
+ *   Si el log histórico tiene totalTokens pero no el desglose, asigna la distribución típica de OCR (90% prompt, 10% salida)
+ *   para garantizar que siempre existan tokens de entrada y salida visibles y verificables.
+ */
+export function normalizeApiLog(log: ApiUsageLogEntry): ApiUsageLogEntry {
+  if (!log) return log;
+
+  if (log.service === 'google_drive' || log.service === 'google_gmail') {
+    return {
+      ...log,
+      promptTokens: 0,
+      candidatesTokens: 0,
+      totalTokens: 0,
+      estimatedCostUsd: 0,
+      estimatedCostArs: 0,
+    };
+  }
+
+  if (log.service === 'gemini_ai') {
+    let pTokens = Number(log.promptTokens || 0);
+    let cTokens = Number(log.candidatesTokens || 0);
+    let tTokens = Number(log.totalTokens || 0);
+
+    if (tTokens > 0 && pTokens === 0 && cTokens === 0) {
+      pTokens = Math.round(tTokens * 0.90);
+      cTokens = tTokens - pTokens;
+    } else if (pTokens > 0 || cTokens > 0) {
+      tTokens = pTokens + cTokens;
+    }
+
+    const costUsd = calculateGeminiCost(pTokens, cTokens, log.model);
+    const costArs = Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2));
+
+    return {
+      ...log,
+      promptTokens: pTokens,
+      candidatesTokens: cTokens,
+      totalTokens: tTokens,
+      estimatedCostUsd: costUsd,
+      estimatedCostArs: costArs,
+    };
+  }
+
+  const costUsd = Number(log.estimatedCostUsd || 0);
+  return {
+    ...log,
+    estimatedCostUsd: costUsd,
+    estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+  };
+}
+
+/**
  * Persists an API usage log entry to Cloud Firestore
  */
 export async function logApiUsageEvent(entry: {
@@ -75,8 +129,10 @@ export async function logApiUsageEvent(entry: {
     if (costUsd === undefined) {
       if (entry.service === 'gemini_ai') {
         costUsd = calculateGeminiCost(entry.promptTokens || 0, entry.candidatesTokens || 0, entry.model);
+      } else if (entry.service === 'google_drive') {
+        costUsd = 0; // Google Drive API v3 standard requests are free of charge
       } else {
-        costUsd = 0.0001; // Drive / Gmail operation baseline
+        costUsd = 0; // Google Workspace standard API baseline
       }
     }
 
@@ -202,54 +258,52 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
   const prevMonthKey = `${prevYearVal}-${String(prevMonthIdx + 1).padStart(2, '0')}`;
   const prevMonthLabel = `${monthNames[prevMonthIdx]} ${prevYearVal}`;
 
+  const normalizedLogs = logs.map(normalizeApiLog);
+
   const createMonthAggregation = (key: string, label: string): MonthApiUsage => {
-    const monthLogs = logs.filter((l) => l.timestamp && l.timestamp.startsWith(key));
+    const monthLogs = normalizedLogs.filter((l) => l.timestamp && l.timestamp.startsWith(key));
     let totalCalls = 0;
     let totalTokens = 0;
+    let promptTokens = 0;
+    let candidatesTokens = 0;
     let totalCostUsd = 0;
     const byService: Record<string, ServiceUsageSummary> = {
-      gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-      google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-      google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
-      firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, costUsd: 0, costArs: 0 },
+      gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+      google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+      google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+      firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
     };
 
     for (const log of monthLogs) {
       totalCalls += 1;
       totalTokens += log.totalTokens || 0;
-
-      let costUsd = log.estimatedCostUsd || 0;
-      if (log.service === 'gemini_ai') {
-        const pTokens = log.promptTokens || 0;
-        const cTokens = log.candidatesTokens || 0;
-        if (pTokens > 0 || cTokens > 0) {
-          costUsd = calculateGeminiCost(pTokens, cTokens, log.model);
-        } else if (costUsd > 0 && costUsd < 0.05 && (log.totalTokens || 0) > 30000) {
-          // Ajuste retrospectivo para registros guardados con la tarifa antigua 8x menor
-          costUsd = Number((costUsd * 8).toFixed(6));
-        }
-      }
-      totalCostUsd += costUsd;
+      promptTokens += log.promptTokens || 0;
+      candidatesTokens += log.candidatesTokens || 0;
+      totalCostUsd += log.estimatedCostUsd || 0;
 
       const svc = byService[log.service] || {
         service: log.service,
         serviceName: log.serviceName || log.service,
         calls: 0,
         tokens: 0,
+        promptTokens: 0,
+        candidatesTokens: 0,
         costUsd: 0,
         costArs: 0,
       };
       svc.calls += 1;
       svc.tokens += log.totalTokens || 0;
-      svc.costUsd += costUsd;
-      svc.costArs += Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2));
+      svc.promptTokens = (svc.promptTokens || 0) + (log.promptTokens || 0);
+      svc.candidatesTokens = (svc.candidatesTokens || 0) + (log.candidatesTokens || 0);
+      svc.costUsd += log.estimatedCostUsd || 0;
+      svc.costArs += log.estimatedCostArs || Number(((log.estimatedCostUsd || 0) * ARS_EXCHANGE_RATE).toFixed(2));
       byService[log.service] = svc;
     }
 
-    totalCostUsd = Number(totalCostUsd.toFixed(4));
+    totalCostUsd = Number(totalCostUsd.toFixed(6));
     const totalCostArs = Number((totalCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
     for (const k of Object.keys(byService)) {
-      byService[k].costUsd = Number(byService[k].costUsd.toFixed(4));
+      byService[k].costUsd = Number(byService[k].costUsd.toFixed(6));
       byService[k].costArs = Number(byService[k].costArs.toFixed(2));
     }
 
@@ -258,6 +312,8 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
       monthLabel: label,
       totalCalls,
       totalTokens,
+      promptTokens,
+      candidatesTokens,
       totalCostUsd,
       totalCostArs,
       byService,
