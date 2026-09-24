@@ -927,6 +927,19 @@ export async function deleteCentralExpenses(ids: string[]): Promise<DeleteExpens
           await batch.commit();
           result.deletedIds.push(id);
         } catch (err) {
+          // Compatibilidad con reglas publicadas que todavía no conocen `deleted_expenses`:
+          // se borra sin tombstone compartido. El permiso de borrado es exactamente el mismo.
+          try {
+            await deleteDoc(doc(db, 'expenses', id));
+            console.warn(
+              `[Firestore] Comprobante ${id} borrado sin tombstone compartido: ` +
+                'verificá que estén publicadas las reglas actuales de firestore.rules.'
+            );
+            result.deletedIds.push(id);
+            continue;
+          } catch {
+            // se evalúa abajo
+          }
           // Si el documento ya no existe en el servidor, el objetivo del borrado se cumplió
           try {
             const snap = await getDocFromServer(doc(db, 'expenses', id));
