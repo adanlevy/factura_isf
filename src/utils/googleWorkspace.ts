@@ -1,5 +1,5 @@
 // Google Workspace integration for Gmail API and Google Drive API
-import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord } from '../types';
+import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord, DriveSettings } from '../types';
 import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
 import { syncApiLogToCloud } from './apiUsageLogger';
 import { authFetch } from './authFetch';
@@ -125,6 +125,29 @@ export async function requestGoogleWorkspaceAuth(): Promise<{ accessToken: strin
 /**
  * Extracts Google Drive Folder ID from a sharing URL or ID string
  */
+export interface DriveTargetFolder {
+  id?: string;
+  name?: string;
+  url?: string;
+}
+
+export const DEFAULT_PAYMENTS_FOLDER_NAME = 'Comprobantes de Pago y Retenciones';
+
+/**
+ * Carpeta de destino para comprobantes de pago y certificados de retención.
+ * Si no está configurada devuelve undefined y la subida usa la carpeta del centro de costos.
+ */
+export function getPaymentsFolderTarget(settings?: DriveSettings | null): DriveTargetFolder | undefined {
+  if (!settings) return undefined;
+  const id = settings.paymentsFolderId || extractDriveFolderId(settings.paymentsFolderUrl) || undefined;
+  if (!id) return undefined;
+  return {
+    id,
+    name: settings.paymentsFolderName || DEFAULT_PAYMENTS_FOLDER_NAME,
+    url: settings.paymentsFolderUrl || `https://drive.google.com/drive/folders/${id}`,
+  };
+}
+
 export function extractDriveFolderId(driveUrlOrFolder?: string): string | null {
   if (!driveUrlOrFolder) return null;
   const match = driveUrlOrFolder.match(/folders\/([a-zA-Z0-9_-]+)/);
@@ -166,6 +189,9 @@ export async function uploadReceiptToGoogleDrive(params: {
   folderId?: string;
   oldFileId?: string;
   oldFileName?: string;
+  // Carpeta de destino que reemplaza a la del centro de costos
+  // (p. ej. la carpeta única de comprobantes de pago y retenciones)
+  targetFolder?: DriveTargetFolder;
 }): Promise<{
   success: boolean;
   fileId?: string;
@@ -184,6 +210,7 @@ export async function uploadReceiptToGoogleDrive(params: {
     folderId: explicitFolderId,
     oldFileId,
     oldFileName,
+    targetFolder,
   } = params;
   const token = explicitToken || getStoredWorkspaceToken();
 
@@ -196,9 +223,18 @@ export async function uploadReceiptToGoogleDrive(params: {
   }
 
   const costCenterCode = costCenter?.code || 'GADM';
-  const folderName = costCenter?.driveFolder || `${expense.project || 'General'} 2026`;
-  const folderUrl = costCenter?.driveUrl || `https://drive.google.com/drive/search?q=${encodeURIComponent(folderName)}`;
-  const folderId = explicitFolderId || costCenter?.driveFolderId || extractDriveFolderId(folderUrl);
+  const folderName =
+    targetFolder?.name || costCenter?.driveFolder || `${expense.project || 'General'} 2026`;
+  const folderUrl =
+    targetFolder?.url ||
+    costCenter?.driveUrl ||
+    `https://drive.google.com/drive/search?q=${encodeURIComponent(folderName)}`;
+  const folderId =
+    explicitFolderId ||
+    targetFolder?.id ||
+    (targetFolder ? extractDriveFolderId(targetFolder.url) : null) ||
+    costCenter?.driveFolderId ||
+    extractDriveFolderId(folderUrl);
 
   let fileExt = 'png';
   if (expense.receiptFileName?.toLowerCase().endsWith('.pdf') || fileData.startsWith('data:application/pdf') || fileData.startsWith('JVBERi0')) {

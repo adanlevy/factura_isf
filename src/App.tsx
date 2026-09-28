@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry } from './types';
+import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings } from './types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_COST_CENTERS_DATA,
@@ -59,6 +59,9 @@ import {
   deleteCentralExpenses,
   deleteCentralVendors,
   getDeletedExpensesSet,
+  subscribeToDriveSettings,
+  isPaymentProofUsedByOtherExpenses,
+  saveDriveSettings,
   isExpenseDeletedInSession,
   fetchUserCloudPreferences,
   saveUserCloudPreferences,
@@ -452,6 +455,54 @@ export default function App() {
   useEffect(() => {
     saveStoredAuth(currentUser);
   }, [currentUser]);
+
+  // Configuración de Drive: carpeta única para comprobantes de pago y certificados de retención
+  const [driveSettings, setDriveSettings] = useState<DriveSettings | null>(null);
+  useEffect(() => {
+    if (!isFirebaseAuthReady || !currentUser?.email) return;
+    const unsubscribe = subscribeToDriveSettings(setDriveSettings);
+    return () => unsubscribe();
+  }, [isFirebaseAuthReady, currentUser?.email]);
+
+  const handleSaveDriveSettings = async (next: DriveSettings): Promise<boolean> => {
+    const previous = driveSettings;
+    const res = await saveDriveSettings(next);
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return false;
+    }
+    setDriveSettings(next);
+
+    const describe = (s?: DriveSettings | null) =>
+      s?.paymentsFolderId ? s.paymentsFolderName || s.paymentsFolderUrl || s.paymentsFolderId : '(sin configurar)';
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'UPDATE',
+      actionLabel: 'Carpeta de Comprobantes de Pago y Retenciones',
+      entityType: 'system',
+      entityId: 'drive-settings',
+      entityName: 'Carpeta de comprobantes de pago y retenciones',
+      summary: next.paymentsFolderId
+        ? `Los comprobantes de pago y certificados de retención ahora se guardan en la carpeta "${describe(next)}".`
+        : 'Se quitó la carpeta de comprobantes de pago y retenciones: vuelven a guardarse en la carpeta de cada centro de costos.',
+      changes: [
+        {
+          field: 'paymentsFolder',
+          label: 'Carpeta de comprobantes de pago y retenciones',
+          oldValue: describe(previous),
+          newValue: describe(next),
+        },
+      ],
+    });
+
+    showToast(
+      next.paymentsFolderId
+        ? `✅ Carpeta de comprobantes de pago y retenciones guardada: "${describe(next)}".`
+        : '✅ Carpeta quitada: los comprobantes de pago y retenciones vuelven a la carpeta de cada centro de costos.'
+    );
+    return true;
+  };
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -1272,9 +1323,21 @@ export default function App() {
     showToast('✅ Foto reemplazada en Google Drive y plataforma sin alterar los datos contables.');
   };
 
+  // El pago en lote sube una sola constancia a Drive y la vincula a todos sus comprobantes:
+  // solo se borra el archivo si ningún otro comprobante (fuera de excludeIds) lo sigue usando.
+  const isPaymentProofSharedWithOthers = async (item: Expense, excludeIds: string[]): Promise<boolean> => {
+    const fileId = extractDriveFileId(item.paymentProofDriveUrl);
+    if (!fileId || !item.paymentProofDriveUrl) return false;
+    const usedLocally = expenses.some(
+      (e) => !excludeIds.includes(e.id) && extractDriveFileId(e.paymentProofDriveUrl) === fileId
+    );
+    if (usedLocally) return true;
+    return isPaymentProofUsedByOtherExpenses(item.paymentProofDriveUrl, excludeIds);
+  };
+
   // Borra de Drive y de la caché local los archivos de un comprobante YA eliminado de la base.
   // Se ejecuta solo tras confirmar el borrado: si Firestore lo rechaza, los archivos se conservan.
-  const cleanupDeletedExpenseFiles = (item: Expense) => {
+  const cleanupDeletedExpenseFiles = async (item: Expense, deletedIds: string[] = [item.id]) => {
     removeCachedReceiptFile(item.id).catch(() => {});
     removeCachedPaymentProofFile(item.id).catch(() => {});
     removeCachedWithholdingCertificateFile(item.id).catch(() => {});
@@ -1287,7 +1350,8 @@ export default function App() {
       }).catch(() => {});
     }
     const paymentProofId = extractDriveFileId(item.paymentProofDriveUrl);
-    if (paymentProofId || item.paymentProofFileName) {
+    const paymentProofShared = await isPaymentProofSharedWithOthers(item, deletedIds);
+    if (!paymentProofShared && (paymentProofId || item.paymentProofFileName)) {
       deleteReceiptFromGoogleDrive({
         fileId: paymentProofId || undefined,
         fileName: item.paymentProofFileName,
@@ -1361,7 +1425,9 @@ export default function App() {
     }
 
     // 3. Solo lo confirmado: archivos de Drive y log de cambios
-    toDeleteItems.filter((e) => deletedSet.has(e.id)).forEach(cleanupDeletedExpenseFiles);
+    toDeleteItems
+      .filter((e) => deletedSet.has(e.id))
+      .forEach((e) => cleanupDeletedExpenseFiles(e, deletedIds));
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1432,7 +1498,9 @@ export default function App() {
         }
       }
 
-      if (paymentProofFileId || paymentProofNames.length > 0) {
+      // Si la constancia es compartida (pago en lote), queda en Drive para los demás comprobantes
+      const paymentProofShared = await isPaymentProofSharedWithOthers(exp, [id]);
+      if (!paymentProofShared && (paymentProofFileId || paymentProofNames.length > 0)) {
         try {
           await deleteReceiptFromGoogleDrive({
             fileId: paymentProofFileId,
@@ -1469,7 +1537,8 @@ export default function App() {
       removeCachedWithholdingCertificateFile(id).catch(() => {});
 
       try {
-        await upsertCentralExpenses([updated]);
+        // Borra del documento los datos de pago (set con merge no borra campos ausentes)
+        await upsertCentralExpenses([updated], { clearPaymentFields: true });
         await logAuditEvent({
           userEmail: currentUser?.email,
           userName: currentUser?.name,
@@ -2194,6 +2263,7 @@ export default function App() {
                 onBatchDeleteExpenses={handleBatchDeleteExpenses}
                 onBatchSettleReimbursements={handleBatchSettleReimbursements}
                 onBatchPaymentCompleted={handleBatchPaymentCompleted}
+                driveSettings={driveSettings}
                 onRetryDriveUpload={handleUploadExpenseToDrive}
                 onAddVendor={handleAddVendor}
                 onUpdateVendor={handleUpdateVendor}
@@ -2251,6 +2321,8 @@ export default function App() {
               onAddCostCenter={handleAddNewCostCenter}
               onUpdateCostCenter={handleUpdateCostCenter}
               onDeleteCostCenter={handleDeleteCostCenter}
+              driveSettings={driveSettings}
+              onSaveDriveSettings={handleSaveDriveSettings}
             />
           )}
 
@@ -2385,6 +2457,7 @@ export default function App() {
         isOpen={Boolean(withholdingModalExpense)}
         expense={withholdingModalExpense}
         costCenters={costCenters}
+        driveSettings={driveSettings}
         appUsers={appUsers}
         currentUser={currentUser || undefined}
         onClose={() => setWithholdingModalExpense(null)}
@@ -2404,6 +2477,7 @@ export default function App() {
         isOpen={Boolean(paymentModalExpense)}
         expense={paymentModalExpense}
         costCenters={costCenters}
+        driveSettings={driveSettings}
         appUsers={appUsers}
         currentUser={currentUser}
         onClose={() => setPaymentModalExpense(null)}

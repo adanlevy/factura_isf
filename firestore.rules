@@ -160,6 +160,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Configuración de la app (p. ej. app_settings/drive: carpeta única de comprobantes de pago
+    // y certificados de retención). Todos los colaboradores la leen; solo Admins la modifican.
+    match /app_settings/{settingId} {
+      allow read: if isColaborador();
+      allow write: if isAdmin();
+    }
+
     // Accounting categories:
     // - Only Colaboradores and Admins can read categories
     // - Only Admins can manage categories

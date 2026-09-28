@@ -9,6 +9,7 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  deleteField,
   writeBatch,
   onSnapshot,
   getDoc,
@@ -22,7 +23,7 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { db, auth, testFirestoreConnection } from '../lib/firebase';
-import { Expense, Vendor, CostCenter, AppUserRecord } from '../types';
+import { Expense, Vendor, CostCenter, AppUserRecord, DriveSettings } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '../data/initialData';
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
 import { sanitizeCostCenter } from './helpers';
@@ -826,20 +827,44 @@ function withoutDeletedExpenses(items: Expense[]): Expense[] {
   });
 }
 
-async function writeExpensesToFirestore(items: Expense[]): Promise<boolean> {
+// Datos de pago que se borran del documento al revertir un pago. Con set(merge) un campo
+// ausente no se borra, así que hay que pedirlo explícitamente con deleteField().
+const PAYMENT_RESET_FIELDS = [
+  'reimbursedAt',
+  'paymentConfirmedAt',
+  'paymentProofFileName',
+  'paymentProofDriveUrl',
+  'paymentProofAt',
+  'withholdingCertificateFileName',
+  'withholdingCertificateUploadedAt',
+  'withholdingCertificateDriveUrl',
+  'withholdingCertificateSentAt',
+] as const;
+
+function buildExpenseWrite(item: Expense, clearPaymentFields: boolean): any {
+  const data = prepareExpenseForFirestore(item);
+  if (clearPaymentFields) {
+    for (const field of PAYMENT_RESET_FIELDS) {
+      if (data[field] === undefined) data[field] = deleteField();
+    }
+  }
+  return data;
+}
+
+async function writeExpensesToFirestore(items: Expense[], clearPaymentFields = false): Promise<boolean> {
   let allOk = true;
   for (const chunk of chunkArray(items, EXPENSE_WRITE_CHUNK)) {
     try {
       const batch = writeBatch(db);
       for (const item of chunk) {
-        batch.set(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
+        batch.set(doc(db, 'expenses', item.id), buildExpenseWrite(item, clearPaymentFields), { merge: true });
       }
       await batch.commit();
     } catch (e) {
       console.warn('[Firestore] Error en batch de comprobantes, reintentando uno por uno:', e);
       for (const item of chunk) {
         try {
-          await setDoc(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
+          await setDoc(doc(db, 'expenses', item.id), buildExpenseWrite(item, clearPaymentFields), { merge: true });
         } catch (err) {
           console.error(`[Firestore] No se pudo guardar el comprobante ${item.id}:`, err);
           allOk = false;
@@ -865,7 +890,10 @@ export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean>
   return ok;
 }
 
-export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> {
+export async function upsertCentralExpenses(
+  items: Expense[],
+  options?: { clearPaymentFields?: boolean }
+): Promise<boolean> {
   const valid = withoutDeletedExpenses(items);
   if (valid.length === 0) return true;
 
@@ -878,7 +906,22 @@ export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> 
     console.warn('[Sync] Notice mirroring expenses to server store:', err);
   });
 
-  return writeExpensesToFirestore(valid);
+  return writeExpensesToFirestore(valid, Boolean(options?.clearPaymentFields));
+}
+
+/**
+ * Un mismo comprobante de pago en Drive puede estar vinculado a varios comprobantes (pago en lote).
+ * Devuelve true si algún comprobante fuera de `excludeIds` sigue usando ese archivo.
+ * Si no se puede verificar (sin conexión, sin permisos) devuelve true: ante la duda no se borra.
+ */
+export async function isPaymentProofUsedByOtherExpenses(driveUrl: string, excludeIds: string[]): Promise<boolean> {
+  try {
+    const snap = await getDocs(query(collection(db, 'expenses'), where('paymentProofDriveUrl', '==', driveUrl)));
+    return snap.docs.some((d) => !excludeIds.includes(d.id));
+  } catch (err) {
+    console.warn('[Firestore] No se pudo verificar si el comprobante de pago está compartido:', err);
+    return true;
+  }
 }
 
 export interface DeleteExpensesResult {
@@ -972,6 +1015,67 @@ export async function deleteCentralExpenses(ids: string[]): Promise<DeleteExpens
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Configuración de Drive (app_settings/drive): carpeta única de comprobantes de
+// pago y certificados de retención, independiente de los centros de costos.
+// ---------------------------------------------------------------------------
+const DRIVE_SETTINGS_DOC = doc(db, 'app_settings', 'drive');
+
+function normalizeDriveSettings(data: any): DriveSettings | null {
+  if (!data || typeof data !== 'object') return null;
+  return {
+    paymentsFolderUrl: data.paymentsFolderUrl || undefined,
+    paymentsFolderId: data.paymentsFolderId || undefined,
+    paymentsFolderName: data.paymentsFolderName || undefined,
+    updatedAt: data.updatedAt || undefined,
+    updatedBy: data.updatedBy || undefined,
+  };
+}
+
+export async function fetchDriveSettings(): Promise<DriveSettings | null> {
+  try {
+    const snap = await getDoc(DRIVE_SETTINGS_DOC);
+    return snap.exists() ? normalizeDriveSettings(snap.data()) : null;
+  } catch (e) {
+    console.warn('[Firestore] No se pudo leer la configuración de Drive:', e);
+    return null;
+  }
+}
+
+export function subscribeToDriveSettings(onUpdate: (settings: DriveSettings | null) => void): () => void {
+  return onSnapshot(
+    DRIVE_SETTINGS_DOC,
+    (snap) => onUpdate(snap.exists() ? normalizeDriveSettings(snap.data()) : null),
+    (err) => console.warn('[Firestore Live] configuración de Drive:', err.message)
+  );
+}
+
+/** Guarda la configuración de Drive. Solo administradores (lo validan las reglas). */
+export async function saveDriveSettings(settings: DriveSettings): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await setDoc(
+      DRIVE_SETTINGS_DOC,
+      sanitizeForFirestore({
+        paymentsFolderUrl: settings.paymentsFolderUrl || null,
+        paymentsFolderId: settings.paymentsFolderId || null,
+        paymentsFolderName: settings.paymentsFolderName || null,
+        updatedAt: new Date().toISOString(),
+        updatedBy: (auth.currentUser?.email || '').toLowerCase().trim() || null,
+      })
+    );
+    return { ok: true };
+  } catch (e: any) {
+    console.warn('[Firestore] No se pudo guardar la configuración de Drive:', e);
+    const denied = e?.code === 'permission-denied';
+    return {
+      ok: false,
+      error: denied
+        ? 'Sin permisos para guardar. Verificá que tu usuario sea administrador y que estén publicadas las reglas actuales de Firestore.'
+        : 'No se pudo guardar la carpeta. Revisá la conexión e intentá de nuevo.',
+    };
+  }
 }
 
 export async function saveCentralVendors(vendors: Vendor[]): Promise<boolean> {

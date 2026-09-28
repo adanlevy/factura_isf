@@ -171,6 +171,16 @@ await expectDenied('Cuenta @gmail.com sin registro no puede auto-registrarse', (
 await expectAllowed('Admin registra un usuario @gmail.com nuevo', () => jefe.doc('app_users/nuevo.sin.registro@gmail.com').set({ email: 'nuevo.sin.registro@gmail.com', role: 'user' }));
 await expectAllowed('...y ese usuario ya puede leer comprobantes', () => gmailNuevo.doc('expenses/exp-otro').get());
 
+// ---------------------- configuración de Drive (carpeta de pagos/retenciones)
+await seed();
+{
+  const settings = { paymentsFolderUrl: 'https://drive.google.com/drive/folders/abc123', paymentsFolderId: 'abc123', paymentsFolderName: 'Pagos y Retenciones' };
+  await expectAllowed('Admin configura la carpeta de comprobantes de pago y retenciones', () => as('jefe@isf-argentina.org').doc('app_settings/drive').set(settings));
+  await expectAllowed('Colaborador lee la carpeta configurada (para subir certificados/pagos)', () => as('colab@gmail.com').doc('app_settings/drive').get());
+  await expectDenied('Colaborador cambia la carpeta de pagos', () => as('colab@gmail.com').doc('app_settings/drive').set({ paymentsFolderId: 'hack' }));
+  await expectDenied('Cuenta Google cualquiera lee la configuración', () => as('cualquiera@gmail.com').doc('app_settings/drive').get());
+}
+
 // ------------------------------------------------------------------ reporte
 await env.cleanup();
 console.log('\n=== Reglas de Firestore ===');

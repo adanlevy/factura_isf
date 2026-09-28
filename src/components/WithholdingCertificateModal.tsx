@@ -16,7 +16,7 @@ import {
   ExternalLink,
   RotateCcw,
 } from 'lucide-react';
-import { Expense, CostCenter, UserProfile, AppUserRecord } from '../types';
+import { Expense, CostCenter, UserProfile, AppUserRecord, DriveSettings } from '../types';
 import {
   formatCurrency,
   formatDate,
@@ -26,6 +26,7 @@ import {
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   uploadReceiptToGoogleDrive,
+  getPaymentsFolderTarget,
   sendGmailMessage,
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
@@ -39,6 +40,8 @@ interface WithholdingCertificateModalProps {
   onClose: () => void;
   expense: Expense | null;
   costCenters: CostCenter[];
+  // Carpeta única de comprobantes de pago y retenciones (Centro de Costos > configuración)
+  driveSettings?: DriveSettings | null;
   appUsers?: AppUserRecord[];
   onSaved: (updatedExpense: Expense) => void;
   onRevertPayment?: (expenseId: string) => void;
@@ -51,6 +54,7 @@ export function WithholdingCertificateModal({
   onClose,
   expense,
   costCenters,
+  driveSettings = null,
   appUsers = [],
   onSaved,
   onRevertPayment,
@@ -166,6 +170,8 @@ export function WithholdingCertificateModal({
         fileBase64: fileBase64,
         oldFileId,
         oldFileName,
+        // Si hay carpeta de pagos/retenciones configurada, va ahí; si no, a la del centro de costos
+        targetFolder: getPaymentsFolderTarget(driveSettings),
       });
       if (driveRes.success && driveRes.webViewLink) {
         finalDriveUrl = driveRes.webViewLink;

@@ -16,7 +16,7 @@ import {
   FolderKanban,
   Check,
 } from 'lucide-react';
-import { Expense, CostCenter, UserProfile, AppUserRecord, Vendor } from '../types';
+import { Expense, CostCenter, UserProfile, AppUserRecord, Vendor, DriveSettings } from '../types';
 import {
   formatCurrency,
   formatDate,
@@ -30,7 +30,7 @@ import {
   sendGmailMessage,
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
-  extractDriveFileId,
+  getPaymentsFolderTarget,
 } from '../utils/googleWorkspace';
 import { cachePaymentProofFile } from '../utils/receiptCache';
 
@@ -43,6 +43,7 @@ interface BatchPaymentModalProps {
   appUsers?: AppUserRecord[];
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
+  driveSettings?: DriveSettings | null;
   onPaymentCompleted: (updatedExpenses: Expense[], emailsSentCount: number) => Promise<void> | void;
 }
 
@@ -63,6 +64,7 @@ export function BatchPaymentModal({
   appUsers = [],
   currentUser,
   currentUserAccessToken,
+  driveSettings = null,
   onPaymentCompleted,
 }: BatchPaymentModalProps) {
   const [isExecuting, setIsExecuting] = useState(false);
@@ -195,7 +197,48 @@ export function BatchPaymentModal({
     const isPdfProof = paymentProofFileName?.toLowerCase().endsWith('.pdf');
     const isImageProof = Boolean(paymentProofBase64 && !isPdfProof);
 
-    // 1. Send emails to each recipient group if enabled
+    // 1. Subir a Drive la constancia (igual que el pago individual). El lote suele ser una única
+    // transferencia que reintegra varios comprobantes: se sube un solo archivo y se vincula a todos.
+    let sharedProofDriveUrl: string | undefined = undefined;
+    if (paymentProofBase64 && paymentProofFileName) {
+      setExecutionStep('Subiendo comprobante de pago a Google Drive...');
+      try {
+        const firstExp = expenses[0];
+        const sameProject = expenses.every(
+          (e) => (e.project || '').trim().toLowerCase() === (firstExp.project || '').trim().toLowerCase()
+        );
+        const sameSubmitter = recipientGroups.length === 1;
+        const matchedCenter = costCenters.find(
+          (c) => c.name.toLowerCase() === (firstExp.project || '').toLowerCase()
+        );
+        const batchBaseName = generateDriveFileName(
+          {
+            project: sameProject ? firstExp.project : undefined,
+            submittedByName: sameSubmitter ? firstExp.submittedByName : 'Varios',
+            submittedByEmail: sameSubmitter ? firstExp.submittedByEmail : undefined,
+            date: todayStr,
+            amount: totalAmount,
+          },
+          costCenters
+        );
+
+        const driveRes = await uploadReceiptToGoogleDrive({
+          expense: firstExp,
+          costCenter: matchedCenter,
+          customFileName: `${batchBaseName}-ComprobantePago-Lote-${paymentProofFileName}`,
+          fileBase64: paymentProofBase64,
+          // Si hay carpeta de pagos/retenciones configurada, va ahí; si no, a la del centro de costos
+          targetFolder: getPaymentsFolderTarget(driveSettings),
+        });
+        if (driveRes.success && driveRes.webViewLink) {
+          sharedProofDriveUrl = driveRes.webViewLink;
+        }
+      } catch (err) {
+        console.warn('[Batch Payment] Payment proof drive upload notice:', err);
+      }
+    }
+
+    // 2. Send emails to each recipient group if enabled
     if (sendEmails && recipientGroups.length > 0) {
       for (let i = 0; i < recipientGroups.length; i++) {
         const group = recipientGroups[i];
@@ -362,7 +405,7 @@ export function BatchPaymentModal({
       }
     }
 
-    // 2. Prepare updated expenses list
+    // 3. Prepare updated expenses list
     setExecutionStep('Actualizando estados de liquidación en el sistema...');
 
     const updatedExpenses: Expense[] = expenses.map((e) => {
@@ -379,6 +422,8 @@ export function BatchPaymentModal({
         transferDetails: transferSnapshot || e.transferDetails,
         paymentProofImage: paymentProofBase64 || e.paymentProofImage,
         paymentProofFileName: paymentProofFileName || e.paymentProofFileName,
+        paymentProofAt: paymentProofBase64 ? nowIso : e.paymentProofAt,
+        paymentProofDriveUrl: sharedProofDriveUrl || e.paymentProofDriveUrl,
         appliesWithholdings: appliesWithholdings || e.appliesWithholdings,
         updatedAt: nowIso,
       };
@@ -391,7 +436,7 @@ export function BatchPaymentModal({
       }
     }
 
-    // 3. Complete payment callback
+    // 4. Complete payment callback
     await onPaymentCompleted(updatedExpenses, emailsSentCount);
     setIsExecuting(false);
     onClose();

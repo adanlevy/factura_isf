@@ -33,7 +33,7 @@ import {
   RefreshCw,
   FileCheck,
 } from 'lucide-react';
-import { Expense, CostCenter, Vendor, AppUserRecord, UserProfile } from '../types';
+import { Expense, CostCenter, Vendor, AppUserRecord, UserProfile, DriveSettings } from '../types';
 import {
   formatCurrency,
   formatDate,
@@ -64,6 +64,7 @@ interface AdminMovementViewProps {
   onBatchPaymentCompleted?: (updatedExpenses: Expense[], emailsSentCount: number) => Promise<void> | void;
   appUsers?: AppUserRecord[];
   currentUser?: UserProfile;
+  driveSettings?: DriveSettings | null;
   onRetryDriveUpload?: (expense: Expense) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
   onUpdateVendor?: (vendor: Vendor) => void;
@@ -88,6 +89,7 @@ export function AdminMovementView({
   vendors = [],
   appUsers = [],
   currentUser,
+  driveSettings = null,
   onToggleReimbursementStatus,
   onDirectPayExpense,
   onProcessPayment,
@@ -1383,6 +1385,7 @@ export function AdminMovementView({
         vendors={vendors}
         appUsers={appUsers}
         currentUser={currentUser}
+        driveSettings={driveSettings}
         onPaymentCompleted={async (updatedExpenses, emailsSentCount) => {
           if (onBatchPaymentCompleted) {
             await onBatchPaymentCompleted(updatedExpenses, emailsSentCount);

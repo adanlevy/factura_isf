@@ -13,11 +13,12 @@ import {
   Eye,
   FileSpreadsheet,
 } from 'lucide-react';
-import { Expense, CostCenter, UserProfile, AppUserRecord } from '../types';
+import { Expense, CostCenter, UserProfile, AppUserRecord, DriveSettings } from '../types';
 import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject, formatTransferDetails } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   uploadReceiptToGoogleDrive,
+  getPaymentsFolderTarget,
   sendGmailMessage,
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
@@ -31,6 +32,8 @@ interface PaymentProcessModalProps {
   onClose: () => void;
   expense: Expense | null;
   costCenters: CostCenter[];
+  // Carpeta única de comprobantes de pago y retenciones (Centro de Costos > configuración)
+  driveSettings?: DriveSettings | null;
   appUsers?: AppUserRecord[];
   onPaymentCompleted: (updatedExpense: Expense) => void;
   currentUser?: UserProfile;
@@ -42,6 +45,7 @@ export function PaymentProcessModal({
   onClose,
   expense,
   costCenters,
+  driveSettings = null,
   appUsers = [],
   onPaymentCompleted,
   currentUser,
@@ -175,6 +179,8 @@ export function PaymentProcessModal({
           fileBase64: paymentProofBase64,
           oldFileId,
           oldFileName,
+          // Si hay carpeta de pagos/retenciones configurada, va ahí; si no, a la del centro de costos
+          targetFolder: getPaymentsFolderTarget(driveSettings),
         });
         if (driveRes.success && driveRes.webViewLink) {
           finalPaymentProofUrl = driveRes.webViewLink;
