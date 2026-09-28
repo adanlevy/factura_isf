@@ -14,7 +14,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { Expense, CostCenter, UserProfile, AppUserRecord, DriveSettings } from '../types';
-import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject, formatTransferDetails } from '../utils/helpers';
+import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject, formatTransferDetails, escapeHtml } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   uploadReceiptToGoogleDrive,
@@ -218,11 +218,11 @@ export function PaymentProcessModal({
       ? `Te confirmamos que el pago a proveedor por <strong>${formatCurrency(
           expense.amount,
           expense.currency
-        )}</strong> correspondiente al comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>) ha sido <strong>transferido y ejecutado con éxito</strong>.`
+        )}</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y ejecutado con éxito</strong>.`
       : `Te confirmamos que el reintegro por <strong>${formatCurrency(
           expense.amount,
           expense.currency
-        )}</strong> correspondiente a tu comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.`;
+        )}</strong> correspondiente a tu comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.`;
 
     const emailBodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
       <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px;">
@@ -230,7 +230,7 @@ export function PaymentProcessModal({
         <p style="margin: 0; color: #64748b; font-size: 13px;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
       </div>
 
-      <p style="font-size: 14px;">Hola <strong>${recipientName}</strong>,</p>
+      <p style="font-size: 14px;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
       <p style="font-size: 14px;">${emailPaymentSentence}</p>
 
       ${
@@ -238,10 +238,10 @@ export function PaymentProcessModal({
           ? `<div style="background:#f8fafc; border:1px solid #e2e8f0; padding:14px; border-radius:10px; margin:16px 0;">
         <p style="margin:0 0 6px; font-weight:bold; color:#0f172a; font-size:13px;">Detalles de la transferencia:</p>
         <ul style="margin:0; padding-left:20px; font-size:12.5px; color:#334155; line-height: 1.6;">
-          ${expense.bankDetails.alias ? `<li><strong>Alias:</strong> ${expense.bankDetails.alias}</li>` : ''}
-          ${expense.bankDetails.cbuCvu ? `<li><strong>CBU / CVU:</strong> ${expense.bankDetails.cbuCvu}</li>` : ''}
-          ${expense.bankDetails.bankName ? `<li><strong>Banco:</strong> ${expense.bankDetails.bankName}</li>` : ''}
-          ${expense.bankDetails.accountHolder ? `<li><strong>Titular:</strong> ${expense.bankDetails.accountHolder}</li>` : ''}
+          ${expense.bankDetails.alias ? `<li><strong>Alias:</strong> ${escapeHtml(expense.bankDetails.alias)}</li>` : ''}
+          ${expense.bankDetails.cbuCvu ? `<li><strong>CBU / CVU:</strong> ${escapeHtml(expense.bankDetails.cbuCvu)}</li>` : ''}
+          ${expense.bankDetails.bankName ? `<li><strong>Banco:</strong> ${escapeHtml(expense.bankDetails.bankName)}</li>` : ''}
+          ${expense.bankDetails.accountHolder ? `<li><strong>Titular:</strong> ${escapeHtml(expense.bankDetails.accountHolder)}</li>` : ''}
         </ul>
       </div>`
           : ''
@@ -252,7 +252,7 @@ export function PaymentProcessModal({
           ? `<div style="background:#ecfdf5; border:1px solid #a7f3d0; padding:14px; border-radius:10px; margin:16px 0;">
         <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Transferencia Adjunto:</p>
         <p style="margin:0; font-size:12px; color:#047857;">
-          Se adjunta la constancia de transferencia bancaria: <strong>${paymentProofFileName}</strong>.
+          Se adjunta la constancia de transferencia bancaria: <strong>${escapeHtml(paymentProofFileName)}</strong>.
         </p>
         ${
           isImageProof

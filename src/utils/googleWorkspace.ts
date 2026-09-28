@@ -1,6 +1,6 @@
 // Google Workspace integration for Gmail API and Google Drive API
 import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord, DriveSettings } from '../types';
-import { generateDriveFileName, formatCurrency, formatDate } from './helpers';
+import { generateDriveFileName, formatCurrency, formatDate, escapeHtml } from './helpers';
 import { syncApiLogToCloud } from './apiUsageLogger';
 import { authFetch } from './authFetch';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -514,6 +514,12 @@ export async function sendGmailMessage(params: {
     if (response && response.status === 401) {
       saveStoredWorkspaceToken(null);
     }
+
+    // Error del servidor (sin permiso para ese destinatario, límite de envíos, Gmail rechazó, etc.)
+    if (response && !response.ok) {
+      const errData = await response.json().catch(() => null);
+      throw new Error(errData?.error || `Error ${response.status} al enviar el correo`);
+    }
   } catch (err: any) {
     console.warn('[Gmail] Backend /api/send-email attempt failed:', err?.message || err);
 
@@ -708,33 +714,33 @@ export async function sendReceiptUploadConfirmationEmail(params: {
 
       const formattedAmt = formatCurrency(exp.amount || 0, exp.currency);
       const bankInfo = exp.bankDetails?.alias
-        ? `Alias: <strong>${exp.bankDetails.alias}</strong>`
+        ? `Alias: <strong>${escapeHtml(exp.bankDetails.alias)}</strong>`
         : exp.bankDetails?.cbuCvu
-        ? `CBU/CVU: ${exp.bankDetails.cbuCvu}`
+        ? `CBU/CVU: ${escapeHtml(exp.bankDetails.cbuCvu)}`
         : '';
 
       const typeLabel = isVendorPayment
         ? `<span style="color: #0284c7; font-weight: 600;">🏢 Pago a proveedor</span>`
         : isReimb
         ? `<span style="color: #d97706; font-weight: 600;">🔄 Reintegro</span>`
-        : `<span style="color: #059669; font-weight: 600;">💳 ${exp.paymentMethod || 'Pago Directo'}</span>`;
+        : `<span style="color: #059669; font-weight: 600;">💳 ${escapeHtml(exp.paymentMethod || 'Pago Directo')}</span>`;
 
       return `
         <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 0 ? 'background-color: #ffffff;' : 'background-color: #f8fafc;'}">
           <td style="padding: 10px 12px; font-size: 13px; font-weight: 600; color: #1e293b;">
-            ${exp.vendor || 'Sin especificar'}
-            ${exp.invoiceNumber ? `<div style="font-size: 11px; color: #64748b; font-weight: normal;">N° ${exp.invoiceNumber}</div>` : ''}
+            ${escapeHtml(exp.vendor || 'Sin especificar')}
+            ${exp.invoiceNumber ? `<div style="font-size: 11px; color: #64748b; font-weight: normal;">N° ${escapeHtml(exp.invoiceNumber)}</div>` : ''}
           </td>
           <td style="padding: 10px 12px; font-size: 12px; color: #475569; white-space: nowrap;">
             ${formatDate(exp.date)}
           </td>
           <td style="padding: 10px 12px; font-size: 12px; color: #334155;">
             <span style="display: inline-block; padding: 2px 8px; background-color: #e0e7ff; color: #3730a3; border-radius: 4px; font-weight: 600; font-size: 11px;">
-              ${exp.project || 'General'}
+              ${escapeHtml(exp.project || 'General')}
             </span>
           </td>
           <td style="padding: 10px 12px; font-size: 12px; color: #475569;">
-            ${exp.category || 'Varios'}
+            ${escapeHtml(exp.category || 'Varios')}
           </td>
           <td style="padding: 10px 12px; font-size: 12px; color: #334155;">
             ${typeLabel}${bankInfo ? `<div style="font-size: 11px; color: #64748b; margin-top: 2px;">${bankInfo}</div>` : ''}
@@ -775,7 +781,7 @@ export async function sendReceiptUploadConfirmationEmail(params: {
           </div>
 
           <div class="content">
-            <p style="font-size: 15px; margin-top: 0;">Hola <strong>${recipientName}</strong>,</p>
+            <p style="font-size: 15px; margin-top: 0;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
             <p style="font-size: 14px; line-height: 1.5; color: #334155;">
               Te confirmamos que se ${count === 1 ? 'ha registrado exitosamente tu comprobante' : `han registrado exitosamente tus <strong>${count} comprobantes</strong>`} en el sistema de rendiciones de ISF Argentina.
             </p>
@@ -920,20 +926,20 @@ export async function notifyBankDetailsChange(params: {
           </div>
           <div class="content">
             <p style="font-size: 14px; margin-top: 0; color: #334155;">
-              Se ha registrado un alta o modificación de datos bancarios para <strong>${targetName}</strong> (${targetTypeLabel}).
+              Se ha registrado un alta o modificación de datos bancarios para <strong>${escapeHtml(targetName)}</strong> (${targetTypeLabel}).
             </p>
             <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #3730a3; margin-bottom: 16px;">
-              👤 <strong>Modificado por:</strong> ${updatedBy.name || updatedBy.email} (${updatedBy.email})<br>
+              👤 <strong>Modificado por:</strong> ${escapeHtml(updatedBy.name || updatedBy.email)} (${escapeHtml(updatedBy.email)})<br>
               📅 <strong>Fecha y hora:</strong> ${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
             </div>
             <div style="font-size: 13px; font-weight: 700; color: #0f172a;">Nuevos Datos Bancarios Registrados:</div>
             <table class="data-table">
-              <tr><td class="label">Titular:</td><td class="val">${bankDetails.accountHolder || '-'}</td></tr>
-              <tr><td class="label">Banco:</td><td class="val">${bankDetails.bankName || '-'}</td></tr>
-              <tr><td class="label">Tipo de Cuenta:</td><td class="val">${bankDetails.accountType || '-'}</td></tr>
-              <tr><td class="label">CBU / CVU:</td><td class="val">${bankDetails.cbuCvu || '-'}</td></tr>
-              <tr><td class="label">Alias:</td><td class="val">${bankDetails.alias || '-'}</td></tr>
-              <tr><td class="label">CUIT / CUIL:</td><td class="val">${bankDetails.cuitCuil || '-'}</td></tr>
+              <tr><td class="label">Titular:</td><td class="val">${escapeHtml(bankDetails.accountHolder || '-')}</td></tr>
+              <tr><td class="label">Banco:</td><td class="val">${escapeHtml(bankDetails.bankName || '-')}</td></tr>
+              <tr><td class="label">Tipo de Cuenta:</td><td class="val">${escapeHtml(bankDetails.accountType || '-')}</td></tr>
+              <tr><td class="label">CBU / CVU:</td><td class="val">${escapeHtml(bankDetails.cbuCvu || '-')}</td></tr>
+              <tr><td class="label">Alias:</td><td class="val">${escapeHtml(bankDetails.alias || '-')}</td></tr>
+              <tr><td class="label">CUIT / CUIL:</td><td class="val">${escapeHtml(bankDetails.cuitCuil || '-')}</td></tr>
             </table>
           </div>
           <div class="footer">
@@ -993,8 +999,8 @@ export async function sendPaymentReversalEmail(params: {
     (c) => c.name.toLowerCase() === (expense.project || '').toLowerCase()
   );
   const centerLabel = matchedCenter
-    ? `${matchedCenter.code} - ${matchedCenter.name}`
-    : expense.project || 'General';
+    ? `${escapeHtml(matchedCenter.code)} - ${escapeHtml(matchedCenter.name)}`
+    : escapeHtml(expense.project || 'General');
 
   const formattedAmount = formatCurrency(expense.amount || 0, expense.currency);
   const subject = `[ISF Finanzas] Reversión de Pago: ${expense.vendor || 'Comprobante'} (${formattedAmount})`;
@@ -1030,26 +1036,26 @@ export async function sendPaymentReversalEmail(params: {
           </div>
           <div class="content">
             <p style="font-size: 14px; margin-top: 0; color: #334155;">
-              Hola <strong>${recipientName}</strong>,
+              Hola <strong>${escapeHtml(recipientName)}</strong>,
             </p>
             <p style="font-size: 13.5px; color: #334155; line-height: 1.5;">
-              Te informamos que se ha <strong>revertido el registro de pago</strong> correspondiente al comprobante de <strong>${expense.vendor || 'Proveedor'}</strong> por <strong>${formattedAmount}</strong>.
+              Te informamos que se ha <strong>revertido el registro de pago</strong> correspondiente al comprobante de <strong>${escapeHtml(expense.vendor || 'Proveedor')}</strong> por <strong>${formattedAmount}</strong>.
             </p>
             <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; font-size: 12.5px; color: #92400e; margin: 16px 0;">
               ⚠️ <strong>Estado actual:</strong> El comprobante ha regresado al estado <strong>Pendiente de Pago</strong> en la plataforma para su debida revisión, ajuste o posterior liquidación.
-              ${reversalReason ? `<div style="margin-top: 6px; font-size: 12px;"><strong>Motivo indicado:</strong> ${reversalReason}</div>` : ''}
+              ${reversalReason ? `<div style="margin-top: 6px; font-size: 12px;"><strong>Motivo indicado:</strong> ${escapeHtml(reversalReason)}</div>` : ''}
             </div>
 
             <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-top: 14px;">Detalles del Comprobante Revertido:</div>
             <table class="data-table">
-              <tr><td class="label">Proveedor:</td><td class="val">${expense.vendor || '-'}</td></tr>
-              ${expense.invoiceNumber ? `<tr><td class="label">N° Comprobante:</td><td class="val">${expense.invoiceNumber}</td></tr>` : ''}
+              <tr><td class="label">Proveedor:</td><td class="val">${escapeHtml(expense.vendor || '-')}</td></tr>
+              ${expense.invoiceNumber ? `<tr><td class="label">N° Comprobante:</td><td class="val">${escapeHtml(expense.invoiceNumber)}</td></tr>` : ''}
               <tr><td class="label">Fecha Comprobante:</td><td class="val">${dateFormatted}</td></tr>
               <tr><td class="label">Centro de Costos:</td><td class="val">${centerLabel}</td></tr>
-              <tr><td class="label">Categoría:</td><td class="val">${expense.category || '-'}</td></tr>
+              <tr><td class="label">Categoría:</td><td class="val">${escapeHtml(expense.category || '-')}</td></tr>
               <tr><td class="label">Monto:</td><td class="val" style="color: #0f172a; font-size: 13.5px;">${formattedAmount}</td></tr>
-              <tr><td class="label">Tipo / Método:</td><td class="val">${expense.paymentMethod || 'Pago a Proveedor'}</td></tr>
-              <tr><td class="label">Revertido por:</td><td class="val">${revertedByName}</td></tr>
+              <tr><td class="label">Tipo / Método:</td><td class="val">${escapeHtml(expense.paymentMethod || 'Pago a Proveedor')}</td></tr>
+              <tr><td class="label">Revertido por:</td><td class="val">${escapeHtml(revertedByName)}</td></tr>
               <tr><td class="label">Fecha de Reversión:</td><td class="val">${timestampStr}</td></tr>
             </table>
 
@@ -1172,7 +1178,7 @@ export async function sendNewUserWelcomeEmail(params: {
           </div>
 
           <div class="content">
-            <p style="margin-top: 0; font-size: 15px;">Hola <strong>${recipientName}</strong>,</p>
+            <p style="margin-top: 0; font-size: 15px;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
             
             <p>
               Te damos la bienvenida al sistema digital de comprobantes y rendición de gastos de <strong>Ingeniería Sin Fronteras Argentina</strong>. Tu cuenta ha sido habilitada con el perfil de <strong>${roleLabel}</strong>.

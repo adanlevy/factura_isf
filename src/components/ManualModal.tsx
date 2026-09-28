@@ -263,7 +263,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <h4 className="font-bold text-slate-900 text-sm mt-4">Retenciones, reversión y más</h4>
             <ul className="list-disc pl-5 space-y-1 text-slate-600">
               <li><strong>Certificado de retenciones:</strong> al hacer clic en <Badge tone="reten">Pend. Retención</Badge> adjuntás el certificado AFIP/ARCA; se archiva en la carpeta de Comprobantes de Pago y Retenciones, se envía por correo y pasa a <Badge tone="paid">Pagado</Badge> definitivo.</li>
-              <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y elimina de Drive la constancia y el certificado.</li>
+              <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y manda a la papelera de Drive la constancia y el certificado (se pueden recuperar durante 30 días).</li>
               <li><strong>Pedir datos bancarios:</strong> «Pedir Datos» envía un correo prearmado solicitando CBU/Alias.</li>
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
               <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos.</li>
@@ -313,7 +313,9 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li><strong>Acceso restringido:</strong> solo entran los correos habilitados.</li>
               <li><strong>Datos bancarios:</strong> se usan solo para reintegros y transferencias. No se venden ni ceden a terceros.</li>
               <li><strong>Permisos de Google mínimos</strong> para los usuarios; las operaciones sobre Drive/Gmail las hace el servidor con la cuenta institucional.</li>
-              <li><strong>Trazabilidad:</strong> cada cambio queda en el Log de Cambios.</li>
+              <li><strong>Trazabilidad:</strong> cada cambio queda en el Log de Cambios, registrado con la cuenta de quien lo hizo.</li>
+              <li><strong>Correos institucionales:</strong> un colaborador solo puede enviar correos dentro de la organización (su cuenta, @isf-argentina.org y los emails en copia de los centros de costos); los correos a proveedores los envía Administración.</li>
+              <li><strong>Archivos en Drive:</strong> solo se tocan archivos de las carpetas registradas en la app, y nunca se borran definitivamente: van a la papelera de Drive.</li>
             </ul>
             <p className="text-slate-500 text-[11px]">Contacto institucional: <a href="mailto:admin@isf-argentina.org" className="text-indigo-600 font-semibold hover:underline">admin@isf-argentina.org</a></p>
           </>
@@ -333,6 +335,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               ['El comprobante dice «Fallo Drive»', 'La subida a Drive falló. Usá «Reintentar» en la fila; el dato contable ya quedó guardado.', false],
               ['Necesito reintegrar y no tengo el CBU', 'Usá «Pedir Datos» en Gestión de Pagos para pedirlo por correo.', true],
               ['¿Pagar muchos comprobantes juntos?', 'Seleccioná varias filas en Gestión de Pagos y usá «Pagar» (pago en lote).', true],
+              ['Aparece «Hay una versión nueva de la aplicación»', 'Se publicó una actualización. Guardá lo que estés cargando y tocá «Actualizar ahora» para recargar con la última versión. «Más tarde» oculta el aviso por 30 minutos.', false],
             ]
               .filter(([, , adminOnly]) => isAdmin || !adminOnly)
               .map(([q, a]) => (

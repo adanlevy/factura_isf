@@ -72,6 +72,19 @@ export function generateDriveFileName(
   return baseName;
 }
 
+/**
+ * Escapa texto para insertarlo en el HTML de un correo (proveedor, notas, nombres, datos bancarios).
+ * Evita que un texto cargado por un usuario o leído por OCR inyecte enlaces o HTML en correos institucionales.
+ */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function formatCurrency(amount: number, currency: string = 'ARS'): string {
   try {
     const symbolMap: Record<string, string> = {

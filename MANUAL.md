@@ -281,7 +281,7 @@ Cuando un pago se marcó con **"Aplica Retenciones"**, queda en estado **"Pagado
 Un comprobante ya pagado puede volver a **Pendiente** (botón **"Revertir"** al pasar el mouse sobre *"Pagado"*, o desde el certificado). La reversión:
 - Pide confirmación (**"Sí, revertir pago"**).
 - **Envía un correo de aviso** de reversión al solicitante.
-- **Elimina de Google Drive** la constancia de transferencia y el certificado de retención asociados (si existían).
+- **Manda a la papelera de Google Drive** la constancia de transferencia y el certificado de retención asociados (si existían). Se pueden recuperar desde la papelera durante 30 días. Si la constancia es compartida por un pago en lote, se conserva mientras otro comprobante la use.
 - Queda registrada en el Log de Cambios.
 
 ### 7.7 Exportar CSV
@@ -377,8 +377,10 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Acceso restringido:** solo entran los correos habilitados. El control de roles se hace a nivel de aplicación (colección `app_users`).
 - **Datos bancarios:** se usan exclusivamente para reintegros y transferencias. La política de privacidad de la app aclara que **no se venden ni ceden** datos personales a terceros.
 - **Permisos de Google mínimos** para los usuarios; las operaciones sensibles (Drive/Gmail) las hace el servidor con la cuenta institucional.
-- **Trazabilidad:** cada cambio relevante queda en el Log de Cambios y cada llamada a API en la auditoría del sistema.
-- **Nota técnica:** las reglas de Firestore actuales (`firestore.rules`) permiten lectura/escritura sin restricción a nivel de base de datos; la seguridad efectiva depende del control de acceso de la aplicación. Es recomendable endurecer esas reglas si el proyecto crece.
+- **Trazabilidad:** cada cambio relevante queda en el Log de Cambios y cada llamada a API en la auditoría del sistema. El servidor registra el autor según la cuenta con la que se inició sesión (no se puede registrar a nombre de otra persona).
+- **Correos institucionales:** salen de la cuenta central. Un **colaborador** solo puede enviar a destinatarios de la organización: su propia cuenta, direcciones `@isf-argentina.org`, usuarios habilitados y los emails en copia de los centros de costos. Los correos a proveedores u otros externos los envía **Administración**. Hay un límite de envíos por hora por usuario.
+- **Archivos en Google Drive:** el servidor solo modifica archivos que estén en las **carpetas registradas** (centros de costos y carpeta de Comprobantes de Pago y Retenciones). Un colaborador solo puede reemplazar o quitar archivos que subió él mismo. Nada se borra definitivamente: los archivos reemplazados o quitados van a la **papelera de Drive**.
+- **Reglas de Firestore:** `firestore.rules` restringe cada colección por rol (Colaborador / Admin) y se publica desde la consola de Firebase (pestaña *Security*).
 - **Documentos legales:** desde el pie de página se accede a la **Política de Privacidad** y a los **Términos y Condiciones**. Contacto institucional: `admin@isf-argentina.org`.
 
 ---
@@ -427,7 +429,9 @@ Materiales de Construcción e Instalación · Herramientas y Equipamiento · Tra
 - **Directo** — pago institucional (tarjeta corporativa o débito Galicia); no requiere reintegro.
 
 ### 11.4 Versionado
-La versión se muestra en el pie de página (`v2.5.9`). Toda modificación al proyecto debe incrementar el número de versión en `src/version.ts` y `package.json` (según la política del repositorio).
+La versión se muestra en el pie de página. Toda modificación al proyecto debe incrementar el número de versión en `src/version.ts` y `package.json` (según la política del repositorio).
+
+**Aviso de versión nueva:** la app consulta cada 5 minutos (y al volver a la pestaña) la versión publicada en el servidor. Si hay una más nueva que la que tenés abierta, aparece arriba el aviso **"Hay una versión nueva de la aplicación"** con **"Actualizar ahora"** (recarga la página con la última versión) y **"Más tarde"** (lo oculta 30 minutos). Conviene guardar lo que estés cargando antes de actualizar.
 
 ---
 
