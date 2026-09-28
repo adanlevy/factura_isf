@@ -22,13 +22,14 @@ import { AuthProfileModal } from './components/AuthProfileModal';
 import { UserLoginGate } from './components/UserLoginGate';
 import { LegalPagesModal } from './components/LegalPagesModal';
 import { ManualModal } from './components/ManualModal';
+import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
 import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth } from './utils/auth';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
-import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName } from './utils/helpers';
+import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName, escapeHtml } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
@@ -1622,15 +1623,15 @@ export default function App() {
           : `Reintegros Liquidados: ${group.items.length} comprobantes - Total ${formatCurrency(total)}`;
 
         const rows = group.items.map((it) => `<tr>
-          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${it.date}</td>
-          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: bold;">${it.vendor}</td>
-          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${it.project}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${escapeHtml(it.date)}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; font-weight: bold;">${escapeHtml(it.vendor)}</td>
+          <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${escapeHtml(it.project)}</td>
           <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: right; font-weight: bold; color: #065f46;">${formatCurrency(it.amount, it.currency)}</td>
         </tr>`).join('');
 
         const bodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
           <h2 style="color: #065f46; margin-top: 0;">Confirmación de Reintegro Liquidado</h2>
-          <p>Hola <strong>${group.name}</strong>,</p>
+          <p>Hola <strong>${escapeHtml(group.name)}</strong>,</p>
           <p>Te confirmamos que se han transferido y liquidado con éxito <strong>${group.items.length} comprobante(s)</strong> por un total de <strong>${formatCurrency(total)}</strong>:</p>
           <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
             <thead><tr style="background: #f8fafc;"><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Fecha</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proveedor</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proyecto</th><th style="padding: 6px 10px; text-align: right; font-size: 11px;">Importe</th></tr></thead>
@@ -1983,8 +1984,8 @@ export default function App() {
       mode === 'REQUEST_BANK_DETAILS'
         ? `<div style="font-family: Arial, sans-serif; max-width: 600px; color: #1e293b; line-height: 1.6;">
             <h2 style="color: #4f46e5; margin-bottom: 8px;">Solicitud de Datos Bancarios</h2>
-            <p>Hola <strong>${recipientName}</strong>,</p>
-            <p>Desde Administración y Finanzas estamos procesando tu reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> correspondiente al comprobante de <em>${expense.vendor}</em> (Centro de Costos: <strong>${expense.project || 'General'}</strong>).</p>
+            <p>Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
+            <p>Desde Administración y Finanzas estamos procesando tu reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(expense.project || 'General')}</strong>).</p>
             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
               <p style="margin: 0; font-size: 13px;">Por favor indícanos tus datos de transferencia (CBU/CVU, Alias, Banco y CUIT) para proceder a la liquidación del pago a la brevedad.</p>
             </div>
@@ -1992,8 +1993,8 @@ export default function App() {
           </div>`
         : `<div style="font-family: Arial, sans-serif; max-width: 600px; color: #1e293b; line-height: 1.6;">
             <h2 style="color: #059669; margin-bottom: 8px;">Reintegro de Gasto Liquidado</h2>
-            <p>Hola <strong>${recipientName}</strong>,</p>
-            <p>Te confirmamos que el reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> de <em>${expense.vendor}</em> ha sido <strong>transferido y liquidado con éxito</strong>.</p>
+            <p>Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
+            <p>Te confirmamos que el reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> de <em>${escapeHtml(expense.vendor)}</em> ha sido <strong>transferido y liquidado con éxito</strong>.</p>
             <p style="font-size: 12px; color: #64748b;">Área de Administración & Finanzas — ISF Argentina</p>
           </div>`;
 
@@ -2186,19 +2187,24 @@ export default function App() {
 
   if (!currentUser || !currentUser.email) {
     return (
-      <UserLoginGate
-        onLogin={(profile) => {
-          setCurrentUser(profile);
-          saveStoredAuth(profile);
-          showToast(`¡Bienvenido/a, ${profile.name}!`);
-        }}
-      />
+      <>
+        <UpdateAvailableBanner />
+        <UserLoginGate
+          onLogin={(profile) => {
+            setCurrentUser(profile);
+            saveStoredAuth(profile);
+            showToast(`¡Bienvenido/a, ${profile.name}!`);
+          }}
+        />
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      
+      {/* Aviso de versión nueva publicada */}
+      <UpdateAvailableBanner />
+
       {/* Top Clean Header & Navigation Menu */}
       <Navbar
         activeTab={activeTab}

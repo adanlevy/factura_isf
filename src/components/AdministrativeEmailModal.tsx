@@ -16,7 +16,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Expense, CostCenter, AppUserRecord } from '../types';
-import { formatCurrency, formatDate, formatPaymentEmailSubject } from '../utils/helpers';
+import { formatCurrency, formatDate, formatPaymentEmailSubject, escapeHtml } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   sendGmailMessage,
@@ -154,7 +154,7 @@ export function AdministrativeEmailModal({
 
     // Prepare HTML version
     const htmlFormatted = `<div style="font-family: sans-serif; line-height: 1.6; color: #1e293b;">
-      ${plainMessage.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')}
+      ${plainMessage.split('\n\n').map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`).join('')}
     </div>`;
 
     try {

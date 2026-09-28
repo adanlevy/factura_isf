@@ -8,6 +8,7 @@ import dotenv from "dotenv";
 import { initializeApp, cert, applicationDefault, type App } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
+import { APP_VERSION, APP_BUILD_ID, APP_BUILD_DATE } from "./src/version";
 
 dotenv.config();
 
@@ -29,9 +30,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware for parsing json with generous limits for camera photos and audio recordings
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Cuerpos JSON: 5 MB en general. Solo las rutas que reciben archivos (fotos, PDFs, audio, adjuntos)
+// aceptan hasta 50 MB, y recién DESPUÉS de verificar la sesión (ver largeJsonParser en cada ruta),
+// para que nadie sin cuenta pueda hacer que el servidor procese cuerpos enormes.
+const LARGE_BODY_ROUTES = new Set([
+  "/api/upload-to-drive",
+  "/api/send-email",
+  "/api/extract-invoice",
+  "/api/process-vendor-doc",
+  "/api/process-audio",
+  "/api/process-text-prompt",
+]);
+const largeJsonParser = express.json({ limit: "50mb" });
+const defaultJsonParser = express.json({ limit: "5mb" });
+app.use((req, res, next) => (LARGE_BODY_ROUTES.has(req.path) ? next() : defaultJsonParser(req, res, next)));
+app.use(express.urlencoded({ limit: "1mb", extended: true }));
 
 // --- Persistent Data Store (JSON on Server Storage with Auto-Backup) ---
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -338,6 +351,12 @@ async function generateContentWithRetry(
   throw lastError;
 }
 
+// Versión publicada (pública, sin datos sensibles): el cliente la consulta para avisar que hay una nueva
+app.get("/api/version", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ version: APP_VERSION, buildId: APP_BUILD_ID, buildDate: APP_BUILD_DATE });
+});
+
 // Healthcheck
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -544,18 +563,29 @@ async function saveApiLogToFirestore(record: ApiUsageRecord): Promise<void> {
 }
 
 // Asynchronously persist Audit log to Cloud Firestore
-async function saveAuditLogToFirestore(entry: any): Promise<void> {
+async function saveAuditLogToFirestore(entry: any, opts: { createOnly?: boolean } = {}): Promise<void> {
   if (!entry?.id) return;
   if (adminDb) {
     try {
-      await adminDb.collection("audit_logs").doc(entry.id).set(entry, { merge: true });
+      const ref = adminDb.collection("audit_logs").doc(entry.id);
+      if (opts.createOnly) {
+        // create() falla si ya existe: un registro de auditoría no se puede reescribir
+        await ref.create(entry);
+      } else {
+        await ref.set(entry, { merge: true });
+      }
       return;
-    } catch (_) {}
+    } catch (err: any) {
+      // 6 = ALREADY_EXISTS (el cliente ya lo había escrito): no se reintenta por REST
+      if (opts.createOnly && err?.code === 6) return;
+    }
   }
 
   if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
   const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs/${encodeURIComponent(entry.id)}?key=${firebaseConfigData.apiKey}`;
+  const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/audit_logs/${encodeURIComponent(entry.id)}?key=${firebaseConfigData.apiKey}${
+    opts.createOnly ? "&currentDocument.exists=false" : ""
+  }`;
 
   const fields: Record<string, any> = {};
   for (const [k, v] of Object.entries(entry)) {
@@ -1063,6 +1093,220 @@ function requireAdminRole(
   next();
 }
 
+// ==========================================
+// SEGURIDAD: límites de uso, directorio de la app y autorización de Drive
+// ==========================================
+
+// Límite simple por usuario en memoria (por instancia de Cloud Run). Frena abuso y errores en bucle.
+const rateBuckets = new Map<string, number[]>();
+function rateLimit(name: string, limits: { user: number; admin: number }, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const email = req.user?.email || req.ip || "anon";
+    const max = req.user?.role === "admin" ? limits.admin : limits.user;
+    const key = `${name}:${email}`;
+    const now = Date.now();
+    const recent = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+    if (recent.length >= max) {
+      rateBuckets.set(key, recent);
+      return res.status(429).json({
+        success: false,
+        error: "Demasiadas solicitudes seguidas. Esperá unos minutos y volvé a intentar.",
+        code: "RATE_LIMITED",
+      });
+    }
+    recent.push(now);
+    rateBuckets.set(key, recent);
+    next();
+  };
+}
+
+const DRIVE_ID_RE = /^[A-Za-z0-9_-]{10,200}$/;
+function isValidDriveId(id: unknown): id is string {
+  return typeof id === "string" && DRIVE_ID_RE.test(id);
+}
+
+// Escapa un valor para usarlo entre comillas simples en una consulta `q` de la API de Drive
+function escapeDriveQueryValue(value: string): string {
+  return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function extractDriveFolderIdFromUrl(url?: string): string | null {
+  if (!url || typeof url !== "string") return null;
+  const match = url.match(/\/folders\/([A-Za-z0-9_-]+)/) || url.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (match?.[1] && isValidDriveId(match[1])) return match[1];
+  return isValidDriveId(url.trim()) ? url.trim() : null;
+}
+
+function splitEmailList(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : [value];
+  return list
+    .flatMap((v) => String(v ?? "").split(/[,;]/))
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const EMAIL_RE = /^[^\s@<>,;"'()\\]+@[^\s@<>,;"'()\\]+\.[^\s@<>,;"'()\\]+$/;
+
+/**
+ * Datos de la app que el servidor necesita para autorizar acciones:
+ * carpetas de Drive registradas (centros de costos + carpeta de pagos/retenciones),
+ * emails en copia de los centros de costos y usuarios habilitados.
+ * Se lee con el Admin SDK; si no está disponible, con el token del propio usuario (se aplican las reglas).
+ */
+interface AppDirectory {
+  folderIds: Set<string>;
+  notifyEmails: Set<string>;
+  userEmails: Set<string>;
+}
+let appDirectoryCache: { data: AppDirectory; at: number } | null = null;
+const APP_DIRECTORY_TTL_MS = 60 * 1000;
+
+function buildAppDirectory(costCenters: any[], driveSettings: any, users: any[]): AppDirectory {
+  const folderIds = new Set<string>();
+  const notifyEmails = new Set<string>();
+  for (const cc of costCenters) {
+    const id = (isValidDriveId(cc?.driveFolderId) ? cc.driveFolderId : null) || extractDriveFolderIdFromUrl(cc?.driveUrl);
+    if (id) folderIds.add(id);
+    for (const e of splitEmailList([cc?.notifyEmails, cc?.ccEmails])) {
+      if (EMAIL_RE.test(e)) notifyEmails.add(e);
+    }
+  }
+  const paymentsId =
+    (isValidDriveId(driveSettings?.paymentsFolderId) ? driveSettings.paymentsFolderId : null) ||
+    extractDriveFolderIdFromUrl(driveSettings?.paymentsFolderUrl);
+  if (paymentsId) folderIds.add(paymentsId);
+  for (const extra of (process.env.EXTRA_DRIVE_FOLDER_IDS || "").split(",")) {
+    if (isValidDriveId(extra.trim())) folderIds.add(extra.trim());
+  }
+  const userEmails = new Set<string>();
+  for (const u of users) {
+    const e = String(u?.email || "").toLowerCase().trim();
+    if (e && (u?.role === "admin" || u?.role === "user")) userEmails.add(e);
+  }
+  return { folderIds, notifyEmails, userEmails };
+}
+
+async function loadAppDirectory(req: express.Request): Promise<AppDirectory | null> {
+  if (appDirectoryCache && Date.now() - appDirectoryCache.at < APP_DIRECTORY_TTL_MS) {
+    return appDirectoryCache.data;
+  }
+
+  if (adminDb) {
+    try {
+      const [ccSnap, driveSnap, usersSnap] = await Promise.all([
+        adminDb.collection("cost_centers").get(),
+        adminDb.collection("app_settings").doc("drive").get(),
+        adminDb.collection("app_users").get(),
+      ]);
+      const data = buildAppDirectory(
+        ccSnap.docs.map((d) => d.data()),
+        driveSnap.exists ? driveSnap.data() : null,
+        usersSnap.docs.map((d) => d.data())
+      );
+      appDirectoryCache = { data, at: Date.now() };
+      return data;
+    } catch (err: any) {
+      console.warn("[AppDirectory] Admin SDK no disponible, uso el token del usuario:", err?.message);
+    }
+  }
+
+  // Fallback: API REST de Firestore con el ID token de Firebase del usuario
+  const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : "";
+  if (!bearer || bearer.startsWith("ya29.") || !firebaseConfigData?.projectId) return null;
+  const dbId = firebaseConfigData.firestoreDatabaseId || "(default)";
+  const base = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents`;
+  const headers = { Authorization: `Bearer ${bearer}` };
+  try {
+    const [ccRes, driveRes, usersRes] = await Promise.all([
+      fetch(`${base}/cost_centers?pageSize=500`, { headers }),
+      fetch(`${base}/app_settings/drive`, { headers }),
+      fetch(`${base}/app_users?pageSize=1000`, { headers }),
+    ]);
+    if (!ccRes.ok) return null;
+    const ccJson = (await ccRes.json()) as any;
+    const driveJson = driveRes.ok ? ((await driveRes.json()) as any) : null;
+    const usersJson = usersRes.ok ? ((await usersRes.json()) as any) : { documents: [] };
+    const data = buildAppDirectory(
+      (ccJson.documents || []).map(parseFirestoreDoc),
+      driveJson ? parseFirestoreDoc(driveJson) : null,
+      (usersJson.documents || []).map(parseFirestoreDoc)
+    );
+    appDirectoryCache = { data, at: Date.now() };
+    return data;
+  } catch (err: any) {
+    console.warn("[AppDirectory] No se pudo leer el directorio de la app:", err?.message);
+    return null;
+  }
+}
+
+/**
+ * Decide si el usuario puede mandar a la papelera un archivo de Drive:
+ * - el archivo tiene que estar en una carpeta registrada de la app (centro de costos o pagos);
+ * - un Admin puede sobre cualquier archivo de esas carpetas;
+ * - un Colaborador solo sobre archivos que subió él mismo desde la app (appProperties.uploadedBy).
+ */
+async function authorizeDriveFileTrash(
+  req: express.Request,
+  token: string,
+  file: { id: string; parents?: string[]; appProperties?: Record<string, string> },
+  directory: AppDirectory | null
+): Promise<boolean> {
+  const isAdmin = req.user?.role === "admin";
+  let parents = file.parents;
+  let appProperties = file.appProperties;
+  if (!parents) {
+    const metaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${file.id}?fields=id,parents,trashed,appProperties&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!metaRes.ok) return false;
+    const meta = (await metaRes.json()) as any;
+    if (meta.trashed) return false;
+    parents = meta.parents || [];
+    appProperties = meta.appProperties;
+  }
+
+  const inAppFolder = directory ? (parents || []).some((p) => directory.folderIds.has(p)) : null;
+  if (isAdmin) {
+    // Si no se pudo leer el directorio, se confía en el Admin (acción ya restringida por rol)
+    return inAppFolder !== false;
+  }
+  return inAppFolder === true && (appProperties?.uploadedBy || "").toLowerCase() === req.user?.email;
+}
+
+// Manda a la papelera (recuperable 30 días) en lugar de borrar definitivamente
+async function trashDriveFile(token: string, fileId: string): Promise<boolean> {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ trashed: true }),
+  });
+  return res.ok || res.status === 404;
+}
+
+// Busca archivos por nombre exacto (opcionalmente dentro de una carpeta) sin salir de la consulta
+async function findDriveFilesByName(
+  token: string,
+  name: string,
+  opts: { folderId?: string; prefix?: boolean } = {}
+): Promise<{ id: string; name: string; parents?: string[]; appProperties?: Record<string, string> }[]> {
+  const op = opts.prefix ? "contains" : "=";
+  let query = `name ${op} '${escapeDriveQueryValue(name)}' and trashed = false`;
+  if (opts.folderId) {
+    if (!isValidDriveId(opts.folderId)) return [];
+    query = `'${opts.folderId}' in parents and ${query}`;
+  }
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+    query
+  )}&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=50&fields=files(id,name,parents,appProperties)`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return [];
+  const data = (await res.json()) as any;
+  const files = Array.isArray(data.files) ? data.files : [];
+  // `contains` en Drive compara por prefijo de palabras: se confirma el prefijo exacto
+  return opts.prefix ? files.filter((f: any) => String(f.name || "").startsWith(name)) : files;
+}
+
 // Endpoint: Resolve user role on server side
 app.post("/api/auth/resolve-role", async (req, res) => {
   try {
@@ -1433,7 +1677,8 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
 // Endpoint: Manual logging of client-side operations
 app.post("/api/system/log-call", authenticateFirebaseUser, (req, res) => {
   try {
-    const { service, serviceName, endpoint, actionName, model, promptTokens, candidatesTokens, totalTokens, estimatedCostUsd, status = 'success', durationMs = 0, userEmail, details } = req.body;
+    const { service, serviceName, endpoint, actionName, model, promptTokens, candidatesTokens, totalTokens, estimatedCostUsd, status = 'success', durationMs = 0, details } = req.body || {};
+    const userEmail = req.user?.email;
     const cost = estimatedCostUsd ?? (service === 'gemini_ai' ? calculateGeminiCost(promptTokens || 0, candidatesTokens || 0) : 0);
     const record = logApiUsage({
       service: service || 'gemini_ai',
@@ -1564,7 +1809,9 @@ function addDeletedExpenses(ids: string[]): void {
 }
 
 // 1. EXPENSES COLLECTION
-app.get("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
+// Todo el espejo /api/data/* (salvo preferencias propias y alta de auditoría) es solo para Admins:
+// contiene datos bancarios de todos y permite sobrescribir colecciones completas.
+app.get("/api/data/expenses", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const deletedSet = new Set(getDeletedExpensesList());
   const allExpenses = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
   const expenses = filterExpensesServer(allExpenses, req.query);
@@ -1572,8 +1819,8 @@ app.get("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
 });
 
 // Non-destructive merge / update
-app.post("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
-  const { expenses, replace } = req.body;
+app.post("/api/data/expenses", authenticateFirebaseUser, requireAdminRole, (req, res) => {
+  const { expenses } = req.body;
   if (!Array.isArray(expenses)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'expenses' debe ser un array." });
   }
@@ -1581,20 +1828,15 @@ app.post("/api/data/expenses", authenticateFirebaseUser, (req, res) => {
   const deletedSet = new Set(getDeletedExpensesList());
   const sanitized = expenses.filter((e) => e && e.id && !deletedSet.has(e.id));
 
-  let finalExpenses: any[];
-  if (replace) {
-    finalExpenses = sanitized;
-  } else {
-    const existing = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
-    finalExpenses = mergeById(existing, sanitized);
-  }
+  const existing = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
+  const finalExpenses = mergeById(existing, sanitized);
 
   const saved = writeCollection("expenses", finalExpenses);
   res.json({ success: saved, count: finalExpenses.length, data: finalExpenses });
 });
 
 // Upsert specific expenses
-app.post("/api/data/expenses/upsert", authenticateFirebaseUser, (req, res) => {
+app.post("/api/data/expenses/upsert", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const { items } = req.body;
   const itemsArray = Array.isArray(items) ? items : req.body.item ? [req.body.item] : [];
   if (itemsArray.length === 0) {
@@ -1611,7 +1853,7 @@ app.post("/api/data/expenses/upsert", authenticateFirebaseUser, (req, res) => {
 });
 
 // Delete specific expenses
-app.post("/api/data/expenses/delete", authenticateFirebaseUser, (req, res) => {
+app.post("/api/data/expenses/delete", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) {
     return res.status(400).json({ success: false, error: "ids must be an array" });
@@ -1626,28 +1868,23 @@ app.post("/api/data/expenses/delete", authenticateFirebaseUser, (req, res) => {
 });
 
 // 2. VENDORS COLLECTION
-app.get("/api/data/vendors", authenticateFirebaseUser, (_req, res) => {
+app.get("/api/data/vendors", authenticateFirebaseUser, requireAdminRole, (_req, res) => {
   const vendors = readCollection<any[]>("vendors", []);
   res.json({ success: true, count: vendors.length, data: vendors });
 });
 
-app.post("/api/data/vendors", authenticateFirebaseUser, (req, res) => {
-  const { vendors, replace } = req.body;
+app.post("/api/data/vendors", authenticateFirebaseUser, requireAdminRole, (req, res) => {
+  const { vendors } = req.body;
   if (!Array.isArray(vendors)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'vendors' debe ser un array." });
   }
-  let finalVendors: any[];
-  if (replace) {
-    finalVendors = vendors;
-  } else {
-    const existing = readCollection<any[]>("vendors", []);
-    finalVendors = mergeById(existing, vendors);
-  }
+  const existing = readCollection<any[]>("vendors", []);
+  const finalVendors = mergeById(existing, vendors);
   const saved = writeCollection("vendors", finalVendors);
   res.json({ success: saved, count: finalVendors.length });
 });
 
-app.post("/api/data/vendors/delete", authenticateFirebaseUser, (req, res) => {
+app.post("/api/data/vendors/delete", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) {
     return res.status(400).json({ success: false, error: "ids must be an array" });
@@ -1660,34 +1897,29 @@ app.post("/api/data/vendors/delete", authenticateFirebaseUser, (req, res) => {
 });
 
 // 3. COST CENTERS COLLECTION
-app.get("/api/data/cost-centers", authenticateFirebaseUser, (_req, res) => {
+app.get("/api/data/cost-centers", authenticateFirebaseUser, requireAdminRole, (_req, res) => {
   const costCenters = readCollection<any[]>("cost_centers", []);
   res.json({ success: true, count: costCenters.length, data: costCenters });
 });
 
-app.post("/api/data/cost-centers", authenticateFirebaseUser, (req, res) => {
-  const { costCenters, replace } = req.body;
+app.post("/api/data/cost-centers", authenticateFirebaseUser, requireAdminRole, (req, res) => {
+  const { costCenters } = req.body;
   if (!Array.isArray(costCenters)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'costCenters' debe ser un array." });
   }
-  let finalCostCenters: any[];
-  if (replace) {
-    finalCostCenters = costCenters;
-  } else {
-    const existing = readCollection<any[]>("cost_centers", []);
-    finalCostCenters = mergeById(existing, costCenters);
-  }
+  const existing = readCollection<any[]>("cost_centers", []);
+  const finalCostCenters = mergeById(existing, costCenters);
   const saved = writeCollection("cost_centers", finalCostCenters);
   res.json({ success: saved, count: finalCostCenters.length });
 });
 
 // 4. CATEGORIES COLLECTION
-app.get("/api/data/categories", authenticateFirebaseUser, (_req, res) => {
+app.get("/api/data/categories", authenticateFirebaseUser, requireAdminRole, (_req, res) => {
   const categories = readCollection<any[]>("categories", []);
   res.json({ success: true, count: categories.length, data: categories });
 });
 
-app.post("/api/data/categories", authenticateFirebaseUser, (req, res) => {
+app.post("/api/data/categories", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const { categories } = req.body;
   if (!Array.isArray(categories)) {
     return res.status(400).json({ success: false, error: "Formato inválido. 'categories' debe ser un array." });
@@ -1698,18 +1930,20 @@ app.post("/api/data/categories", authenticateFirebaseUser, (req, res) => {
 
 // 5. USER PREFERENCES & SMART PATTERNS (Persistencia por usuario multidispositivo)
 app.get("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
-  const email = (req.query.email as string || "default").toLowerCase().trim();
+  // Cada usuario lee solo sus propias preferencias (se ignora ?email=)
+  const email = String(req.user?.email || "").toLowerCase().trim();
   const allPrefs = readCollection<Record<string, any>>("user_preferences", {});
   const userPref = allPrefs[email] || {};
   res.json({ success: true, email, data: userPref });
 });
 
 app.post("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
-  const { email, preferences } = req.body;
-  if (!email) {
-    return res.status(400).json({ success: false, error: "Email requerido para guardar preferencias." });
+  const { preferences } = req.body || {};
+  if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) {
+    return res.status(400).json({ success: false, error: "Preferencias inválidas." });
   }
-  const normalizedEmail = email.toLowerCase().trim();
+  // Siempre las del propio usuario autenticado (se ignora body.email)
+  const normalizedEmail = String(req.user?.email || "").toLowerCase().trim();
   const allPrefs = readCollection<Record<string, any>>("user_preferences", {});
   allPrefs[normalizedEmail] = {
     ...(allPrefs[normalizedEmail] || {}),
@@ -1889,7 +2123,7 @@ app.post("/api/data/users/delete", authenticateFirebaseUser, requireAdminRole, a
 });
 
 // 7. BULK SYNC / INITIAL HYDRATION
-app.get("/api/data/sync", authenticateFirebaseUser, (req, res) => {
+app.get("/api/data/sync", authenticateFirebaseUser, requireAdminRole, (req, res) => {
   const deletedSet = new Set(getDeletedExpensesList());
   const allExpenses = readCollection<any[]>("expenses", []).filter((e) => e && e.id && !deletedSet.has(e.id));
   const expenses = filterExpensesServer(allExpenses, req.query);
@@ -1910,7 +2144,7 @@ app.get("/api/data/sync", authenticateFirebaseUser, (req, res) => {
 });
 
 // 7. AUDIT LOGS (Registro de cambios y auditoría contable)
-app.get("/api/data/audit-logs", authenticateFirebaseUser, async (_req, res) => {
+app.get("/api/data/audit-logs", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   const localLogs = readCollection<any[]>("audit_logs", []);
   const cloudLogs = await fetchFirestoreAuditLogs();
 
@@ -1936,17 +2170,28 @@ app.get("/api/data/audit-logs", authenticateFirebaseUser, async (_req, res) => {
 });
 
 app.post("/api/data/audit-logs", authenticateFirebaseUser, (req, res) => {
-  const entry = req.body;
-  if (!entry || !entry.id) {
+  const body = req.body;
+  if (!body || typeof body !== "object" || !body.id || typeof body.id !== "string" || body.id.length > 120) {
     return res.status(400).json({ success: false, error: "Registro de auditoría inválido" });
   }
+  // El autor lo define el token, no el cliente; la fecha la pone el servidor
+  const entry = {
+    ...body,
+    userEmail: req.user?.email,
+    userName: typeof body.userName === "string" && body.userName.trim() ? body.userName.slice(0, 120) : req.user?.name,
+    timestamp: new Date().toISOString(),
+    recordedBy: "server",
+  };
   const existing = readCollection<any[]>("audit_logs", []);
-  const filtered = existing.filter((l) => l.id !== entry.id);
-  const updated = [entry, ...filtered].slice(0, 2000);
+  if (existing.some((l) => l && l.id === entry.id)) {
+    // Solo alta: un registro de auditoría no se reescribe
+    return res.status(409).json({ success: false, error: "El registro de auditoría ya existe." });
+  }
+  const updated = [entry, ...existing].slice(0, 2000);
   const saved = writeCollection("audit_logs", updated);
 
-  // Persist to Firestore in background
-  saveAuditLogToFirestore(entry).catch((err) => {
+  // Persist to Firestore in background (solo alta)
+  saveAuditLogToFirestore(entry, { createOnly: true }).catch((err) => {
     console.warn('[Audit Log REST save warn]', err);
   });
 
@@ -1989,7 +2234,7 @@ app.get("/api/drive/status", authenticateFirebaseUser, async (_req, res) => {
 });
 
 // Endpoint 1: Extract data from Invoice / Receipt Photo
-app.post("/api/extract-invoice", authenticateFirebaseUser, async (req, res) => {
+app.post("/api/extract-invoice", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
   const startTime = Date.now();
   try {
     const { imageBase64, mimeType = "image/jpeg", availableCategories = [] } = req.body;
@@ -2202,7 +2447,7 @@ Devuelve los datos en JSON conforme al esquema.`;
 });
 
 // Endpoint 1b: Process Vendor Document (Image or PDF) to extract vendor & bank details
-app.post("/api/process-vendor-doc", authenticateFirebaseUser, async (req, res) => {
+app.post("/api/process-vendor-doc", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
   try {
     const rawBase64 = req.body.fileBase64 || req.body.imageBase64 || req.body.data;
     let mimeType = req.body.mimeType;
@@ -2395,7 +2640,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
 });
 
 // Endpoint 2: Process Voice Note / Audio for expense categorization & assignment
-app.post("/api/process-audio", authenticateFirebaseUser, async (req, res) => {
+app.post("/api/process-audio", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
   try {
     const { 
       audioBase64, 
@@ -2544,7 +2789,7 @@ Tu misión es extraer y completar con total fidelidad:
 });
 
 // Endpoint 3: Text or Combined Quick Extraction (Fallback or Direct Dictation)
-app.post("/api/process-text-prompt", authenticateFirebaseUser, async (req, res) => {
+app.post("/api/process-text-prompt", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
   try {
     const { text, availableProjects = [], availableCategories = [] } = req.body;
     if (!text) {
@@ -2627,36 +2872,65 @@ Extrae estructuradamente:
 });
 
 // Endpoint 4: Send Administrative Notification Emails (Bank Details Request, Payment Confirmation, Upload Receipt Summary & Withholdings)
-app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
+app.post(
+  "/api/send-email",
+  authenticateFirebaseUser,
+  rateLimit("send-email", { user: 30, admin: 300 }, 60 * 60 * 1000),
+  largeJsonParser,
+  async (req, res) => {
   try {
-    const { to, cc, bcc, subject, bodyHtml, accessToken, attachments } = req.body;
-    if (!to || !subject || !bodyHtml) {
+    const { to, cc, bcc, subject, bodyHtml, accessToken, attachments } = req.body || {};
+    if (!to || !subject || !bodyHtml || typeof subject !== "string" || typeof bodyHtml !== "string") {
       return res.status(400).json({ success: false, error: "Destinatario, asunto y mensaje son obligatorios." });
     }
 
-    const recipientArray = (Array.isArray(to) ? to : [to])
-      .filter(Boolean)
-      .map((e: any) => String(e).trim())
-      .filter(Boolean);
+    // Direcciones validadas una por una: sin saltos de línea (inyección de encabezados) ni formatos raros
+    const recipientArray = Array.from(new Set(splitEmailList(to)));
+    const ccArray = Array.from(new Set(splitEmailList(cc))).filter((e) => !recipientArray.includes(e));
+    const bccArray = Array.from(new Set(splitEmailList(bcc)));
+    const allRecipients = [...recipientArray, ...ccArray, ...bccArray];
 
     if (recipientArray.length === 0) {
       return res.status(400).json({ success: false, error: "Destinatario inválido o vacío." });
     }
+    const invalid = allRecipients.filter((e) => !EMAIL_RE.test(e));
+    if (invalid.length > 0) {
+      return res.status(400).json({ success: false, error: `Dirección de correo inválida: ${invalid.join(", ")}` });
+    }
+    if (allRecipients.length > 50) {
+      return res.status(400).json({ success: false, error: "Demasiados destinatarios en un solo correo." });
+    }
+
+    // Los correos salen desde la cuenta institucional: un Colaborador solo puede escribir a la
+    // organización (su propia cuenta, @isf-argentina.org, usuarios habilitados y emails en copia
+    // de los centros de costos). Los Admins pueden escribir a cualquier destinatario (proveedores).
+    if (req.user?.role !== "admin") {
+      if (bccArray.length > 0) {
+        return res.status(403).json({ success: false, error: "No tenés permiso para enviar con copia oculta." });
+      }
+      const directory = await loadAppDirectory(req);
+      const notAllowed = allRecipients.filter(
+        (e) =>
+          e !== req.user?.email &&
+          !e.endsWith("@isf-argentina.org") &&
+          !directory?.userEmails.has(e) &&
+          !directory?.notifyEmails.has(e)
+      );
+      if (notAllowed.length > 0) {
+        console.warn(`[EMAIL BLOCKED] ${req.user?.email} intentó enviar a destinatarios externos: ${notAllowed.join(", ")}`);
+        return res.status(403).json({
+          success: false,
+          error: `No tenés permiso para enviar correos a: ${notAllowed.join(", ")}.`,
+          code: "RECIPIENT_NOT_ALLOWED",
+        });
+      }
+    }
+    if (Array.isArray(attachments) && attachments.length > 10) {
+      return res.status(400).json({ success: false, error: "Demasiados adjuntos (máximo 10)." });
+    }
 
     const recipientString = recipientArray.join(", ");
-
-    const ccArray = (Array.isArray(cc) ? cc : [cc])
-      .filter(Boolean)
-      .map((e: any) => String(e).trim())
-      .filter((email: string) => Boolean(email) && !recipientArray.includes(email));
-
     const ccString = ccArray.join(", ");
-
-    const bccArray = (Array.isArray(bcc) ? bcc : [bcc])
-      .filter(Boolean)
-      .map((e: any) => String(e).trim())
-      .filter(Boolean);
-
     const bccString = bccArray.join(", ");
 
     // Prioritize Centralized Account (admin@isf-argentina.org) so all emails are dispatched from the central institutional identity
@@ -2681,7 +2955,8 @@ app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
       }
     }
 
-    const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString("base64")}?=`;
+    const cleanSubject = subject.replace(/[\r\n]+/g, " ").slice(0, 300);
+    const utf8Subject = `=?utf-8?B?${Buffer.from(cleanSubject).toString("base64")}?=`;
     let message = "";
 
     const baseHeaders = [
@@ -2707,23 +2982,29 @@ app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
       ];
 
       for (const att of attachments) {
-        if (att && att.base64 && att.filename) {
-          const cleanBase64 = att.base64.includes("base64,")
+        if (att && typeof att.base64 === "string" && att.base64 && att.filename) {
+          // Nombre y tipo van a encabezados MIME: sin comillas, barras ni saltos de línea
+          const safeFilename = String(att.filename).replace(/["\\\r\n]/g, "_").slice(0, 150);
+          const cleanBase64 = (att.base64.includes("base64,")
             ? att.base64.split("base64,")[1]
-            : att.base64;
+            : att.base64
+          ).replace(/[^A-Za-z0-9+/=]/g, "");
+          const declaredType = typeof att.contentType === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(att.contentType)
+            ? att.contentType
+            : "";
           const contentType =
-            att.contentType ||
-            (att.filename.toLowerCase().endsWith(".pdf")
+            declaredType ||
+            (safeFilename.toLowerCase().endsWith(".pdf")
               ? "application/pdf"
-              : att.filename.toLowerCase().endsWith(".png")
+              : safeFilename.toLowerCase().endsWith(".png")
               ? "image/png"
               : "image/jpeg");
 
           parts.push(
             `--${boundary}`,
-            `Content-Type: ${contentType}; name="${att.filename}"`,
+            `Content-Type: ${contentType}; name="${safeFilename}"`,
             "Content-Transfer-Encoding: base64",
-            `Content-Disposition: attachment; filename="${att.filename}"`,
+            `Content-Disposition: attachment; filename="${safeFilename}"`,
             "",
             cleanBase64,
             ""
@@ -2763,10 +3044,23 @@ app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
         if (gmailResponse.ok) {
           const gmailResult = (await gmailResponse.json()) as any;
           console.log(
-            `[GMAIL API SENT via ${authCandidate.source}] Message ID: ${gmailResult.id} to ${recipientString}${
-              ccString ? ` (CC: ${ccString})` : ""
-            }`
+            `[GMAIL API SENT via ${authCandidate.source}] Message ID: ${gmailResult.id} | by ${req.user?.email}`
           );
+          logApiUsage({
+            service: 'google_gmail',
+            serviceName: 'Google Gmail API',
+            endpoint: '/api/send-email',
+            actionName: 'Notificación de Correo (Tesorería)',
+            model: 'Gmail REST API',
+            promptTokens: 0,
+            candidatesTokens: 0,
+            totalTokens: 0,
+            estimatedCostUsd: 0.0001,
+            status: 'success',
+            durationMs: 450,
+            userEmail: req.user?.email,
+            details: `Para: ${recipientString} | Asunto: ${cleanSubject}`,
+          });
           return res.json({
             success: true,
             messageId: gmailResult.id,
@@ -2785,10 +3079,7 @@ app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
       }
     }
 
-    // Direct background dispatch confirmation with audit log
-    const ccLog = ccString ? ` | CC: ${ccString}` : "";
-    console.log(`[EMAIL DISPATCH LOG] To: ${recipientString}${ccLog} | Subject: ${subject} | Time: ${new Date().toISOString()}`);
-
+    // Ningún token pudo enviar: se informa el error (antes se respondía "enviado" igual)
     logApiUsage({
       service: 'google_gmail',
       serviceName: 'Google Gmail API',
@@ -2798,25 +3089,28 @@ app.post("/api/send-email", authenticateFirebaseUser, async (req, res) => {
       promptTokens: 0,
       candidatesTokens: 0,
       totalTokens: 0,
-      estimatedCostUsd: 0.00010,
-      status: 'success',
+      estimatedCostUsd: 0,
+      status: 'error',
       durationMs: 450,
-      details: `Para: ${recipientString} | Asunto: ${subject}`,
+      userEmail: req.user?.email,
+      details: `Falló el envío a: ${recipientString} | Asunto: ${cleanSubject}`,
     });
 
-    return res.json({
-      success: true,
-      mode: "verified_dispatch",
-      message: `Correo procesado y despachado correctamente a ${recipientString}${ccString ? ` (CC: ${ccString})` : ""}.`,
+    return res.status(502).json({
+      success: false,
+      error:
+        candidateTokens.length === 0
+          ? "No hay credenciales de Gmail configuradas en el servidor para enviar el correo."
+          : "Gmail rechazó el envío del correo. Revisá las credenciales de la cuenta institucional.",
     });
   } catch (error: any) {
     console.error("Error sending email:", error);
-    return res.status(500).json({ success: false, error: error.message || "Error al enviar el correo." });
+    return res.status(500).json({ success: false, error: "Error al enviar el correo." });
   }
 });
 
 // Endpoint 5: Upload receipt to Google Drive folder with standardized nomenclature & Shared Drive support
-app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
+app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, async (req, res) => {
   try {
     const {
       expenseId,
@@ -2829,13 +3123,19 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
       accessToken,
       oldFileId,
       oldFileName,
-    } = req.body;
+    } = req.body || {};
 
-    if (!fileName || !folderName) {
+    if (!fileName || !folderName || typeof fileName !== "string" || typeof folderName !== "string") {
       return res.status(400).json({
         success: false,
         error: "Nombre de archivo normalizado y carpeta de destino requeridos.",
       });
+    }
+    if (fileName.length > 250 || folderName.length > 250) {
+      return res.status(400).json({ success: false, error: "Nombre de archivo o carpeta demasiado largo." });
+    }
+    if (folderId && !isValidDriveId(folderId)) {
+      return res.status(400).json({ success: false, error: "ID de carpeta de Drive inválido." });
     }
 
     // Resolve effective token: Centralized Server Account first, or user client token as fallback
@@ -2848,112 +3148,27 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
       }`
     );
 
-    // If an old file ID, old file name, or file replacement was requested, ensure previous file is deleted
-    if (effectiveAccessToken) {
-      try {
-        const deletedNames = new Set<string>();
-        if (oldFileName) deletedNames.add(oldFileName);
-        if (fileName) deletedNames.add(fileName);
-
-        // Delete explicit oldFileId if passed
-        if (oldFileId) {
-          console.log(`[DRIVE DELETE PREVIOUS ID] Deleting old file ID: ${oldFileId}`);
-          try {
-            await fetch(`https://www.googleapis.com/drive/v3/files/${oldFileId}?supportsAllDrives=true`, {
-              method: "DELETE",
-              headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-            });
-          } catch (delIdErr) {
-            console.warn("[DRIVE DELETE OLD ID WARN]", delIdErr);
-          }
-        }
-
-        // Search and delete matching names
-        for (const nameToDelete of deletedNames) {
-          const cleanName = nameToDelete.replace(/'/g, "\\'");
-          let query = `name = '${cleanName}' and trashed = false`;
-          if (folderId) {
-            query = `'${folderId}' in parents and name = '${cleanName}' and trashed = false`;
-          }
-          const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            query
-          )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
-          const searchRes = await fetch(searchUrl, {
-            headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-          });
-          if (searchRes.ok) {
-            const searchData = (await searchRes.json()) as any;
-            if (searchData.files && searchData.files.length > 0) {
-              for (const f of searchData.files) {
-                console.log(`[DRIVE DELETE PREVIOUS MATCH] Deleting file ${f.name} (${f.id})`);
-                await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
-                  method: "DELETE",
-                  headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-                });
-              }
-            }
-          }
-        }
-
-        // Special prefix cleanup: if uploading a payment proof or withholding cert, clean older versions with differing extensions/names
-        let prefixPattern = "";
-        if (fileName.includes("-ComprobantePago-")) {
-          prefixPattern = fileName.split("-ComprobantePago-")[0] + "-ComprobantePago-";
-        } else if (fileName.includes("-CertificadoRetencion-")) {
-          prefixPattern = fileName.split("-CertificadoRetencion-")[0] + "-CertificadoRetencion-";
-        }
-
-        if (prefixPattern) {
-          const cleanPrefix = prefixPattern.replace(/'/g, "\\'");
-          let pQuery = `name contains '${cleanPrefix}' and trashed = false`;
-          if (folderId) {
-            pQuery = `'${folderId}' in parents and name contains '${cleanPrefix}' and trashed = false`;
-          }
-          const pSearchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            pQuery
-          )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
-          const pSearchRes = await fetch(pSearchUrl, {
-            headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-          });
-          if (pSearchRes.ok) {
-            const pData = (await pSearchRes.json()) as any;
-            if (pData.files && pData.files.length > 0) {
-              for (const f of pData.files) {
-                console.log(`[DRIVE DELETE PREVIOUS PREFIX MATCH] Deleting older file ${f.name} (${f.id})`);
-                await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
-                  method: "DELETE",
-                  headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-                });
-              }
-            }
-          }
-        }
-      } catch (delErr) {
-        console.warn("[DRIVE DELETE PREVIOUS ERROR] Non-fatal error deleting previous file:", delErr);
-      }
-    }
-
     // If a Google access token is available, upload directly to Google Drive API (with Shared Drive support)
-    if (effectiveAccessToken && fileBase64) {
+    if (effectiveAccessToken && fileBase64 && typeof fileBase64 === "string") {
       try {
         let cleanBase64 = fileBase64;
         let mimeType = "application/pdf";
-        if (typeof fileBase64 === "string" && fileBase64.includes(",")) {
+        if (fileBase64.includes(",")) {
           const parts = fileBase64.split(",");
           const mimeMatch = parts[0].match(/data:(.*?);base64/);
-          if (mimeMatch) mimeType = mimeMatch[1];
+          if (mimeMatch && /^[\w.+-]+\/[\w.+-]+$/.test(mimeMatch[1])) mimeType = mimeMatch[1];
           cleanBase64 = parts[1];
         }
 
         const fileBuffer = Buffer.from(cleanBase64, "base64");
         const boundary = "-------314159265358979323846";
 
-        let targetFolderId = folderId;
+        let targetFolderId: string | undefined = folderId || undefined;
 
         // If no targetFolderId provided, try to search for the folder by name in Drive
         if (!targetFolderId && folderName) {
           try {
-            const query = `name = '${folderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+            const query = `name = '${escapeDriveQueryValue(folderName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
             const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
               query
             )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name,webViewLink)`;
@@ -2978,6 +3193,12 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
             name: fileName,
             mimeType: mimeType,
             description: `Comprobante ISF Finanzas #${expenseId || ""} - Carpeta: ${folderName}`,
+            // Marca de origen: permite autorizar luego quién puede mandar el archivo a la papelera
+            appProperties: {
+              app: "factura_isf",
+              uploadedBy: String(req.user?.email || "").slice(0, 100),
+              expenseId: String(expenseId || "").slice(0, 80),
+            },
           };
 
           if (parentFolderId) {
@@ -3022,6 +3243,20 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
             `[DRIVE UPLOAD SUCCESS via ${centralAuth?.source || "client_token"}] File: "${fileName}", ID: ${driveData.id}`
           );
 
+          // Recién con la subida confirmada se retira la versión anterior (a la papelera, no se borra).
+          // Solo archivos dentro de carpetas registradas de la app y que el usuario puede tocar.
+          try {
+            await trashReplacedDriveFiles(req, effectiveAccessToken, {
+              newFileId: driveData.id,
+              parentId: Array.isArray(driveData.parents) ? driveData.parents[0] : undefined,
+              fileName,
+              oldFileId: isValidDriveId(oldFileId) ? oldFileId : undefined,
+              oldFileName: typeof oldFileName === "string" ? oldFileName : undefined,
+            });
+          } catch (cleanupErr) {
+            console.warn("[DRIVE REPLACE CLEANUP] Non-fatal error:", cleanupErr);
+          }
+
           logApiUsage({
             service: 'google_drive',
             serviceName: 'Google Drive API',
@@ -3034,6 +3269,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
             estimatedCostUsd: 0,
             status: 'success',
             durationMs: 750,
+            userEmail: req.user?.email,
             details: `Archivo: ${fileName} | Carpeta: ${folderName}`,
           });
 
@@ -3056,7 +3292,6 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
             success: false,
             isAuthError: formatted.isAuthError,
             error: formatted.message,
-            rawError: errBody,
           });
         }
       } catch (driveErr: any) {
@@ -3084,10 +3319,65 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, async (req, res) => {
   }
 });
 
+/**
+ * Tras subir un archivo nuevo, manda a la papelera las versiones anteriores:
+ * el oldFileId indicado, archivos con el mismo nombre en la misma carpeta y, para
+ * comprobantes de pago / certificados de un mismo gasto, versiones con otra extensión (solo Admin).
+ */
+async function trashReplacedDriveFiles(
+  req: express.Request,
+  token: string,
+  params: { newFileId: string; parentId?: string; fileName: string; oldFileId?: string; oldFileName?: string }
+): Promise<void> {
+  const { newFileId, parentId, fileName, oldFileId, oldFileName } = params;
+  const directory = await loadAppDirectory(req);
+  const candidates = new Map<string, { id: string; parents?: string[]; appProperties?: Record<string, string> }>();
+
+  if (oldFileId && oldFileId !== newFileId) candidates.set(oldFileId, { id: oldFileId });
+
+  // Búsquedas por nombre solo dentro de la carpeta de destino, y si es una carpeta de la app
+  const parentIsAppFolder = Boolean(parentId && isValidDriveId(parentId) && (!directory || directory.folderIds.has(parentId)));
+  if (parentIsAppFolder && parentId) {
+    const names = new Set<string>([fileName, ...(oldFileName ? [oldFileName] : [])]);
+    for (const name of names) {
+      for (const f of await findDriveFilesByName(token, name, { folderId: parentId })) {
+        if (f.id !== newFileId) candidates.set(f.id, f);
+      }
+    }
+
+    // Versiones previas del mismo comprobante de pago / certificado (distinta extensión).
+    // No aplica a pagos en lote (LOTE-...): cada lote es una transferencia distinta.
+    const marker = fileName.includes("-ComprobantePago-")
+      ? "-ComprobantePago-"
+      : fileName.includes("-CertificadoRetencion-")
+      ? "-CertificadoRetencion-"
+      : "";
+    if (marker && req.user?.role === "admin" && !fileName.startsWith("LOTE-")) {
+      const prefix = fileName.split(marker)[0] + marker;
+      for (const f of await findDriveFilesByName(token, prefix, { folderId: parentId, prefix: true })) {
+        if (f.id !== newFileId) candidates.set(f.id, f);
+      }
+    }
+  }
+
+  for (const file of candidates.values()) {
+    if (await authorizeDriveFileTrash(req, token, file, directory)) {
+      const ok = await trashDriveFile(token, file.id);
+      console.log(`[DRIVE REPLACE] ${ok ? "Enviado a la papelera" : "No se pudo enviar a la papelera"}: ${file.id}`);
+    } else {
+      console.warn(`[DRIVE REPLACE] Omitido (fuera de las carpetas de la app o sin permiso): ${file.id}`);
+    }
+  }
+}
+
 // Endpoint 6: Delete receipt file from Google Drive
-app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) => {
+app.post(
+  "/api/delete-from-drive",
+  authenticateFirebaseUser,
+  rateLimit("drive-delete", { user: 60, admin: 600 }, 60 * 60 * 1000),
+  async (req, res) => {
   try {
-    const { fileId, fileIds, fileName, fileNames, folderName, accessToken } = req.body;
+    const { fileId, fileIds, fileName, fileNames, accessToken } = req.body || {};
 
     const extractDriveId = (val?: string): string | null => {
       if (!val || typeof val !== "string") return null;
@@ -3096,32 +3386,21 @@ app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) =>
       if (fileMatch && fileMatch[1]) return fileMatch[1];
       const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
       if (idMatch && idMatch[1]) return idMatch[1];
-      if (/^[a-zA-Z0-9_-]{20,60}$/.test(trimmed)) return trimmed;
+      if (isValidDriveId(trimmed)) return trimmed;
       return null;
     };
 
     const targetIds: string[] = [];
-    if (Array.isArray(fileIds)) {
-      for (const id of fileIds) {
-        const extracted = extractDriveId(id);
-        if (extracted && !targetIds.includes(extracted)) targetIds.push(extracted);
-      }
-    }
-    if (fileId && typeof fileId === "string") {
-      const extracted = extractDriveId(fileId);
-      if (extracted && !targetIds.includes(extracted)) targetIds.push(extracted);
+    for (const id of [...(Array.isArray(fileIds) ? fileIds : []), fileId]) {
+      const extracted = extractDriveId(id);
+      if (extracted && isValidDriveId(extracted) && !targetIds.includes(extracted)) targetIds.push(extracted);
     }
 
     const targetNames: string[] = [];
-    if (Array.isArray(fileNames)) {
-      for (const name of fileNames) {
-        if (name && typeof name === "string" && name.trim() && !targetNames.includes(name.trim())) {
-          targetNames.push(name.trim());
-        }
+    for (const name of [...(Array.isArray(fileNames) ? fileNames : []), fileName]) {
+      if (name && typeof name === "string" && name.trim() && name.length <= 250 && !targetNames.includes(name.trim())) {
+        targetNames.push(name.trim());
       }
-    }
-    if (fileName && typeof fileName === "string" && fileName.trim() && !targetNames.includes(fileName.trim())) {
-      targetNames.push(fileName.trim());
     }
 
     if (targetIds.length === 0 && targetNames.length === 0) {
@@ -3129,6 +3408,9 @@ app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) =>
         success: false,
         error: "Se requiere fileId o fileName para eliminar de Google Drive.",
       });
+    }
+    if (targetIds.length > 20 || targetNames.length > 10) {
+      return res.status(400).json({ success: false, error: "Demasiados archivos en una sola solicitud." });
     }
 
     const centralAuth = await getCentralizedGoogleAccessToken();
@@ -3141,68 +3423,57 @@ app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) =>
       });
     }
 
+    const directory = await loadAppDirectory(req);
     const deletedIds: string[] = [];
+    const skippedIds: string[] = [];
 
-    // 1. Delete all targeted file IDs directly
-    for (const fId of targetIds) {
+    const tryTrash = async (file: { id: string; parents?: string[]; appProperties?: Record<string, string> }) => {
+      if (deletedIds.includes(file.id) || skippedIds.includes(file.id)) return;
       try {
-        console.log(`[DRIVE API DELETE] Deleting fileId: ${fId}`);
-        const delRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fId}?supportsAllDrives=true`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-        });
-        if (delRes.ok || delRes.status === 404) {
-          deletedIds.push(fId);
-        }
-      } catch (e: any) {
-        console.warn("[DRIVE API DELETE ERROR]", e.message);
-      }
-    }
-
-    // 2. Search and delete any matching active files by fileName
-    for (const fName of targetNames) {
-      try {
-        const cleanName = fName.replace(/'/g, "\\'");
-        const query = `name = '${cleanName}' and trashed = false`;
-        const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-          query
-        )}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`;
-
-        const searchRes = await fetch(searchUrl, {
-          headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-        });
-
-        if (searchRes.ok) {
-          const searchData = (await searchRes.json()) as any;
-          if (searchData.files && searchData.files.length > 0) {
-            for (const f of searchData.files) {
-              if (deletedIds.includes(f.id)) continue;
-              console.log(`[DRIVE API DELETE BY NAME] Deleting ${f.name} (${f.id})`);
-              const dRes = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${effectiveAccessToken}` },
-              });
-              if (dRes.ok || dRes.status === 404) {
-                deletedIds.push(f.id);
-              }
-            }
+        if (await authorizeDriveFileTrash(req, effectiveAccessToken, file, directory)) {
+          if (await trashDriveFile(effectiveAccessToken, file.id)) {
+            deletedIds.push(file.id);
+            console.log(`[DRIVE API TRASH] ${req.user?.email} envió a la papelera ${file.id}`);
+            return;
           }
         }
+        skippedIds.push(file.id);
       } catch (e: any) {
-        console.warn("[DRIVE API DELETE BY NAME ERROR]", e.message);
+        skippedIds.push(file.id);
+        console.warn("[DRIVE API TRASH ERROR]", e?.message);
+      }
+    };
+
+    // 1. Por ID (lo normal: los comprobantes guardan el enlace al archivo)
+    for (const fId of targetIds) {
+      await tryTrash({ id: fId });
+    }
+
+    // 2. Por nombre, solo como respaldo cuando no hubo ID utilizable y se conocen las carpetas
+    //    de la app (cada resultado se vuelve a autorizar: carpeta registrada + permiso del usuario)
+    if (deletedIds.length === 0 && directory) {
+      for (const fName of targetNames) {
+        try {
+          for (const f of await findDriveFilesByName(effectiveAccessToken, fName)) {
+            await tryTrash(f);
+          }
+        } catch (e: any) {
+          console.warn("[DRIVE API TRASH BY NAME ERROR]", e?.message);
+        }
       }
     }
 
     return res.json({
       success: true,
       deletedIds,
-      message: `Se eliminó el archivo anterior de Google Drive (${deletedIds.length} archivo(s) procesados).`,
+      skippedIds,
+      message: `Se enviaron ${deletedIds.length} archivo(s) a la papelera de Google Drive.`,
     });
   } catch (error: any) {
     console.error("Error in delete-from-drive:", error);
     return res.status(500).json({
       success: false,
-      error: error.message || "Error al eliminar archivo de Google Drive.",
+      error: "Error al eliminar archivo de Google Drive.",
     });
   }
 });
@@ -3211,7 +3482,8 @@ app.post("/api/delete-from-drive", authenticateFirebaseUser, async (req, res) =>
 app.all("/api/drive-folder-info", authenticateFirebaseUser, async (req, res) => {
   try {
     const folderUrlOrId = (req.method === "POST" ? req.body?.folderUrl || req.body?.folderId : req.query?.folderUrl || req.query?.folderId) as string;
-    const clientAccessToken = (req.method === "POST" ? req.body?.accessToken : req.query?.accessToken) as string;
+    // El token solo se acepta en el cuerpo: en la query string queda en logs e historial
+    const clientAccessToken = (req.method === "POST" ? req.body?.accessToken : undefined) as string | undefined;
 
     if (!folderUrlOrId || typeof folderUrlOrId !== "string" || !folderUrlOrId.trim()) {
       return res.status(400).json({
@@ -3225,6 +3497,9 @@ app.all("/api/drive-folder-info", authenticateFirebaseUser, async (req, res) => 
     const urlMatch = folderId.match(/folders\/([a-zA-Z0-9_-]+)/) || folderId.match(/id=([a-zA-Z0-9_-]+)/);
     if (urlMatch && urlMatch[1]) {
       folderId = urlMatch[1];
+    }
+    if (!isValidDriveId(folderId)) {
+      return res.status(400).json({ success: false, error: "Enlace o ID de carpeta de Drive inválido." });
     }
 
     const centralAuth = await getCentralizedGoogleAccessToken();
@@ -3292,8 +3567,19 @@ async function start() {
       app.use(vite.middlewares);
     } else {
       const distPath = path.join(process.cwd(), "dist");
-      app.use(express.static(distPath));
+      app.use(
+        express.static(distPath, {
+          setHeaders: (res, filePath) => {
+            if (filePath.endsWith(".html")) {
+              res.setHeader("Cache-Control", "no-cache");
+            } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+              res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            }
+          },
+        })
+      );
       app.get("*", (_req, res) => {
+        res.setHeader("Cache-Control", "no-cache");
         res.sendFile(path.join(distPath, "index.html"));
       });
     }

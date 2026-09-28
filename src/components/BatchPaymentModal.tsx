@@ -23,6 +23,7 @@ import {
   formatPaymentEmailSubject,
   formatTransferDetails,
   generateDriveFileName,
+  escapeHtml,
 } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
@@ -225,7 +226,8 @@ export function BatchPaymentModal({
         const driveRes = await uploadReceiptToGoogleDrive({
           expense: firstExp,
           costCenter: matchedCenter,
-          customFileName: `${batchBaseName}-ComprobantePago-Lote-${paymentProofFileName}`,
+          // Prefijo LOTE-: no se confunde (ni se reemplaza) con el comprobante de un pago individual
+          customFileName: `LOTE-${batchBaseName}-ComprobantePago-${paymentProofFileName}`,
           fileBase64: paymentProofBase64,
           // Si hay carpeta de pagos/retenciones configurada, va ahí; si no, a la del centro de costos
           targetFolder: getPaymentsFolderTarget(driveSettings),
@@ -296,9 +298,9 @@ export function BatchPaymentModal({
 
               return `<tr>
                 <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; color: #334155;">${formatDate(e.date)}</td>
-                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; font-weight: bold; color: #0f172a;">${e.vendor}</td>
-                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #475569;">${sigla} · ${e.project}</td>
-                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">${e.invoiceNumber || '-'}</td>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; font-weight: bold; color: #0f172a;">${escapeHtml(e.vendor)}</td>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #475569;">${escapeHtml(sigla)} · ${escapeHtml(e.project)}</td>
+                <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">${escapeHtml(e.invoiceNumber || '-')}</td>
                 <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-weight: bold; text-align: right; color: #065f46;">${formatCurrency(e.amount, e.currency)}</td>
               </tr>`;
             })
@@ -313,11 +315,11 @@ export function BatchPaymentModal({
               <p style="margin: 0; color: #64748b; font-size: 13px;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
             </div>
 
-            <p style="font-size: 14px;">Hola <strong>${group.name}</strong>,</p>
+            <p style="font-size: 14px;">Hola <strong>${escapeHtml(group.name)}</strong>,</p>
             <p style="font-size: 14px;">
               Te confirmamos que se ha(n) <strong>transferido y liquidado con éxito</strong> ${
                 isSingle
-                  ? `${descriptorText} por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu comprobante de <em>${firstExp.vendor}</em>.`
+                  ? `${descriptorText} por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu comprobante de <em>${escapeHtml(firstExp.vendor)}</em>.`
                   : `<strong>${group.expenses.length} comprobantes</strong> por un total de <strong>${formatCurrency(group.totalAmount)}</strong>.`
               }
             </p>
@@ -350,10 +352,10 @@ export function BatchPaymentModal({
                 ? `<div style="background:#f8fafc; border:1px solid #e2e8f0; padding:14px; border-radius:10px; margin:16px 0;">
               <p style="margin:0 0 6px; font-weight:bold; color:#0f172a; font-size:13px;">Detalles de la transferencia bancaria:</p>
               <ul style="margin:0; padding-left:20px; font-size:12.5px; color:#334155; line-height: 1.6;">
-                ${sampleBank.alias ? `<li><strong>Alias:</strong> ${sampleBank.alias}</li>` : ''}
-                ${sampleBank.cbuCvu ? `<li><strong>CBU / CVU:</strong> ${sampleBank.cbuCvu}</li>` : ''}
-                ${sampleBank.bankName ? `<li><strong>Banco:</strong> ${sampleBank.bankName}</li>` : ''}
-                ${sampleBank.accountHolder ? `<li><strong>Titular:</strong> ${sampleBank.accountHolder}</li>` : ''}
+                ${sampleBank.alias ? `<li><strong>Alias:</strong> ${escapeHtml(sampleBank.alias)}</li>` : ''}
+                ${sampleBank.cbuCvu ? `<li><strong>CBU / CVU:</strong> ${escapeHtml(sampleBank.cbuCvu)}</li>` : ''}
+                ${sampleBank.bankName ? `<li><strong>Banco:</strong> ${escapeHtml(sampleBank.bankName)}</li>` : ''}
+                ${sampleBank.accountHolder ? `<li><strong>Titular:</strong> ${escapeHtml(sampleBank.accountHolder)}</li>` : ''}
               </ul>
             </div>`
                 : ''
@@ -364,7 +366,7 @@ export function BatchPaymentModal({
                 ? `<div style="background:#ecfdf5; border:1px solid #a7f3d0; padding:14px; border-radius:10px; margin:16px 0;">
               <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Transferencia Bancaria Adjunto:</p>
               <p style="margin:0; font-size:12px; color:#047857;">
-                Se adjunta la constancia de pago de la transferencia: <strong>${paymentProofFileName}</strong>.
+                Se adjunta la constancia de pago de la transferencia: <strong>${escapeHtml(paymentProofFileName)}</strong>.
               </p>
               ${
                 isImageProof

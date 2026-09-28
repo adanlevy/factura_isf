@@ -22,6 +22,7 @@ import {
   formatDate,
   generateDriveFileName,
   formatWithholdingEmailSubject,
+  escapeHtml,
 } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
@@ -203,16 +204,16 @@ export function WithholdingCertificateModal({
             <p style="margin: 0; color: #64748b; font-size: 13px;">Ingeniería Sin Fronteras Argentina · Administración y Finanzas</p>
           </div>
 
-          <p style="font-size: 14px;">Hola <strong>${recipientName}</strong>,</p>
-          <p style="font-size: 14px;">Te enviamos adjunto el <strong>Certificado de Retención Impositiva</strong> correspondiente al comprobante de <em>${expense.vendor}</em> por <strong>${formatCurrency(
+          <p style="font-size: 14px;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
+          <p style="font-size: 14px;">Te enviamos adjunto el <strong>Certificado de Retención Impositiva</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> por <strong>${formatCurrency(
             expense.amount,
             expense.currency
-          )}</strong> (Centro de Costos: <strong>${sigla} - ${expense.project}</strong>).</p>
+          )}</strong> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>).</p>
 
           <div style="background:#fffbeb; border:1px solid #fde68a; padding:14px; border-radius:10px; margin:16px 0;">
             <p style="margin:0 0 4px; font-weight:bold; color:#92400e; font-size:13px;">📎 Certificado de Retención Adjunto:</p>
             <p style="margin:0; font-size:12px; color:#78350f;">
-              Se adjunta la constancia oficial de retención: <strong>${fileName}</strong>.
+              Se adjunta la constancia oficial de retención: <strong>${escapeHtml(fileName)}</strong>.
             </p>
             ${
               isImage
@@ -226,7 +227,7 @@ export function WithholdingCertificateModal({
           ${
             customNotes
               ? `<div style="background:#f8fafc; border:1px solid #e2e8f0; padding:12px 14px; border-radius:10px; margin:16px 0; font-size:12.5px; color:#334155;">
-                  <strong>Mensaje adicional:</strong><br/>${customNotes.replace(/\n/g, '<br/>')}
+                  <strong>Mensaje adicional:</strong><br/>${escapeHtml(customNotes).replace(/\n/g, '<br/>')}
                 </div>`
               : ''
           }
