@@ -735,7 +735,7 @@ export function ExpenseList({
       <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
         <div className="flex items-center space-x-2">
           <span className="font-medium">
-            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> comprobantes cargados
+            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{userExpenses.length}</strong> comprobantes propios cargados
           </span>
           <span className="text-slate-300 hidden sm:inline">•</span>
           <span className="text-slate-400 text-[11px] hidden sm:inline">
