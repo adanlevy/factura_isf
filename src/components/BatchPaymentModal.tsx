@@ -45,7 +45,13 @@ interface BatchPaymentModalProps {
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
   driveSettings?: DriveSettings | null;
-  onPaymentCompleted: (updatedExpenses: Expense[], emailsSentCount: number) => Promise<void> | void;
+  /** Registra el pago en la base; devuelve los IDs que quedaron guardados. */
+  onSavePayments: (updatedExpenses: Expense[]) => Promise<string[]>;
+  onPaymentCompleted: (
+    updatedExpenses: Expense[],
+    emailsSentCount: number,
+    info?: { failedCount: number; emailsExpected: number }
+  ) => Promise<void> | void;
 }
 
 interface RecipientGroup {
@@ -66,6 +72,7 @@ export function BatchPaymentModal({
   currentUser,
   currentUserAccessToken,
   driveSettings = null,
+  onSavePayments,
   onPaymentCompleted,
 }: BatchPaymentModalProps) {
   const [isExecuting, setIsExecuting] = useState(false);
@@ -240,11 +247,64 @@ export function BatchPaymentModal({
       }
     }
 
-    // 2. Send emails to each recipient group if enabled
-    if (sendEmails && recipientGroups.length > 0) {
-      for (let i = 0; i < recipientGroups.length; i++) {
-        const group = recipientGroups[i];
-        setExecutionStep(`Enviando correo (${i + 1}/${recipientGroups.length}) a ${group.name}...`);
+    // 2. Prepare updated expenses list
+    setExecutionStep('Registrando el pago en el sistema...');
+
+    const updatedExpenses: Expense[] = expenses.map((e) => {
+      const matchingVendor = vendors.find(
+        (v) => (v.name || '').trim().toLowerCase() === (e.vendor || '').trim().toLowerCase()
+      );
+      const transferSnapshot = e.transferDetails || formatTransferDetails(e, matchingVendor);
+
+      return {
+        ...e,
+        reimbursementStatus: 'REIMBURSED' as const,
+        reimbursedAt: todayStr,
+        paymentConfirmedAt: nowIso,
+        transferDetails: transferSnapshot || e.transferDetails,
+        paymentProofImage: paymentProofBase64 || e.paymentProofImage,
+        paymentProofFileName: paymentProofFileName || e.paymentProofFileName,
+        paymentProofAt: paymentProofBase64 ? nowIso : e.paymentProofAt,
+        paymentProofDriveUrl: sharedProofDriveUrl || e.paymentProofDriveUrl,
+        appliesWithholdings: appliesWithholdings || e.appliesWithholdings,
+        updatedAt: nowIso,
+      };
+    });
+
+    // Cache payment proof if attached
+    if (paymentProofBase64) {
+      for (const exp of updatedExpenses) {
+        cachePaymentProofFile(exp.id, paymentProofBase64).catch(() => {});
+      }
+    }
+
+    // 3. Guardar el pago ANTES de avisar: si la base lo rechaza, nadie recibe un "ya te pagamos"
+    let savedIds: string[] = [];
+    try {
+      savedIds = await onSavePayments(updatedExpenses);
+    } catch (saveErr) {
+      console.error('[Batch Payment] Error saving payments:', saveErr);
+    }
+    const savedSet = new Set(savedIds);
+    const savedExpenses = updatedExpenses.filter((e) => savedSet.has(e.id));
+    if (savedExpenses.length === 0) {
+      setIsExecuting(false);
+      setExecutionStep('');
+      alert('No se pudo registrar el pago en el sistema (sin permisos o sin conexión). No se envió ningún correo.');
+      return;
+    }
+    const groupsToNotify = recipientGroups
+      .map((g) => {
+        const groupExpenses = g.expenses.filter((e) => savedSet.has(e.id));
+        return { ...g, expenses: groupExpenses, totalAmount: groupExpenses.reduce((sum, e) => sum + (e.amount || 0), 0) };
+      })
+      .filter((g) => g.expenses.length > 0);
+
+    // 4. Send emails to each recipient group if enabled (solo por lo que quedó registrado)
+    if (sendEmails && groupsToNotify.length > 0) {
+      for (let i = 0; i < groupsToNotify.length; i++) {
+        const group = groupsToNotify[i];
+        setExecutionStep(`Enviando correo (${i + 1}/${groupsToNotify.length}) a ${group.name}...`);
 
         try {
           const isSingle = group.expenses.length === 1;
@@ -390,7 +450,7 @@ export function BatchPaymentModal({
             <p style="margin-top:24px; font-size:13px; color: #475569;">Muchas gracias por tu compromiso.<br/><strong>Área de Administración y Finanzas — ISF Argentina</strong></p>
           </div>`;
 
-          await sendGmailMessage({
+          const sendRes = await sendGmailMessage({
             to: group.email,
             cc: group.ccRecipients.length > 0 ? group.ccRecipients : undefined,
             subject: emailSubject,
@@ -400,48 +460,25 @@ export function BatchPaymentModal({
             attachments,
           });
 
-          emailsSentCount++;
+          // Solo cuenta como enviado si Gmail lo aceptó
+          if (sendRes.success) emailsSentCount++;
+          else console.warn(`[Batch Payment] Email to ${group.email} not sent:`, sendRes.error);
         } catch (emailErr) {
           console.warn(`[Batch Payment] Notice sending email to ${group.email}:`, emailErr);
         }
       }
     }
 
-    // 3. Prepare updated expenses list
-    setExecutionStep('Actualizando estados de liquidación en el sistema...');
-
-    const updatedExpenses: Expense[] = expenses.map((e) => {
-      const matchingVendor = vendors.find(
-        (v) => (v.name || '').trim().toLowerCase() === (e.vendor || '').trim().toLowerCase()
-      );
-      const transferSnapshot = e.transferDetails || formatTransferDetails(e, matchingVendor);
-
-      return {
-        ...e,
-        reimbursementStatus: 'REIMBURSED' as const,
-        reimbursedAt: todayStr,
-        paymentConfirmedAt: nowIso,
-        transferDetails: transferSnapshot || e.transferDetails,
-        paymentProofImage: paymentProofBase64 || e.paymentProofImage,
-        paymentProofFileName: paymentProofFileName || e.paymentProofFileName,
-        paymentProofAt: paymentProofBase64 ? nowIso : e.paymentProofAt,
-        paymentProofDriveUrl: sharedProofDriveUrl || e.paymentProofDriveUrl,
-        appliesWithholdings: appliesWithholdings || e.appliesWithholdings,
-        updatedAt: nowIso,
-      };
-    });
-
-    // Cache payment proof if attached
-    if (paymentProofBase64) {
-      for (const exp of updatedExpenses) {
-        cachePaymentProofFile(exp.id, paymentProofBase64).catch(() => {});
-      }
+    // 5. Complete payment callback (aviso y registro de auditoría)
+    try {
+      await onPaymentCompleted(savedExpenses, emailsSentCount, {
+        failedCount: updatedExpenses.length - savedExpenses.length,
+        emailsExpected: sendEmails ? groupsToNotify.length : 0,
+      });
+    } finally {
+      setIsExecuting(false);
+      onClose();
     }
-
-    // 4. Complete payment callback
-    await onPaymentCompleted(updatedExpenses, emailsSentCount);
-    setIsExecuting(false);
-    onClose();
   };
 
   return (

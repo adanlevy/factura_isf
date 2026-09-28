@@ -266,7 +266,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y manda a la papelera de Drive la constancia y el certificado (se pueden recuperar durante 30 días).</li>
               <li><strong>Pedir datos bancarios:</strong> «Pedir Datos» envía un correo prearmado solicitando CBU/Alias.</li>
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
-              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos.</li>
+              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron.</li>
               <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
               <li><strong>Usuarios / Roles:</strong> habilitar personas, asignar rol y CC global; alta con correo de bienvenida.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>

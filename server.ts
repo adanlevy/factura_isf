@@ -1913,6 +1913,18 @@ app.post("/api/data/cost-centers", authenticateFirebaseUser, requireAdminRole, (
   res.json({ success: saved, count: finalCostCenters.length });
 });
 
+app.post("/api/data/cost-centers/delete", authenticateFirebaseUser, requireAdminRole, (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids)) {
+    return res.status(400).json({ success: false, error: "ids must be an array" });
+  }
+  const idSet = new Set(ids);
+  const existing = readCollection<any[]>("cost_centers", []);
+  const remaining = existing.filter((c) => !idSet.has(c.id));
+  const saved = writeCollection("cost_centers", remaining);
+  res.json({ success: saved, count: remaining.length });
+});
+
 // 4. CATEGORIES COLLECTION
 app.get("/api/data/categories", authenticateFirebaseUser, requireAdminRole, (_req, res) => {
   const categories = readCollection<any[]>("categories", []);

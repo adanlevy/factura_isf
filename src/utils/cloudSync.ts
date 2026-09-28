@@ -10,6 +10,7 @@ import {
   setDoc,
   deleteDoc,
   deleteField,
+  updateDoc,
   writeBatch,
   onSnapshot,
   getDoc,
@@ -366,19 +367,21 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
               ...sanitizedCloudExp,
               ...localExp,
               bankDetails: hasLocalBank ? localExp.bankDetails : undefined,
-              driveUploadedUrl: localExp.driveUploadedUrl || cloudExp.driveUploadedUrl,
-              driveUploadedFileName: localExp.driveUploadedFileName || cloudExp.driveUploadedFileName,
-              paymentProofDriveUrl: localExp.paymentProofDriveUrl || cloudExp.paymentProofDriveUrl,
-              withholdingCertificateDriveUrl: localExp.withholdingCertificateDriveUrl || cloudExp.withholdingCertificateDriveUrl,
+              // Si la copia local quitó el campo a propósito (p. ej. al revertir un pago), no se recupera de la nube
+              driveUploadedUrl: 'driveUploadedUrl' in localExp ? localExp.driveUploadedUrl : cloudExp.driveUploadedUrl,
+              driveUploadedFileName: 'driveUploadedFileName' in localExp ? localExp.driveUploadedFileName : cloudExp.driveUploadedFileName,
+              paymentProofDriveUrl: 'paymentProofDriveUrl' in localExp ? localExp.paymentProofDriveUrl : cloudExp.paymentProofDriveUrl,
+              withholdingCertificateDriveUrl:
+                'withholdingCertificateDriveUrl' in localExp ? localExp.withholdingCertificateDriveUrl : cloudExp.withholdingCertificateDriveUrl,
               receiptImage: localExp.receiptImage || cloudExp.receiptImage,
               paymentProofImage: localExp.paymentProofImage || cloudExp.paymentProofImage,
               withholdingCertificateImage: localExp.withholdingCertificateImage || cloudExp.withholdingCertificateImage,
               audioRecordingUrl: localExp.audioRecordingUrl || cloudExp.audioRecordingUrl,
             });
           } else {
-            // Cloud is newer or equal
+            // La nube es más nueva o igual: se parte del documento de la nube (así un campo que otra
+            // persona borró no reaparece desde la copia local) y solo se conservan los archivos locales
             map.set(cloudExp.id, {
-              ...localExp,
               ...sanitizedCloudExp,
               bankDetails: hasCloudBank ? cloudExp.bankDetails : undefined,
               receiptImage: localExp.receiptImage || cloudExp.receiptImage,
@@ -852,7 +855,12 @@ function buildExpenseWrite(item: Expense, clearPaymentFields: boolean): any {
 }
 
 async function writeExpensesToFirestore(items: Expense[], clearPaymentFields = false): Promise<boolean> {
-  let allOk = true;
+  return (await writeExpensesToFirestoreDetailed(items, clearPaymentFields)).length === 0;
+}
+
+// Devuelve los IDs que no se pudieron guardar (p. ej. rechazados por las reglas)
+async function writeExpensesToFirestoreDetailed(items: Expense[], clearPaymentFields = false): Promise<string[]> {
+  const failedIds: string[] = [];
   for (const chunk of chunkArray(items, EXPENSE_WRITE_CHUNK)) {
     try {
       const batch = writeBatch(db);
@@ -867,12 +875,12 @@ async function writeExpensesToFirestore(items: Expense[], clearPaymentFields = f
           await setDoc(doc(db, 'expenses', item.id), buildExpenseWrite(item, clearPaymentFields), { merge: true });
         } catch (err) {
           console.error(`[Firestore] No se pudo guardar el comprobante ${item.id}:`, err);
-          allOk = false;
+          failedIds.push(item.id);
         }
       }
     }
   }
-  return allOk;
+  return failedIds;
 }
 
 export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean> {
@@ -922,6 +930,180 @@ export async function isPaymentProofUsedByOtherExpenses(driveUrl: string, exclud
     console.warn('[Firestore] No se pudo verificar si el comprobante de pago está compartido:', err);
     return true;
   }
+}
+
+// ==========================================
+// Escrituras parciales de comprobantes
+// ==========================================
+// Escribir el comprobante completo (set con merge) desde una copia vieja pisa los cambios que otra
+// persona hizo mientras tanto (p. ej. un pago registrado por otro Admin). Estas funciones escriben
+// solo los campos que cambiaron, y borran de verdad los que se quitaron.
+
+// Archivos binarios: viven en Drive y en la caché local, nunca en Firestore
+const EXPENSE_LOCAL_ONLY_KEYS = new Set([
+  'receiptImage',
+  'paymentProofImage',
+  'withholdingCertificateImage',
+  'audioRecordingUrl',
+]);
+
+const stableStringify = (value: any): string => {
+  if (value === undefined || value === null) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((k) => value[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+/** Campos que difieren entre dos versiones de un comprobante (valor undefined = quitar el campo). */
+export function diffExpenseFields(before: Partial<Expense> | null | undefined, after: Partial<Expense>): Record<string, any> {
+  const changes: Record<string, any> = {};
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of keys) {
+    if (key === 'id' || key === 'updatedAt' || EXPENSE_LOCAL_ONLY_KEYS.has(key)) continue;
+    const a = (before as any)?.[key];
+    const b = (after as any)?.[key];
+    if (stableStringify(a) !== stableStringify(b)) changes[key] = b;
+  }
+  return changes;
+}
+
+/** Toma solo ciertos campos de un comprobante (para cambios de alcance conocido, p. ej. un pago). */
+export function pickExpenseFields(item: Partial<Expense>, keys: readonly string[]): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const key of keys) out[key] = (item as any)[key];
+  return out;
+}
+
+export interface ExpensePatch {
+  id: string;
+  changes: Record<string, any>;
+}
+
+function buildPatchData(id: string, changes: Record<string, any>): Record<string, any> {
+  const data: Record<string, any> = {};
+  for (const [key, value] of Object.entries(changes)) {
+    if (key === 'id') continue;
+    if (EXPENSE_LOCAL_ONLY_KEYS.has(key)) {
+      // Los archivos se guardan solo en la caché local del dispositivo
+      if (typeof value === 'string' && value) {
+        if (key === 'receiptImage') cacheReceiptFile(id, value).catch(() => {});
+        if (key === 'paymentProofImage') cachePaymentProofFile(id, value).catch(() => {});
+        if (key === 'withholdingCertificateImage') cacheWithholdingCertificateFile(id, value).catch(() => {});
+      }
+      continue;
+    }
+    if (value === undefined) {
+      data[key] = deleteField();
+    } else if (typeof value === 'string' && value.startsWith('data:')) {
+      continue; // nunca binarios embebidos en Firestore
+    } else {
+      data[key] = sanitizeForFirestore(value);
+    }
+  }
+  if (Object.keys(data).length > 0 && !('updatedAt' in data)) {
+    data.updatedAt = new Date().toISOString();
+  }
+  return data;
+}
+
+/**
+ * Aplica cambios parciales a comprobantes existentes (update: si el comprobante ya no existe, falla
+ * en lugar de crear un documento a medias). Devuelve qué IDs no se pudieron guardar.
+ */
+export async function patchCentralExpenses(
+  patches: ExpensePatch[],
+  options?: { mirror?: Expense[] }
+): Promise<{ ok: boolean; failedIds: string[] }> {
+  const deletedSet = getDeletedExpensesSet();
+  const prepared = (patches || [])
+    .filter((p) => p && p.id && !deletedSet.has(p.id))
+    .map((p) => ({ id: p.id, data: buildPatchData(p.id, p.changes || {}) }))
+    .filter((p) => Object.keys(p.data).length > 0);
+  if (prepared.length === 0) return { ok: true, failedIds: [] };
+
+  const failedIds: string[] = [];
+  for (const chunk of chunkArray(prepared, EXPENSE_WRITE_CHUNK)) {
+    try {
+      const batch = writeBatch(db);
+      for (const p of chunk) batch.update(doc(db, 'expenses', p.id), p.data);
+      await batch.commit();
+    } catch (e) {
+      console.warn('[Firestore] Error en batch de cambios, reintentando uno por uno:', e);
+      for (const p of chunk) {
+        try {
+          await updateDoc(doc(db, 'expenses', p.id), p.data);
+        } catch (err) {
+          console.error(`[Firestore] No se pudo guardar el cambio del comprobante ${p.id}:`, err);
+          failedIds.push(p.id);
+        }
+      }
+    }
+  }
+
+  if (options?.mirror && options.mirror.length > 0) {
+    const okMirror = options.mirror.filter((e) => e && !failedIds.includes(e.id));
+    if (okMirror.length > 0) {
+      authFetch('/api/data/expenses/upsert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: okMirror.map((i) => prepareExpenseForFirestore(i)) }),
+      }).catch(() => {});
+    }
+  }
+
+  return { ok: failedIds.length === 0, failedIds };
+}
+
+/** Guarda la diferencia entre la versión de partida y la editada de un comprobante. */
+export async function saveExpenseChanges(before: Expense | null | undefined, after: Expense): Promise<boolean> {
+  const changes = diffExpenseFields(before, after);
+  if (Object.keys(changes).length === 0) return true;
+  changes.updatedAt = after.updatedAt || new Date().toISOString();
+  // Los archivos nuevos (si los hay) se cachean localmente
+  for (const key of EXPENSE_LOCAL_ONLY_KEYS) {
+    if ((after as any)[key] && (after as any)[key] !== (before as any)?.[key]) changes[key] = (after as any)[key];
+  }
+  const res = await patchCentralExpenses([{ id: after.id, changes }], { mirror: [after] });
+  return res.ok;
+}
+
+/**
+ * Renombra un centro de costos o una categoría en TODOS los comprobantes de la base
+ * (no solo en los cargados en pantalla). Solo Admin.
+ */
+export async function renameExpenseFieldValue(
+  field: 'project' | 'category',
+  oldValue: string,
+  newValue: string
+): Promise<{ updated: number; failed: number }> {
+  if (!oldValue || !newValue || oldValue === newValue) return { updated: 0, failed: 0 };
+  const snap = await getDocs(query(collection(db, 'expenses'), where(field, '==', oldValue)));
+  const patches = snap.docs.map((d) => ({ id: d.id, changes: { [field]: newValue } }));
+  const res = await patchCentralExpenses(patches);
+  return { updated: patches.length - res.failedIds.length, failed: res.failedIds.length };
+}
+
+/** Como upsertCentralExpenses, pero informa qué comprobantes no se pudieron guardar. */
+export async function upsertCentralExpensesDetailed(items: Expense[]): Promise<{ ok: boolean; failedIds: string[] }> {
+  const deletedSet = getDeletedExpensesSet();
+  const valid = withoutDeletedExpenses(items);
+  const skipped = (items || []).filter((i) => i?.id && deletedSet.has(i.id)).map((i) => i.id);
+  if (valid.length === 0) return { ok: skipped.length === 0, failedIds: skipped };
+
+  authFetch('/api/data/expenses/upsert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: valid.map((i) => prepareExpenseForFirestore(i)) }),
+  }).catch(() => {});
+
+  const failedIds = [...skipped, ...(await writeExpensesToFirestoreDetailed(valid))];
+  return { ok: failedIds.length === 0, failedIds };
 }
 
 export interface DeleteExpensesResult {
