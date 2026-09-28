@@ -22,7 +22,7 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { db, auth, testFirestoreConnection } from '../lib/firebase';
-import { Expense, Vendor, CostCenter, AppUserRecord } from '../types';
+import { Expense, Vendor, CostCenter, AppUserRecord, DriveSettings } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '../data/initialData';
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
 import { sanitizeCostCenter } from './helpers';
@@ -972,6 +972,67 @@ export async function deleteCentralExpenses(ids: string[]): Promise<DeleteExpens
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Configuración de Drive (app_settings/drive): carpeta única de comprobantes de
+// pago y certificados de retención, independiente de los centros de costos.
+// ---------------------------------------------------------------------------
+const DRIVE_SETTINGS_DOC = doc(db, 'app_settings', 'drive');
+
+function normalizeDriveSettings(data: any): DriveSettings | null {
+  if (!data || typeof data !== 'object') return null;
+  return {
+    paymentsFolderUrl: data.paymentsFolderUrl || undefined,
+    paymentsFolderId: data.paymentsFolderId || undefined,
+    paymentsFolderName: data.paymentsFolderName || undefined,
+    updatedAt: data.updatedAt || undefined,
+    updatedBy: data.updatedBy || undefined,
+  };
+}
+
+export async function fetchDriveSettings(): Promise<DriveSettings | null> {
+  try {
+    const snap = await getDoc(DRIVE_SETTINGS_DOC);
+    return snap.exists() ? normalizeDriveSettings(snap.data()) : null;
+  } catch (e) {
+    console.warn('[Firestore] No se pudo leer la configuración de Drive:', e);
+    return null;
+  }
+}
+
+export function subscribeToDriveSettings(onUpdate: (settings: DriveSettings | null) => void): () => void {
+  return onSnapshot(
+    DRIVE_SETTINGS_DOC,
+    (snap) => onUpdate(snap.exists() ? normalizeDriveSettings(snap.data()) : null),
+    (err) => console.warn('[Firestore Live] configuración de Drive:', err.message)
+  );
+}
+
+/** Guarda la configuración de Drive. Solo administradores (lo validan las reglas). */
+export async function saveDriveSettings(settings: DriveSettings): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await setDoc(
+      DRIVE_SETTINGS_DOC,
+      sanitizeForFirestore({
+        paymentsFolderUrl: settings.paymentsFolderUrl || null,
+        paymentsFolderId: settings.paymentsFolderId || null,
+        paymentsFolderName: settings.paymentsFolderName || null,
+        updatedAt: new Date().toISOString(),
+        updatedBy: (auth.currentUser?.email || '').toLowerCase().trim() || null,
+      })
+    );
+    return { ok: true };
+  } catch (e: any) {
+    console.warn('[Firestore] No se pudo guardar la configuración de Drive:', e);
+    const denied = e?.code === 'permission-denied';
+    return {
+      ok: false,
+      error: denied
+        ? 'Sin permisos para guardar. Verificá que tu usuario sea administrador y que estén publicadas las reglas actuales de Firestore.'
+        : 'No se pudo guardar la carpeta. Revisá la conexión e intentá de nuevo.',
+    };
+  }
 }
 
 export async function saveCentralVendors(vendors: Vendor[]): Promise<boolean> {

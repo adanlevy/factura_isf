@@ -251,7 +251,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li>«Pagar» abre el resumen con los datos bancarios del destinatario.</li>
               <li>Adjuntá el <strong>comprobante de transferencia</strong> (opcional): PNG, JPG, PDF o <span className="kbd">Ctrl+V</span>.</li>
               <li>Tildá <strong>«Aplica Retenciones»</strong> si corresponde (queda en <Badge tone="reten">Pend. Retención</Badge>).</li>
-              <li><strong>«Confirmar Pago»</strong>: sube la constancia a Drive, envía el correo al solicitante (con CC automático) y marca <Badge tone="paid">Pagado</Badge>.</li>
+              <li><strong>«Confirmar Pago»</strong>: sube la constancia a la carpeta de <strong>Comprobantes de Pago y Retenciones</strong>, envía el correo al solicitante (con CC automático) y marca <Badge tone="paid">Pagado</Badge>.</li>
             </ol>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Pago en lote</h4>
@@ -262,12 +262,12 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Retenciones, reversión y más</h4>
             <ul className="list-disc pl-5 space-y-1 text-slate-600">
-              <li><strong>Certificado de retenciones:</strong> al hacer clic en <Badge tone="reten">Pend. Retención</Badge> adjuntás el certificado AFIP/ARCA; se archiva, se envía por correo y pasa a <Badge tone="paid">Pagado</Badge> definitivo.</li>
+              <li><strong>Certificado de retenciones:</strong> al hacer clic en <Badge tone="reten">Pend. Retención</Badge> adjuntás el certificado AFIP/ARCA; se archiva en la carpeta de Comprobantes de Pago y Retenciones, se envía por correo y pasa a <Badge tone="paid">Pagado</Badge> definitivo.</li>
               <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y elimina de Drive la constancia y el certificado.</li>
               <li><strong>Pedir datos bancarios:</strong> «Pedir Datos» envía un correo prearmado solicitando CBU/Alias.</li>
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
               <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos.</li>
-              <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia.</li>
+              <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
               <li><strong>Usuarios / Roles:</strong> habilitar personas, asignar rol y CC global; alta con correo de bienvenida.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>
             </ul>
@@ -285,7 +285,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <div className="grid sm:grid-cols-2 gap-3">
               {[
                 ['🤖 IA — Google Gemini', 'Lee facturas (OCR), constancias, audio y texto. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
-                ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
+                ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta para facturas y tickets; los comprobantes de pago y certificados de retención van a una carpeta única aparte. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
                 ['✉️ Correos — Gmail API', 'Plantillas HTML institucionales. El CC automático combina usuarios «copiar en todo», emails del centro de costos y CC explícito.'],
                 ['☁️ Datos — Firestore', 'Centralizado y en tiempo real. Los archivos binarios nunca se guardan en Firestore, solo en Drive; en la base van los datos livianos y los enlaces.'],
               ].map(([t, d]) => (

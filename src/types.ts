@@ -19,6 +19,19 @@ export type PaymentMethod =
   | 'Tarjeta Débito Galicia'
   | 'Otro';
 
+/**
+ * Configuración de Drive que no depende de un centro de costos.
+ * Se guarda en Firestore en app_settings/drive.
+ */
+export interface DriveSettings {
+  // Carpeta única para TODOS los comprobantes de pago y certificados de retención
+  paymentsFolderUrl?: string;
+  paymentsFolderId?: string;
+  paymentsFolderName?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface CostCenter {
   id: string;
   name: string;

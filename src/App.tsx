@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry } from './types';
+import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings } from './types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_COST_CENTERS_DATA,
@@ -59,6 +59,8 @@ import {
   deleteCentralExpenses,
   deleteCentralVendors,
   getDeletedExpensesSet,
+  subscribeToDriveSettings,
+  saveDriveSettings,
   isExpenseDeletedInSession,
   fetchUserCloudPreferences,
   saveUserCloudPreferences,
@@ -452,6 +454,54 @@ export default function App() {
   useEffect(() => {
     saveStoredAuth(currentUser);
   }, [currentUser]);
+
+  // Configuración de Drive: carpeta única para comprobantes de pago y certificados de retención
+  const [driveSettings, setDriveSettings] = useState<DriveSettings | null>(null);
+  useEffect(() => {
+    if (!isFirebaseAuthReady || !currentUser?.email) return;
+    const unsubscribe = subscribeToDriveSettings(setDriveSettings);
+    return () => unsubscribe();
+  }, [isFirebaseAuthReady, currentUser?.email]);
+
+  const handleSaveDriveSettings = async (next: DriveSettings): Promise<boolean> => {
+    const previous = driveSettings;
+    const res = await saveDriveSettings(next);
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return false;
+    }
+    setDriveSettings(next);
+
+    const describe = (s?: DriveSettings | null) =>
+      s?.paymentsFolderId ? s.paymentsFolderName || s.paymentsFolderUrl || s.paymentsFolderId : '(sin configurar)';
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'UPDATE',
+      actionLabel: 'Carpeta de Comprobantes de Pago y Retenciones',
+      entityType: 'system',
+      entityId: 'drive-settings',
+      entityName: 'Carpeta de comprobantes de pago y retenciones',
+      summary: next.paymentsFolderId
+        ? `Los comprobantes de pago y certificados de retención ahora se guardan en la carpeta "${describe(next)}".`
+        : 'Se quitó la carpeta de comprobantes de pago y retenciones: vuelven a guardarse en la carpeta de cada centro de costos.',
+      changes: [
+        {
+          field: 'paymentsFolder',
+          label: 'Carpeta de comprobantes de pago y retenciones',
+          oldValue: describe(previous),
+          newValue: describe(next),
+        },
+      ],
+    });
+
+    showToast(
+      next.paymentsFolderId
+        ? `✅ Carpeta de comprobantes de pago y retenciones guardada: "${describe(next)}".`
+        : '✅ Carpeta quitada: los comprobantes de pago y retenciones vuelven a la carpeta de cada centro de costos.'
+    );
+    return true;
+  };
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -2251,6 +2301,8 @@ export default function App() {
               onAddCostCenter={handleAddNewCostCenter}
               onUpdateCostCenter={handleUpdateCostCenter}
               onDeleteCostCenter={handleDeleteCostCenter}
+              driveSettings={driveSettings}
+              onSaveDriveSettings={handleSaveDriveSettings}
             />
           )}
 
@@ -2385,6 +2437,7 @@ export default function App() {
         isOpen={Boolean(withholdingModalExpense)}
         expense={withholdingModalExpense}
         costCenters={costCenters}
+        driveSettings={driveSettings}
         appUsers={appUsers}
         currentUser={currentUser || undefined}
         onClose={() => setWithholdingModalExpense(null)}
@@ -2404,6 +2457,7 @@ export default function App() {
         isOpen={Boolean(paymentModalExpense)}
         expense={paymentModalExpense}
         costCenters={costCenters}
+        driveSettings={driveSettings}
         appUsers={appUsers}
         currentUser={currentUser}
         onClose={() => setPaymentModalExpense(null)}

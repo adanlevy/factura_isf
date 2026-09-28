@@ -254,7 +254,7 @@ Con **"Pagar"** se abre **"Pagar Comprobante y Liquidar Reintegro"**:
 3. **Cargar comprobante de pago / transferencia (opcional):** adjuntá la constancia (PNG, JPG, PDF **o pegá una captura con Ctrl+V**). Se puede previsualizar, reemplazar o quitar.
 4. **"Aplica Retenciones"** (opcional): si lo tildás, el comprobante quedará como **"Pagado - Pend. Retención"** (naranja) hasta que subas el certificado.
 5. **"Confirmar Pago"**. Al confirmar, el sistema:
-   - Sube el comprobante de transferencia a la carpeta de Drive del centro de costos.
+   - Sube el comprobante de transferencia a la **carpeta de Comprobantes de Pago y Retenciones** (ver §7.9). Si esa carpeta no está configurada, lo sube a la carpeta del centro de costos.
    - **Envía un correo de confirmación** al solicitante (con copia automática — ver §8.3), con los datos de la transferencia y la constancia adjunta.
    - Marca el comprobante como **Pagado / Reintegrado** con su fecha.
 
@@ -273,7 +273,7 @@ Con varias filas seleccionadas y **"Pagar"** se abre **"Liquidación y Pago en L
 
 Cuando un pago se marcó con **"Aplica Retenciones"**, queda en estado **"Pagado - Pend. Retención"** (naranja). Al hacer clic en ese estado se abre **"Cargar Certificado de Retenciones"**:
 - Adjuntá el **certificado (AFIP/ARCA)** en PDF o imagen (click, arrastrar o Ctrl+V).
-- **"Guardar Certificado"**: lo archiva en Drive, **envía el certificado por correo** al solicitante y pasa el comprobante a **"Pagado"** (verde) definitivo.
+- **"Guardar Certificado"**: lo archiva en Drive (en la **carpeta de Comprobantes de Pago y Retenciones**, o en la del centro de costos si aquella no está configurada), **envía el certificado por correo** al solicitante y pasa el comprobante a **"Pagado"** (verde) definitivo.
 - Desde acá también podés **"Revertir Pago a Pendiente"**.
 
 ### 7.6 Revertir un pago
@@ -306,6 +306,7 @@ La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas banc
 La pestaña **"Centro de Costos"** gestiona las **siglas** y su vínculo con **carpetas de Google Drive**.
 - **Nuevo Centro de Costos:** *Sigla* (mayúsculas, hasta 8 caracteres), *Nombre* (obligatorio), *Link de Google Drive* (pegás la URL de la carpeta y el nombre se detecta solo) y *Emails en copia* (las personas que se ponen en CC de todo correo relacionado con ese centro de costos).
 - **Tabla:** Sigla (clic para copiar), Nombre, Emails en Copia, Carpeta/Link de Drive y acciones (editar en línea / eliminar).
+- **Carpeta de Comprobantes de Pago y Retenciones** (recuadro arriba de todo, *no es un centro de costos*): acá se define **una única carpeta de Drive** donde van **todos** los comprobantes de pago y certificados de retención, sin importar el centro de costos del gasto. Pegás el link de la carpeta (el nombre se detecta solo), **"Guardar"**; se puede **"Cambiar carpeta"** o **"Quitar"**. Solo los administradores pueden modificarla. Mientras no esté configurada, esos archivos van a la carpeta del centro de costos. Cambiarla **no mueve** los archivos ya subidos.
 
 > Los **totales por centro de costos** no se muestran en esta pestaña; se obtienen exportando o filtrando en *Gestión de Pagos*.
 
@@ -351,7 +352,8 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Costos registrados:** ~US$ 0,10 por millón de tokens de entrada y ~US$ 0,40 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a ARS con tipo de cambio fijo configurado).
 
 ### 8.2 Archivo en Google Drive
-- Cada **centro de costos** tiene su **carpeta propia** en Drive.
+- Cada **centro de costos** tiene su **carpeta propia** en Drive, donde se archivan las **facturas y tickets**.
+- Los **comprobantes de pago** y **certificados de retención** van todos a una **carpeta aparte** ("Comprobantes de Pago y Retenciones"), configurada en la pestaña Centro de Costos (§7.9).
 - **Nomenclatura de archivos:** `SIGLA-Nombre Solicitante-AAAAMMDD-Monto.ext` (ej. `GPA-Juan Perez-20260514-15400.pdf`). Los comprobantes de pago llevan el sufijo `-ComprobantePago-` y los certificados `-CertificadoRetencion-`.
 - Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (`admin@isf-argentina.org`), usando un *refresh token* guardado en el servidor. Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
 
@@ -399,7 +401,7 @@ El comprobante no figura a nombre de Ingeniería Sin Fronteras. Verificá el des
 La subida a Google Drive falló. Usá **"Reintentar"** en la fila. El dato contable ya quedó guardado igual.
 
 **¿Dónde quedan archivadas las fotos de las facturas?**
-En la **carpeta de Google Drive del centro de costos** correspondiente, con nombre estandarizado. Se accede desde el ícono de carpeta en la fila o desde el visor.
+En la **carpeta de Google Drive del centro de costos** correspondiente, con nombre estandarizado. Se accede desde el ícono de carpeta en la fila o desde el visor. Los comprobantes de pago y certificados de retención, en cambio, quedan en la carpeta única de **Comprobantes de Pago y Retenciones** (§7.9).
 
 **Necesito reintegrar a alguien pero no tengo su CBU.**
 Usá **"Pedir Datos"** en *Gestión de Pagos* para enviarle el pedido por correo.
