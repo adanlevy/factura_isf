@@ -788,6 +788,39 @@ const BOOTSTRAP_ADMIN_EMAILS = (
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
+function legacyUserKey(email: string): string {
+  return email.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/**
+ * Crea el documento canónico app_users/{email} para usuarios registrados con la clave de las
+ * primeras versiones (p. ej. juan_gmail_com). Las reglas de Firestore identifican a los usuarios
+ * por email: sin esto, un usuario @gmail.com registrado hace tiempo no podría leer datos.
+ * No toca los documentos viejos y saltea usuarios dados de baja.
+ */
+async function migrateLegacyUserDocs() {
+  if (!adminDb) return;
+  try {
+    const deleted = new Set(getDeletedUsersList().map((e) => e.toLowerCase().trim()));
+    const snap = await adminDb.collection("app_users").get();
+    const canonicalIds = new Set(snap.docs.map((d) => d.id));
+    let migrated = 0;
+    for (const legacyDoc of snap.docs) {
+      const data = legacyDoc.data() || {};
+      const email = String(data.email || "").toLowerCase().trim();
+      if (!email || legacyDoc.id === email || canonicalIds.has(email) || deleted.has(email)) continue;
+      if (legacyDoc.id !== legacyUserKey(email)) continue;
+      if (data.role !== "admin" && data.role !== "user") continue;
+      await adminDb.collection("app_users").doc(email).set({ ...data, email, updatedAt: new Date().toISOString() });
+      canonicalIds.add(email);
+      migrated++;
+    }
+    if (migrated > 0) console.log(`[Users] Migrados ${migrated} usuario(s) del formato de clave viejo a app_users/{email}.`);
+  } catch (e: any) {
+    console.warn("[Users] No se pudo migrar usuarios con clave vieja:", e?.message || e);
+  }
+}
+
 async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'user' | null; canSwitchRole: boolean }> {
   if (!email) return { role: null, canSwitchRole: false };
   const cleanEmail = email.toLowerCase().trim();
@@ -800,6 +833,15 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
         const data = docSnap.data();
         const role = data?.role;
         if (role === 'admin' || role === 'user') {
+          return { role, canSwitchRole: role === 'admin' };
+        }
+      }
+      // Registro con la clave de las primeras versiones (p. ej. juan_gmail_com)
+      const legacySnap = await adminDb.collection("app_users").doc(legacyUserKey(cleanEmail)).get();
+      if (legacySnap.exists) {
+        const data = legacySnap.data();
+        const role = data?.role;
+        if ((role === 'admin' || role === 'user') && String(data?.email || '').toLowerCase().trim() === cleanEmail) {
           return { role, canSwitchRole: role === 'admin' };
         }
       }
@@ -848,6 +890,23 @@ async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'us
  * Middleware: Verify Firebase Auth ID Token (JWT) or Google OAuth Access Token
  * and enforce registered user membership. Attaches req.user with decoded identity and RBAC role.
  */
+/**
+ * Client IDs de OAuth de esta app. Un access token de Google solo se acepta si fue emitido
+ * para uno de ellos (aud/azp). Se toman de la config de Firebase y de variables de entorno.
+ */
+function getAllowedOAuthAudiences(): Set<string> {
+  const ids = [
+    firebaseConfigData?.oAuthClientId,
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_OAUTH_CLIENT_ID,
+    process.env.VITE_GOOGLE_CLIENT_ID,
+    ...(process.env.ALLOWED_OAUTH_CLIENT_IDS || "").split(","),
+  ]
+    .map((id) => (id || "").trim())
+    .filter(Boolean);
+  return new Set(ids);
+}
+
 async function authenticateFirebaseUser(
   req: express.Request,
   res: express.Response,
@@ -855,7 +914,8 @@ async function authenticateFirebaseUser(
 ) {
   let authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    const fallbackToken = req.body?.accessToken || (req.query?.accessToken as string);
+    // Solo header o body: un token en la query string queda expuesto en logs, historial y proxies
+    const fallbackToken = req.body?.accessToken;
     if (fallbackToken && typeof fallbackToken === "string" && fallbackToken.trim()) {
       authHeader = `Bearer ${fallbackToken.trim()}`;
     }
@@ -884,12 +944,35 @@ async function authenticateFirebaseUser(
     let decodedName: string | undefined = undefined;
     let decodedPicture: string | undefined = undefined;
 
-    // A. Check if token is a Google OAuth 2.0 Access Token (starts with ya29.)
+    // A. Google OAuth 2.0 Access Token (ya29.*): se valida que haya sido emitido PARA ESTA APP.
+    //    Sin chequear la audiencia, un token que el usuario le dio a cualquier otra aplicación
+    //    serviría acá (token substitution).
     if (idToken.startsWith("ya29.")) {
+      const allowedAudiences = getAllowedOAuthAudiences();
       try {
         const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(idToken)}`);
         if (tokenInfoRes.ok) {
           const tokenInfo = await tokenInfoRes.json();
+          const audience = String(tokenInfo.aud || tokenInfo.azp || "");
+          const emailVerified = String(tokenInfo.email_verified) === "true";
+          if (!allowedAudiences.has(audience)) {
+            console.warn(
+              `[Auth Middleware] Access token rechazado: audiencia "${audience}" no autorizada. ` +
+                "Si es el client ID de esta app, agregalo a ALLOWED_OAUTH_CLIENT_IDS."
+            );
+            return res.status(401).json({
+              success: false,
+              error: "Token de Google no emitido para esta aplicación.",
+              code: "INVALID_TOKEN_AUDIENCE",
+            });
+          }
+          if (!emailVerified) {
+            return res.status(401).json({
+              success: false,
+              error: "El correo de la cuenta de Google no está verificado.",
+              code: "EMAIL_NOT_VERIFIED",
+            });
+          }
           userEmail = (tokenInfo.email || "").toLowerCase().trim();
           decodedUid = tokenInfo.user_id || tokenInfo.sub || userEmail;
         }
@@ -909,6 +992,13 @@ async function authenticateFirebaseUser(
       }
 
       const decodedToken = await adminAuth.verifyIdToken(idToken);
+      if (decodedToken.email_verified !== true) {
+        return res.status(401).json({
+          success: false,
+          error: "El correo de la cuenta no está verificado.",
+          code: "EMAIL_NOT_VERIFIED",
+        });
+      }
       userEmail = (decodedToken.email || "").toLowerCase().trim();
       decodedUid = decodedToken.uid;
       decodedName = decodedToken.name;
@@ -1040,7 +1130,11 @@ async function ensureBootstrapAdmins() {
     } catch (_) {}
   }
 }
-setTimeout(() => ensureBootstrapAdmins().catch(() => {}), 2000);
+setTimeout(() => {
+  ensureBootstrapAdmins()
+    .catch(() => {})
+    .then(() => migrateLegacyUserDocs());
+}, 2000);
 
 // Endpoint: Clear API logs
 app.post("/api/system/clear-logs", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
