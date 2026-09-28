@@ -10,7 +10,7 @@ import {
   limit,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { AuditLogEntry, AuditLogChange, AuditLogAction, AuditLogEntityType } from '../types';
 import { sanitizeForFirestore } from './cloudSync';
 import { authFetch } from './authFetch';
@@ -129,8 +129,12 @@ export async function logAuditEvent(entry: {
   const fullEntry: AuditLogEntry = {
     id: logId,
     timestamp,
-    userEmail: (entry.userEmail || 'admin@isf-argentina.org').toLowerCase().trim(),
-    userName: entry.userName || (entry.userEmail ? entry.userEmail.split('@')[0] : 'Sistema / Admin'),
+    // El autor es siempre la cuenta con la sesión iniciada (las reglas rechazan registros a nombre de otro)
+    userEmail: (auth.currentUser?.email || entry.userEmail || '').toLowerCase().trim(),
+    userName:
+      entry.userName ||
+      (auth.currentUser?.email || entry.userEmail || '').split('@')[0] ||
+      'Sistema',
     action: entry.action,
     actionLabel: entry.actionLabel,
     entityType: entry.entityType,
@@ -289,7 +293,7 @@ export async function clearCentralAuditLogs(user?: { email?: string; name?: stri
     }
 
     // Add initialization entry
-    const email = user?.email || 'admin@isf-argentina.org';
+    const email = auth.currentUser?.email || user?.email || '';
     const name = user?.name || 'Administrador';
 
     await logAuditEvent({

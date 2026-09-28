@@ -90,7 +90,7 @@ export function PaymentProcessModal({
   const standardizedBaseName = expense ? generateDriveFileName(expense, costCenters) : 'ISF-Comprobante';
   const normalizedFileName = `${standardizedBaseName}.${fileExt}`;
 
-  const recipientEmail = expense?.submittedByEmail || 'admin@isf-argentina.org';
+  const recipientEmail = expense?.submittedByEmail || '';
   const recipientName = expense?.submittedByName || 'Colaborador / Solicitante';
   const hasBankData = Boolean(
     expense?.bankDetails?.cbuCvu || expense?.bankDetails?.alias || expense?.bankDetails?.bankName
@@ -353,7 +353,11 @@ export function PaymentProcessModal({
     // 4. Aviso final
     setIsExecuting(false);
     if (!emailOk) {
-      onNotify?.(`⚠️ Pago registrado, pero no se pudo enviar el correo a ${recipientEmail}${emailError ? `: ${emailError}` : '.'}`);
+      onNotify?.(
+        recipientEmail
+          ? `⚠️ Pago registrado, pero no se pudo enviar el correo a ${recipientEmail}${emailError ? `: ${emailError}` : '.'}`
+          : '⚠️ Pago registrado. No se envió correo: el comprobante no tiene el email de quien lo cargó.'
+      );
     }
     onClose();
   };

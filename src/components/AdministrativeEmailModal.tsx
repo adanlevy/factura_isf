@@ -58,7 +58,7 @@ export function AdministrativeEmailModal({
   // Synchronize state when expense or mode or isOpen changes
   useEffect(() => {
     if (expense) {
-      const recipientEmail = expense.submittedByEmail || 'admin@isf-argentina.org';
+      const recipientEmail = expense.submittedByEmail || '';
       const recipientName = expense.submittedByName || 'Colaborador / Destinatario';
 
       const defaultSubject =

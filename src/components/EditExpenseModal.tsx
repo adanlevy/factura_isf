@@ -444,7 +444,7 @@ export function EditExpenseModal({
       });
       if (bankChanged) {
         notifyBankDetailsChange({
-          updatedBy: { email: currentUser?.email || 'admin@isf-argentina.org', name: currentUser?.name || 'Administrador' },
+          updatedBy: { email: currentUser?.email || '', name: currentUser?.name || 'Administrador' },
           targetType: paymentType === 'PAGO_PROVEEDOR' ? 'vendor' : 'user',
           targetName: paymentType === 'PAGO_PROVEEDOR' ? `Proveedor: ${formData.vendor}` : `Colaborador: ${formData.submittedByName || currentUser?.name || 'Usuario'}`,
           bankDetails: bankData,
@@ -541,7 +541,7 @@ export function EditExpenseModal({
                 type="email"
                 value={formData.submittedByEmail || ''}
                 onChange={(e) => setFormData({ ...formData, submittedByEmail: e.target.value })}
-                placeholder="colaborador@isf-argentina.org"
+                placeholder="nombre@dominio.org"
                 className="w-full px-3 py-1.5 rounded-xl border border-indigo-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-white"
               />
             </div>

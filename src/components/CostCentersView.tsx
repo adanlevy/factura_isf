@@ -594,7 +594,7 @@ export function CostCentersView({
             </label>
             <input
               type="text"
-              placeholder="ejemplo1@isf-argentina.org, coordinador@isf-argentina.org"
+              placeholder="persona1@dominio.org, persona2@dominio.org"
               value={newNotifyEmails}
               onChange={(e) => setNewNotifyEmails(e.target.value)}
               className="w-full px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-mono"

@@ -75,9 +75,10 @@ import {
   saveUserCloudPreferences,
   fetchCentralUsers,
   saveCentralUser,
+  findUnregisteredSubmitters,
+  unifyLegacyUserDocs,
   deleteCentralUser,
   subscribeToUsersFirestore,
-  DEFAULT_APP_USERS,
   getLocalUsersCache,
   deduplicateUsers,
   subscribeToRealtimeFirestore,
@@ -174,6 +175,7 @@ export default function App() {
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
+  const legacyUsersUnifiedRef = useRef(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
@@ -471,6 +473,35 @@ export default function App() {
     const unsubscribe = subscribeToDriveSettings(setDriveSettings);
     return () => unsubscribe();
   }, [isFirebaseAuthReady, currentUser?.email]);
+
+  // Unificación de la tabla de usuarios (registros con clave vieja juan_dominio_org -> juan@dominio.org).
+  // La hace el primer Admin que entra en la sesión; si no hay registros viejos, no escribe nada.
+  useEffect(() => {
+    if (!isFirebaseAuthReady || currentUser?.role !== 'admin' || legacyUsersUnifiedRef.current) return;
+    legacyUsersUnifiedRef.current = true;
+    unifyLegacyUserDocs()
+      .then(async (res) => {
+        const total = res.migrated.length + res.removed.length;
+        if (total === 0 && res.failed.length === 0) return;
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'USER_ROLE_CHANGE',
+          actionLabel: 'Unificación de Registros de Usuarios',
+          entityType: 'user',
+          entityId: 'unify-legacy-users',
+          entityName: `${total} registro(s)`,
+          summary:
+            `Se unificaron registros de usuarios con el formato viejo de clave.` +
+            (res.migrated.length ? ` Pasados al formato actual: ${res.migrated.join(', ')}.` : '') +
+            (res.removed.length ? ` Duplicados viejos eliminados: ${res.removed.join(', ')}.` : '') +
+            (res.roleConflicts.length ? ` Con rol distinto en el registro viejo (se conservó el actual): ${res.roleConflicts.join(', ')}.` : '') +
+            (res.failed.length ? ` No se pudieron unificar: ${res.failed.join(', ')}.` : ''),
+        }).catch(() => {});
+        if (total > 0) showToast(`👥 Tabla de usuarios unificada: ${total} registro(s) duplicado(s) o en formato viejo corregido(s).`);
+      })
+      .catch((err) => console.warn('No se pudo unificar la tabla de usuarios:', err));
+  }, [isFirebaseAuthReady, currentUser?.role, currentUser?.email]);
 
   const handleSaveDriveSettings = async (next: DriveSettings): Promise<boolean> => {
     const previous = driveSettings;
@@ -1813,7 +1844,8 @@ export default function App() {
     let emailsSentCount = 0;
     const groups = new Map<string, { name: string; items: Expense[] }>();
     for (const exp of savedExpenses) {
-      const email = (exp.submittedByEmail || 'admin@isf-argentina.org').trim().toLowerCase();
+      const email = (exp.submittedByEmail || '').trim().toLowerCase();
+      if (!email) continue; // sin email de quien lo cargó no hay a quién avisar
       const name = exp.submittedByName || exp.submittedByEmail?.split('@')[0] || 'Solicitante';
       if (!groups.has(email)) groups.set(email, { name, items: [] });
       groups.get(email)!.items.push(exp);
@@ -2103,9 +2135,13 @@ export default function App() {
 
   // --- USER / ROLE MANAGEMENT ACTIONS ---
   const handleAddAppUser = async (newUser: AppUserRecord) => {
+    const previousUsers = appUsers;
     const updatedUsers = [newUser, ...appUsers.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase())];
     setAppUsers(updatedUsers);
-    await saveCentralUser(newUser);
+    if (!(await saveCentralUser(newUser))) {
+      setAppUsers(previousUsers);
+      throw new Error(`No se pudo registrar a "${newUser.email}" (${SAVE_ERROR_HINT}).`);
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -2132,15 +2168,73 @@ export default function App() {
     showToast(`✅ Usuario "${newUser.email}" registrado en Firestore.`);
   };
 
+  // El acceso depende solo de la tabla de usuarios: nunca puede quedar sin administradores
+  const wouldRemoveLastAdmin = (email: string) => {
+    const target = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const admins = appUsers.filter((u) => u.role === 'admin');
+    return target?.role === 'admin' && admins.length <= 1;
+  };
+
+  // Alta en bloque de personas que ya cargaban comprobantes (sin correo de bienvenida: ya usan la app)
+  const handleImportExistingSubmitters = async (people: { email: string; name: string }[]): Promise<number> => {
+    let added = 0;
+    const addedUsers: AppUserRecord[] = [];
+    for (const p of people) {
+      const record: AppUserRecord = {
+        email: p.email.toLowerCase().trim(),
+        name: p.name || p.email.split('@')[0],
+        role: 'user',
+        createdAt: new Date().toISOString(),
+        addedBy: currentUser?.email,
+        notes: 'Alta desde "Personas con comprobantes sin registro"',
+      };
+      if (await saveCentralUser(record)) {
+        added++;
+        addedUsers.push(record);
+      }
+    }
+    if (addedUsers.length > 0) {
+      const addedSet = new Set(addedUsers.map((u) => u.email));
+      setAppUsers((prev) => [...addedUsers, ...prev.filter((u) => !addedSet.has(u.email.toLowerCase()))]);
+      await logAuditEvent({
+        userEmail: currentUser?.email,
+        userName: currentUser?.name,
+        action: 'USER_ROLE_CHANGE',
+        actionLabel: 'Alta de Usuarios en Bloque',
+        entityType: 'user',
+        entityId: 'import-submitters',
+        entityName: `${addedUsers.length} colaborador(es)`,
+        summary: `Se registraron como colaboradores ${addedUsers.length} persona(s) que ya habían cargado comprobantes: ${addedUsers.map((u) => u.email).join(', ')}.`,
+      });
+    }
+    showToast(
+      added === people.length
+        ? `✅ ${added} persona(s) registradas como colaboradores.`
+        : `⚠️ Se registraron ${added} de ${people.length} persona(s) (${SAVE_ERROR_HINT}).`
+    );
+    return added;
+  };
+
   const handleUpdateUserRole = async (email: string, newRole: 'admin' | 'user') => {
     const existing = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
     const oldRole = existing?.role || 'user';
+
+    if (newRole === 'user' && wouldRemoveLastAdmin(email)) {
+      showToast('⚠️ No se puede quitar el último administrador: primero asigná a otra persona como administrador.');
+      return;
+    }
 
     setAppUsers((prev) =>
       prev.map((u) => (u.email.toLowerCase() === email.toLowerCase() ? { ...u, role: newRole } : u))
     );
     const userToSave = existing ? { ...existing, role: newRole } : { email, name: email.split('@')[0], role: newRole };
-    await saveCentralUser(userToSave);
+    if (!(await saveCentralUser(userToSave))) {
+      setAppUsers((prev) =>
+        prev.map((u) => (u.email.toLowerCase() === email.toLowerCase() ? { ...u, role: oldRole } : u))
+      );
+      showToast(`⚠️ No se pudo cambiar el rol de "${email}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -2209,8 +2303,21 @@ export default function App() {
   };
 
   const handleDeleteAppUser = async (email: string) => {
+    if (wouldRemoveLastAdmin(email)) {
+      showToast('⚠️ No se puede eliminar al último administrador: primero asigná a otra persona como administrador.');
+      return;
+    }
+    if (currentUser && currentUser.email.toLowerCase() === email.toLowerCase()) {
+      showToast('⚠️ No podés eliminar tu propio usuario. Pedíselo a otro administrador.');
+      return;
+    }
+    const removed = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
     setAppUsers((prev) => prev.filter((u) => u.email.toLowerCase() !== email.toLowerCase()));
-    await deleteCentralUser(email);
+    if (!(await deleteCentralUser(email))) {
+      if (removed) setAppUsers((prev) => [removed, ...prev.filter((u) => u.email.toLowerCase() !== email.toLowerCase())]);
+      showToast(`⚠️ No se pudo eliminar a "${email}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -2231,7 +2338,11 @@ export default function App() {
     expense: Expense,
     mode: 'REQUEST_BANK_DETAILS' | 'PAYMENT_CONFIRMATION'
   ) => {
-    const to = expense.submittedByEmail || 'admin@isf-argentina.org';
+    const to = expense.submittedByEmail || '';
+    if (!to) {
+      showToast('⚠️ Este comprobante no tiene el email de quien lo cargó: no se puede enviar el pedido.');
+      return;
+    }
     const recipientName = expense.submittedByName || 'Colaborador';
     const timestamp = new Date().toISOString();
 
@@ -2622,6 +2733,8 @@ export default function App() {
               onUpdateUserRole={handleUpdateUserRole}
               onToggleCcAllOutgoingEmails={handleToggleCcAllOutgoingEmails}
               onDeleteUser={handleDeleteAppUser}
+              onFindUnregistered={() => findUnregisteredSubmitters(appUsers.map((u) => u.email))}
+              onImportUsers={handleImportExistingSubmitters}
             />
           )}
 

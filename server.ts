@@ -808,11 +808,13 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
 // ==========================================
 // SERVER-SIDE RBAC & AUTH CONFIGURATION
 // ==========================================
-// Bootstrap admin emails managed in server environment configuration (not hardcoded in client bundle)
+// Los roles salen SOLO de la tabla de usuarios (Firestore app_users). No hay emails fijos en el código.
+// ADMIN_EMAILS (variable de entorno, opcional) sirve únicamente para la instalación inicial: si la
+// tabla todavía no tiene ningún administrador, esas cuentas se dan de alta como admin al iniciar.
 const BOOTSTRAP_ADMIN_EMAILS = (
   process.env.ADMIN_EMAILS ||
   process.env.BOOTSTRAP_ADMIN_EMAILS ||
-  'admin@isf-argentina.org,alevy@isf-argentina.org,finanzas@isf-argentina.org,adanlevy@gmail.com'
+  ''
 )
   .split(',')
   .map((e) => e.trim().toLowerCase())
@@ -823,96 +825,122 @@ function legacyUserKey(email: string): string {
 }
 
 /**
- * Crea el documento canónico app_users/{email} para usuarios registrados con la clave de las
- * primeras versiones (p. ej. juan_gmail_com). Las reglas de Firestore identifican a los usuarios
- * por email: sin esto, un usuario @gmail.com registrado hace tiempo no podría leer datos.
- * No toca los documentos viejos y saltea usuarios dados de baja.
+ * Unifica la tabla de usuarios al iniciar: las primeras versiones guardaban a cada persona con una
+ * clave "limpia" (juan_gmail_com). Si ya existe app_users/{email}, se completa con los datos que le
+ * falten (el rol no se toca) y se borra el viejo; si no existe, se crea con el mismo rol y se borra
+ * el viejo. Así queda un registro por persona.
  */
 async function migrateLegacyUserDocs() {
   if (!adminDb) return;
   try {
-    const deleted = new Set(getDeletedUsersList().map((e) => e.toLowerCase().trim()));
     const snap = await adminDb.collection("app_users").get();
-    const canonicalIds = new Set(snap.docs.map((d) => d.id));
-    let migrated = 0;
-    for (const legacyDoc of snap.docs) {
-      const data = legacyDoc.data() || {};
-      const email = String(data.email || "").toLowerCase().trim();
-      if (!email || legacyDoc.id === email || canonicalIds.has(email) || deleted.has(email)) continue;
-      if (legacyDoc.id !== legacyUserKey(email)) continue;
-      if (data.role !== "admin" && data.role !== "user") continue;
-      await adminDb.collection("app_users").doc(email).set({ ...data, email, updatedAt: new Date().toISOString() });
-      canonicalIds.add(email);
-      migrated++;
+    const byId = new Map(snap.docs.map((d) => [d.id, d.data() || {}]));
+    let unified = 0;
+    for (const [docId, data] of byId) {
+      const email = String((data as any).email || "").toLowerCase().trim();
+      if (!email || docId === email || docId !== legacyUserKey(email)) continue;
+      const canonical = byId.get(email) as any;
+      const batch = adminDb.batch();
+      if (canonical) {
+        const missing: Record<string, unknown> = {};
+        for (const key of ["name", "picture", "notes", "createdAt", "ccAllOutgoingEmails", "addedBy"]) {
+          if (canonical[key] === undefined && (data as any)[key] !== undefined) missing[key] = (data as any)[key];
+        }
+        if (Object.keys(missing).length > 0) batch.set(adminDb.collection("app_users").doc(email), missing, { merge: true });
+      } else {
+        if ((data as any).role !== "admin" && (data as any).role !== "user") continue;
+        batch.set(adminDb.collection("app_users").doc(email), { ...data, email, updatedAt: new Date().toISOString() });
+      }
+      batch.delete(adminDb.collection("app_users").doc(docId));
+      await batch.commit();
+      unified++;
     }
-    if (migrated > 0) console.log(`[Users] Migrados ${migrated} usuario(s) del formato de clave viejo a app_users/{email}.`);
+    if (unified > 0) console.log(`[Users] Unificados ${unified} registro(s) de usuario con clave vieja.`);
   } catch (e: any) {
-    console.warn("[Users] No se pudo migrar usuarios con clave vieja:", e?.message || e);
+    console.warn("[Users] No se pudo unificar la tabla de usuarios:", e?.message || e);
   }
 }
 
-async function resolveRoleForEmail(email: string): Promise<{ role: 'admin' | 'user' | null; canSwitchRole: boolean }> {
+type ResolvedRole = { role: 'admin' | 'user' | null; canSwitchRole: boolean };
+
+// Si el Admin SDK no tiene credenciales, cada intento tarda varios segundos en fallar: tras un
+// fallo se deja de intentar por 5 minutos y se usa directamente el token del usuario.
+let adminDbRetryAt = 0;
+function adminDbUsable(): boolean {
+  return Boolean(adminDb) && Date.now() >= adminDbRetryAt;
+}
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timeout ${ms} ms`)), ms)),
+  ]);
+}
+function markAdminDbFailure(err: any) {
+  adminDbRetryAt = Date.now() + 5 * 60 * 1000;
+  console.warn("[Firestore Admin] No disponible, se reintenta en 5 minutos:", err?.message || err);
+}
+
+// Caché corta (por instancia) para no leer Firestore en cada pedido; quitar a alguien de la tabla
+// le corta el acceso al servidor en menos de un minuto.
+const roleCache = new Map<string, { value: ResolvedRole; at: number }>();
+const ROLE_CACHE_TTL_MS = 30 * 1000;
+
+function roleFromUserDoc(data: any, email: string, docId: string): ResolvedRole | null {
+  const role = data?.role;
+  if (role !== 'admin' && role !== 'user') return null;
+  // Un documento con la clave vieja (p. ej. juan_gmail_com) solo vale si su email es el del usuario
+  if (docId !== email && String(data?.email || '').toLowerCase().trim() !== email) return null;
+  return { role, canSwitchRole: role === 'admin' };
+}
+
+/**
+ * Rol de un usuario según la tabla app_users de Firestore (única fuente de verdad).
+ * 1) Admin SDK; 2) si no está disponible, API REST de Firestore con el ID token del propio usuario
+ * (las reglas le permiten leer su propio registro). Sin registro => sin acceso.
+ */
+async function resolveRoleForEmail(email: string, userIdToken?: string): Promise<ResolvedRole> {
   if (!email) return { role: null, canSwitchRole: false };
   const cleanEmail = email.toLowerCase().trim();
+  const cached = roleCache.get(cleanEmail);
+  if (cached && Date.now() - cached.at < ROLE_CACHE_TTL_MS) return cached.value;
 
-  // 1. Primary: Direct check in Firestore via firebase-admin if available
-  if (adminDb) {
+  const remember = (value: ResolvedRole) => {
+    roleCache.set(cleanEmail, { value, at: Date.now() });
+    return value;
+  };
+  const docIds = Array.from(new Set([cleanEmail, legacyUserKey(cleanEmail)]));
+
+  if (adminDb && adminDbUsable()) {
     try {
-      const docSnap = await adminDb.collection("app_users").doc(cleanEmail).get();
-      if (docSnap.exists) {
-        const data = docSnap.data();
-        const role = data?.role;
-        if (role === 'admin' || role === 'user') {
-          return { role, canSwitchRole: role === 'admin' };
-        }
+      for (const docId of docIds) {
+        const snap = await withTimeout(adminDb.collection("app_users").doc(docId).get(), 4000);
+        const resolved = snap.exists ? roleFromUserDoc(snap.data(), cleanEmail, docId) : null;
+        if (resolved) return remember(resolved);
       }
-      // Registro con la clave de las primeras versiones (p. ej. juan_gmail_com)
-      const legacySnap = await adminDb.collection("app_users").doc(legacyUserKey(cleanEmail)).get();
-      if (legacySnap.exists) {
-        const data = legacySnap.data();
-        const role = data?.role;
-        if ((role === 'admin' || role === 'user') && String(data?.email || '').toLowerCase().trim() === cleanEmail) {
-          return { role, canSwitchRole: role === 'admin' };
-        }
-      }
-    } catch (_) {
-      // Gracefully fall through if IAM permissions are restricted
+      return remember({ role: null, canSwitchRole: false });
+    } catch (err: any) {
+      markAdminDbFailure(err);
     }
   }
 
-  // 2. Secondary: Check in Firestore REST app_users document
-  if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
+  if (userIdToken && !userIdToken.startsWith("ya29.") && firebaseConfigData?.projectId) {
     const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
+    const base = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users`;
     try {
-      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
-      const res = await fetch(docUrl);
-      if (res.ok) {
-        const json = await res.json();
-        const role = json.fields?.role?.stringValue;
-        if (role === 'admin' || role === 'user') {
-          return { role, canSwitchRole: role === 'admin' };
+      for (const docId of docIds) {
+        const res = await fetch(`${base}/${encodeURIComponent(docId)}`, { headers: { Authorization: `Bearer ${userIdToken}` } });
+        if (res.ok) {
+          const resolved = roleFromUserDoc(parseFirestoreDoc(await res.json()), cleanEmail, docId);
+          if (resolved) return remember(resolved);
         }
       }
-    } catch (_) {}
+      return remember({ role: null, canSwitchRole: false });
+    } catch (err: any) {
+      console.warn("[Roles] No se pudo leer la tabla de usuarios:", err?.message);
+    }
   }
 
-  // 3. Check local server app_users cache
-  const localUsers = readCollection<any[]>('app-users', []);
-  const found = localUsers.find((u) => (u.email || '').toLowerCase().trim() === cleanEmail);
-  if (found && (found.role === 'admin' || found.role === 'user')) {
-    return { role: found.role, canSwitchRole: found.role === 'admin' };
-  }
-
-  // 4. Fallback to bootstrap admin emails configured in environment
-  if (BOOTSTRAP_ADMIN_EMAILS.includes(cleanEmail)) {
-    return { role: 'admin', canSwitchRole: true };
-  }
-
-  // 5. Fallback for ISF team members (@isf-argentina.org)
-  if (cleanEmail.endsWith('@isf-argentina.org')) {
-    return { role: 'user', canSwitchRole: false };
-  }
-
+  // No se pudo verificar: sin acceso (no se cachea, para reintentar en el próximo pedido)
   return { role: null, canSwitchRole: false };
 }
 
@@ -1043,7 +1071,7 @@ async function authenticateFirebaseUser(
       });
     }
 
-    const { role, canSwitchRole } = await resolveRoleForEmail(userEmail);
+    const { role, canSwitchRole } = await resolveRoleForEmail(userEmail, idToken);
     if (!role) {
       return res.status(403).json({
         success: false,
@@ -1191,13 +1219,16 @@ async function loadAppDirectory(req: express.Request): Promise<AppDirectory | nu
     return appDirectoryCache.data;
   }
 
-  if (adminDb) {
+  if (adminDb && adminDbUsable()) {
     try {
-      const [ccSnap, driveSnap, usersSnap] = await Promise.all([
-        adminDb.collection("cost_centers").get(),
-        adminDb.collection("app_settings").doc("drive").get(),
-        adminDb.collection("app_users").get(),
-      ]);
+      const [ccSnap, driveSnap, usersSnap] = await withTimeout(
+        Promise.all([
+          adminDb.collection("cost_centers").get(),
+          adminDb.collection("app_settings").doc("drive").get(),
+          adminDb.collection("app_users").get(),
+        ]),
+        6000
+      );
       const data = buildAppDirectory(
         ccSnap.docs.map((d) => d.data()),
         driveSnap.exists ? driveSnap.data() : null,
@@ -1206,7 +1237,7 @@ async function loadAppDirectory(req: express.Request): Promise<AppDirectory | nu
       appDirectoryCache = { data, at: Date.now() };
       return data;
     } catch (err: any) {
-      console.warn("[AppDirectory] Admin SDK no disponible, uso el token del usuario:", err?.message);
+      markAdminDbFailure(err);
     }
   }
 
@@ -1307,71 +1338,35 @@ async function findDriveFilesByName(
   return opts.prefix ? files.filter((f: any) => String(f.name || "").startsWith(name)) : files;
 }
 
-// Endpoint: Resolve user role on server side
-app.post("/api/auth/resolve-role", async (req, res) => {
-  try {
-    const { email } = req.body;
-    const result = await resolveRoleForEmail(email);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Error resolving role' });
-  }
+// Endpoint: rol del usuario autenticado (solo el propio; ya no se puede consultar el de otra persona)
+app.post("/api/auth/resolve-role", authenticateFirebaseUser, (req, res) => {
+  res.json({ role: req.user?.role || null, canSwitchRole: Boolean(req.user?.canSwitchRole) });
 });
 
-// Endpoint: Fetch bootstrap admin list from server config
-app.get("/api/auth/bootstrap-admins", (_req, res) => {
-  res.json({ admins: BOOTSTRAP_ADMIN_EMAILS });
-});
 
-// Helper: Read tombstoned deleted users
-function getDeletedUsersList(): string[] {
-  return readCollection<string[]>("deleted-users", ["finanzas@isf-argentina.org"]);
-}
-
-// Ensure bootstrap admins are seeded into Firestore app_users on server boot
+// Instalación inicial: si la tabla de usuarios no tiene ningún administrador y se configuró
+// ADMIN_EMAILS, esas cuentas se dan de alta como admin. Con al menos un admin, no hace nada.
 async function ensureBootstrapAdmins() {
-  const tombstoned = new Set(getDeletedUsersList());
-  const eligibleAdmins = BOOTSTRAP_ADMIN_EMAILS.filter((e) => !tombstoned.has(e.toLowerCase().trim()));
-
-  if (adminDb) {
-    for (const email of eligibleAdmins) {
-      try {
-        const docRef = adminDb.collection("app_users").doc(email);
-        const docSnap = await docRef.get();
-        if (!docSnap.exists) {
-          await docRef.set({
-            email,
-            name: email.split('@')[0],
-            role: 'admin',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
-      } catch (_) {}
-    }
-  }
-
-  if (!firebaseConfigData?.projectId || !firebaseConfigData?.apiKey) return;
-  const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-  for (const email of eligibleAdmins) {
-    try {
-      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(email)}?key=${firebaseConfigData.apiKey}`;
-      const checkRes = await fetch(docUrl);
-      if (!checkRes.ok) {
-        await fetch(docUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fields: {
-              email: { stringValue: email },
-              name: { stringValue: email.split('@')[0] },
-              role: { stringValue: 'admin' },
-              createdAt: { stringValue: new Date().toISOString() },
-            },
-          }),
+  if (!adminDb || BOOTSTRAP_ADMIN_EMAILS.length === 0) return;
+  try {
+    const existingAdmins = await adminDb.collection("app_users").where("role", "==", "admin").limit(1).get();
+    if (!existingAdmins.empty) return;
+    for (const email of BOOTSTRAP_ADMIN_EMAILS) {
+      const docRef = adminDb.collection("app_users").doc(email);
+      if (!(await docRef.get()).exists) {
+        await docRef.set({
+          email,
+          name: email.split('@')[0],
+          role: 'admin',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          notes: 'Alta inicial desde ADMIN_EMAILS',
         });
+        console.log(`[Users] Alta inicial de administrador: ${email}`);
       }
-    } catch (_) {}
+    }
+  } catch (err: any) {
+    console.warn("[Users] No se pudo verificar la tabla de usuarios para el alta inicial:", err?.message);
   }
 }
 setTimeout(() => {
@@ -1969,7 +1964,7 @@ app.post("/api/data/user-prefs", authenticateFirebaseUser, (req, res) => {
 // 6. APP USERS COLLECTION (Gestión de usuarios y roles - Exclusivo Administrador)
 app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_req, res) => {
   try {
-    const deletedList = readCollection<string[]>("deleted-users", ["finanzas@isf-argentina.org"]);
+    const deletedList = readCollection<string[]>("deleted-users", []);
     let users = readCollection<any[]>("app-users", []).filter(
       (u) => !deletedList.includes((u.email || '').toLowerCase().trim())
     );
@@ -2025,14 +2020,6 @@ app.get("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (_r
       } catch (_) {}
     }
 
-    if (users.length === 0) {
-      const defaultAdmins = [
-        { email: 'alevy@isf-argentina.org', name: 'Adan Levy', role: 'admin', notes: 'Administrador Principal ISF', createdAt: '2026-01-01T00:00:00.000Z' },
-        { email: 'admin@isf-argentina.org', name: 'Administración ISF', role: 'admin', notes: 'Cuenta Administrativa Central', createdAt: '2026-01-01T00:00:00.000Z' },
-      ].filter((adm) => !deletedList.includes(adm.email));
-      users = defaultAdmins;
-      writeCollection("app-users", users);
-    }
     res.json({ success: true, count: users.length, data: users });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -2045,7 +2032,10 @@ app.post("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (r
     if (!user || !user.email) {
       return res.status(400).json({ success: false, error: "Email es requerido para guardar usuario." });
     }
-    const cleanEmail = user.email.toLowerCase().trim();
+    const cleanEmail = String(user.email).toLowerCase().trim();
+    if (user.role !== undefined && user.role !== 'admin' && user.role !== 'user') {
+      return res.status(400).json({ success: false, error: "Rol inválido (admin o user)." });
+    }
 
     // If previously deleted, unmark
     const deletedList = readCollection<string[]>("deleted-users", []);
@@ -2072,25 +2062,7 @@ app.post("/api/data/users", authenticateFirebaseUser, requireAdminRole, async (r
       } catch (_) {}
     }
 
-    // 2. Sync to Firestore REST
-    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
-      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
-      const fields: Record<string, any> = {
-        email: { stringValue: cleanEmail },
-        name: { stringValue: user.name || '' },
-        role: { stringValue: user.role || 'user' },
-        updatedAt: { stringValue: new Date().toISOString() },
-      };
-      if (user.picture) fields.picture = { stringValue: user.picture };
-      if (user.notes) fields.notes = { stringValue: user.notes };
-      if (user.createdAt) fields.createdAt = { stringValue: user.createdAt };
-      await fetch(docUrl, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields }),
-      }).catch(() => {});
-    }
+    roleCache.delete(cleanEmail);
 
     res.json({ success: true, user: { ...user, email: cleanEmail } });
   } catch (err: any) {
@@ -2116,17 +2088,18 @@ app.post("/api/data/users/delete", authenticateFirebaseUser, requireAdminRole, a
       writeCollection("deleted-users", deletedList);
     }
 
+    // Se borra el registro canónico y el de formato viejo (si no, el viejo seguía dando acceso)
     if (adminDb) {
       try {
         await adminDb.collection("app_users").doc(cleanEmail).delete();
+        const legacyRef = adminDb.collection("app_users").doc(legacyUserKey(cleanEmail));
+        const legacySnap = await legacyRef.get();
+        if (legacySnap.exists && String(legacySnap.data()?.email || '').toLowerCase().trim() === cleanEmail) {
+          await legacyRef.delete();
+        }
       } catch (_) {}
     }
-
-    if (firebaseConfigData?.projectId && firebaseConfigData?.apiKey) {
-      const dbId = firebaseConfigData.firestoreDatabaseId || '(default)';
-      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/app_users/${encodeURIComponent(cleanEmail)}?key=${firebaseConfigData.apiKey}`;
-      await fetch(docUrl, { method: 'DELETE' }).catch(() => {});
-    }
+    roleCache.delete(cleanEmail);
 
     res.json({ success: true, email: cleanEmail });
   } catch (err: any) {
@@ -2913,9 +2886,9 @@ app.post(
       return res.status(400).json({ success: false, error: "Demasiados destinatarios en un solo correo." });
     }
 
-    // Los correos salen desde la cuenta institucional: un Colaborador solo puede escribir a la
-    // organización (su propia cuenta, @isf-argentina.org, usuarios habilitados y emails en copia
-    // de los centros de costos). Los Admins pueden escribir a cualquier destinatario (proveedores).
+    // Los correos salen desde la cuenta institucional: un Colaborador solo puede escribir a su propia
+    // cuenta, a usuarios de la tabla de usuarios y a los emails en copia de los centros de costos.
+    // Los Admins pueden escribir a cualquier destinatario (proveedores).
     if (req.user?.role !== "admin") {
       if (bccArray.length > 0) {
         return res.status(403).json({ success: false, error: "No tenés permiso para enviar con copia oculta." });
@@ -2924,7 +2897,6 @@ app.post(
       const notAllowed = allRecipients.filter(
         (e) =>
           e !== req.user?.email &&
-          !e.endsWith("@isf-argentina.org") &&
           !directory?.userEmails.has(e) &&
           !directory?.notifyEmails.has(e)
       );
@@ -2945,7 +2917,7 @@ app.post(
     const ccString = ccArray.join(", ");
     const bccString = bccArray.join(", ");
 
-    // Prioritize Centralized Account (admin@isf-argentina.org) so all emails are dispatched from the central institutional identity
+    // Prioritize Centralized Account (la del refresh token del servidor) so all emails are dispatched from the central institutional identity
     const centralAuth = await getCentralizedGoogleAccessToken();
     const candidateTokens: { token: string; source: string }[] = [];
 

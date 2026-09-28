@@ -5,7 +5,8 @@ import { syncApiLogToCloud } from './apiUsageLogger';
 import { authFetch } from './authFetch';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { auth } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 
 const CUSTOM_CLIENT_ID_KEY = 'isf_custom_google_client_id';
 const DEFAULT_CLIENT_ID =
@@ -34,7 +35,7 @@ export function saveGoogleClientId(clientId: string) {
 
 export const GOOGLE_OAUTH_CLIENT_ID = getGoogleClientId();
 // Scopes de autenticación para usuarios: Únicamente identidad y perfil básico.
-// Todas las operaciones de Google Drive y Gmail se realizan de forma centralizada en el servidor en nombre de admin@isf-argentina.org.
+// Todas las operaciones de Google Drive y Gmail se realizan de forma centralizada en el servidor en nombre de la cuenta institucional central (la del refresh token).
 export const GOOGLE_SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -664,11 +665,10 @@ export async function sendReceiptUploadConfirmationEmail(params: {
 
   // Determine recipient email and submitter name
   const firstExpense = expenses[0];
-  const recipientEmail =
-    customRecipientEmail ||
-    firstExpense.submittedByEmail ||
-    currentUser?.email ||
-    'admin@isf-argentina.org';
+  const recipientEmail = customRecipientEmail || firstExpense.submittedByEmail || currentUser?.email || '';
+  if (!recipientEmail) {
+    return { success: false, error: 'No hay destinatario para la confirmación.' };
+  }
 
   const recipientName =
     firstExpense.submittedByName ||
@@ -889,7 +889,23 @@ export async function notifyBankDetailsChange(params: {
     return { success: false, error: 'Sin datos bancarios para notificar.' };
   }
 
-  const recipients = ['admin@isf-argentina.org', 'bpaton@isf-argentina.org'];
+  // Destinatarios: los administradores de la tabla de usuarios (sin emails fijos en el código)
+  let recipients: string[] = [];
+  try {
+    const admins = await getDocs(query(collection(db, 'app_users'), where('role', '==', 'admin')));
+    recipients = Array.from(
+      new Set(
+        admins.docs
+          .map((d) => String(d.data().email || '').toLowerCase().trim())
+          .filter((e) => e && e !== (updatedBy.email || '').toLowerCase().trim())
+      )
+    );
+  } catch (err) {
+    console.warn('[Bank alert] No se pudo leer la lista de administradores:', err);
+  }
+  if (recipients.length === 0) {
+    return { success: false, error: 'No hay administradores a quienes avisar.' };
+  }
   const targetTypeLabel =
     targetType === 'user'
       ? 'Perfil de Colaborador'
@@ -978,10 +994,10 @@ export async function sendPaymentReversalEmail(params: {
 }> {
   const { expense, costCenters, appUsers, currentUser, accessToken, reversalReason } = params;
 
-  const recipientEmail =
-    expense.submittedByEmail ||
-    currentUser?.email ||
-    'admin@isf-argentina.org';
+  const recipientEmail = expense.submittedByEmail || currentUser?.email || '';
+  if (!recipientEmail) {
+    return { success: false, error: 'El comprobante no tiene el email de quien lo cargó.' };
+  }
 
   const recipientName =
     expense.submittedByName ||

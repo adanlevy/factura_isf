@@ -13,36 +13,24 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
 
-    function isOrgMember() {
-      return isSignedIn() && request.auth.token.email.lower().matches('.*@isf-argentina[.]org$');
-    }
-
     function getUserData() {
       return get(/databases/$(database)/documents/app_users/$(userEmail())).data;
     }
 
-    function isBootstrapAdmin() {
-      return isSignedIn() && request.auth.token.email.lower() in [
-        'admin@isf-argentina.org',
-        'alevy@isf-argentina.org',
-        'adanlevy@gmail.com'
-      ];
+    // El acceso sale SOLO de la tabla de usuarios (app_users/{email}): no hay emails fijos ni acceso
+    // automático por dominio. Quitar a alguien de la tabla le quita el acceso.
+    function hasRole(roles) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/app_users/$(userEmail())) &&
+        getUserData().get('role', '') in roles;
     }
 
     function isAdmin() {
-      return isBootstrapAdmin() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/app_users/$(userEmail())) &&
-        getUserData().role == 'admin'
-      );
+      return hasRole(['admin']);
     }
 
     function isColaborador() {
-      return isBootstrapAdmin() || isOrgMember() || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/app_users/$(userEmail())) &&
-        (getUserData().role == 'user' || getUserData().role == 'admin')
-      );
+      return hasRole(['user', 'admin']);
     }
 
     // Default deny for all unspecified collections and unauthenticated visitors
@@ -78,6 +66,14 @@ service cloud.firestore {
              (data.get('userEmail', '') is string && data.get('userEmail', '').lower() == userEmail());
     }
 
+    // Alta: el comprobante tiene que quedar a nombre de quien lo carga (sin un segundo dueño distinto)
+    function isNewExpenseOwner(data) {
+      return data.get('submittedByEmail', '') is string &&
+        data.get('submittedByEmail', '').lower() == userEmail() &&
+        (!data.keys().hasAny(['userEmail']) ||
+          (data.userEmail is string && data.userEmail.lower() == userEmail()));
+    }
+
     function isPaidExpense(data) {
       return data.get('reimbursementStatus', '') == 'REIMBURSED';
     }
@@ -93,6 +89,10 @@ service cloud.firestore {
       return isExpenseOwner(resource.data) &&
         // el dueño no puede cambiar de dueño (evita adueñarse de comprobantes ajenos)
         !changed.hasAny(['submittedByEmail', 'userEmail']) &&
+        // un gasto con tarjeta corporativa / débito (ya pagado por la organización) no puede
+        // convertirse en reintegro: solo Administración cambia su tipo o estado
+        !(resource.data.get('reimbursementStatus', '') == 'NOT_APPLICABLE' &&
+          changed.hasAny(['reimbursementStatus', 'paymentType', 'reimbursable'])) &&
         (
           // pendiente: puede editar datos, pero nunca liquidarlo ni tocar campos de pago
           (!isPaidExpense(resource.data) && !isPaidExpense(request.resource.data) && !changed.hasAny(paymentFields())) ||
@@ -109,7 +109,7 @@ service cloud.firestore {
       // set(merge) sobre un documento borrado también es un 'create', por eso se chequea el tombstone.
       allow create: if isColaborador() && !isTombstoned(expenseId) && (
         isAdmin() || (
-          isExpenseOwner(request.resource.data) &&
+          isNewExpenseOwner(request.resource.data) &&
           !isPaidExpense(request.resource.data) &&
           !request.resource.data.keys().hasAny(paymentFields())
         )
@@ -175,15 +175,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // User preferences:
-    // - Colaboradores and Admins can read and write preferences
-    match /user_preferences/{prefId} {
-      allow read, write: if isSignedIn();
-    }
-
-    // Clave de documento que usaban las primeras versiones de la app (p. ej. juan_gmail_com)
+    // Clave de documento que usaban las primeras versiones de la app (p. ej. juan_gmail_com).
+    // También es la clave de las preferencias de cada usuario.
     function legacyUserKey() {
       return userEmail().replace('[^a-zA-Z0-9_-]', '_');
+    }
+
+    // Preferencias: cada usuario habilitado solo lee y escribe las suyas
+    match /user_preferences/{prefId} {
+      allow read, write: if isColaborador() && prefId == legacyUserKey();
     }
 
     function legacyUserDoc() {
@@ -206,8 +206,8 @@ service cloud.firestore {
 
     // Usuarios y roles (app_users):
     // - Colaboradores y Admins leen el directorio; cada uno puede leer su propio registro
-    // - Alta: Admins (cualquier dominio: @gmail.com, etc.), un miembro verificado de @isf-argentina.org
-    //   registrándose a sí mismo con rol 'user', o la migración de un usuario con registro en formato viejo
+    // - Alta: solo Admins (cualquier dominio: @gmail.com, etc.) o la migración de un usuario con
+    //   registro en formato viejo. Nadie se auto-registra.
     // - Auto-actualización: solo nombre/foto/fecha; nunca rol ni copia global (ccAllOutgoingEmails)
     match /app_users/{userDocId} {
       allow read: if isColaborador() ||
@@ -215,12 +215,7 @@ service cloud.firestore {
         // su propio registro en formato viejo (para poder migrarlo al iniciar sesión)
         (isSignedIn() && userDocId == legacyUserKey() && resource != null &&
           resource.data.get('email', '') is string && resource.data.get('email', '').lower() == userEmail());
-      allow create: if isAdmin() || isLegacyUserMigration(userDocId) || (
-        isOrgMember() &&
-        userDocId == userEmail() &&
-        request.resource.data.get('role', '') == 'user' &&
-        request.resource.data.keys().hasOnly(['email', 'name', 'picture', 'role', 'createdAt', 'updatedAt'])
-      );
+      allow create: if isAdmin() || isLegacyUserMigration(userDocId);
       allow delete: if isAdmin();
       allow update: if isAdmin() || (
         isColaborador() &&
@@ -229,30 +224,35 @@ service cloud.firestore {
       );
     }
 
-    // Audit logs:
-    // - Admins can read full audit logs
-    // - Only Colaboradores can append audit entries
-    // - Only Admins can delete or alter audit history
+    // Log de cambios (auditoría):
+    // - Solo Admins lo leen
+    // - Cada registro queda a nombre de quien lo escribe (no se puede registrar a nombre de otro)
+    // - Nadie lo modifica; solo un Admin puede vaciarlo
     match /audit_logs/{logId} {
       allow read: if isAdmin();
-      allow create: if isColaborador();
-      allow update, delete: if isAdmin();
+      allow create: if isColaborador() && request.resource.data.get('userEmail', '') == userEmail();
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
-    // API usage logs:
-    // - Admins can read API logs and consumption metrics
-    // - Only Colaboradores can record API calls
-    // - Only Admins can reset or delete logs
+    // Consumo de APIs:
+    // - Solo Admins lo leen
+    // - Un registro, si indica usuario, tiene que ser el de quien lo escribe
+    // - Nadie lo modifica; solo un Admin puede vaciarlo
     match /api_usage_logs/{logId} {
       allow read: if isAdmin();
-      allow create: if isColaborador();
-      allow update, delete: if isAdmin();
+      allow create: if isColaborador() && (
+        !request.resource.data.keys().hasAny(['userEmail']) ||
+        request.resource.data.userEmail == userEmail()
+      );
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
-    // System health diagnostics:
-    // - Colaboradores can read and write ping telemetry
+    // Diagnóstico de conexión: la app solo lo lee
     match /system_health/{docId} {
-      allow read, write: if isColaborador();
+      allow read: if isColaborador();
+      allow write: if isAdmin();
     }
   }
 }
