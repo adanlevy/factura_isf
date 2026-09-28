@@ -30,22 +30,7 @@ import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFil
 import { sanitizeCostCenter } from './helpers';
 import { authFetch } from './authFetch';
 
-export const DEFAULT_APP_USERS: AppUserRecord[] = [
-  {
-    email: 'alevy@isf-argentina.org',
-    name: 'Adan Levy',
-    role: 'admin',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    notes: 'Administrador Principal ISF',
-  },
-  {
-    email: 'admin@isf-argentina.org',
-    name: 'Administración ISF',
-    role: 'admin',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    notes: 'Cuenta Administrativa Central',
-  },
-];
+// No hay usuarios fijos en el código: la tabla de usuarios (Firestore app_users) es la única fuente.
 
 const USERS_CACHE_KEY = 'isf_app_users_cache_v2';
 const DELETED_USERS_KEY = 'isf_deleted_user_emails_v1';
@@ -60,9 +45,7 @@ export function getDeletedUsersSet(): Set<string> {
       }
     }
   } catch (_) {}
-  // Pre-seed with finanzas@isf-argentina.org since user deleted it
-  const defaultDeleted = new Set<string>(['finanzas@isf-argentina.org']);
-  return defaultDeleted;
+  return new Set<string>();
 }
 
 export function markUserAsDeleted(email: string): void {
@@ -116,7 +99,7 @@ export function getLocalUsersCache(): AppUserRecord[] {
       }
     }
   } catch (_) {}
-  return deduplicateUsers(DEFAULT_APP_USERS);
+  return [];
 }
 
 export function saveLocalUsersCache(users: AppUserRecord[]): void {
@@ -1439,7 +1422,8 @@ export async function saveCentralCategories(categories: string[]): Promise<boole
 export async function fetchUserCloudPreferences(userEmail: string): Promise<UserPreferencesPayload | null> {
   if (!userEmail) return null;
   try {
-    const safeKey = userEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    // La clave es el email en minúsculas con símbolos reemplazados (las reglas exigen que sea la propia)
+    const safeKey = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
     const docRef = doc(db, 'user_preferences', safeKey);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
@@ -1454,7 +1438,7 @@ export async function fetchUserCloudPreferences(userEmail: string): Promise<User
 export async function saveUserCloudPreferences(userEmail: string, preferences: UserPreferencesPayload): Promise<boolean> {
   if (!userEmail) return false;
   try {
-    const safeKey = userEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeKey = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
     const docRef = doc(db, 'user_preferences', safeKey);
     await setDoc(docRef, sanitizeForFirestore({ ...preferences, email: userEmail }), { merge: true });
 
@@ -1529,16 +1513,6 @@ export async function fetchCentralUsers(): Promise<AppUserRecord[]> {
     }
   } catch (_) {}
 
-  // 4. Default seed if completely empty
-  if (usersMap.size === 0) {
-    for (const u of DEFAULT_APP_USERS) {
-      const key = u.email.toLowerCase().trim();
-      if (!deleted.has(key)) {
-        usersMap.set(key, u);
-      }
-    }
-  }
-
   const result = Array.from(usersMap.values());
   saveLocalUsersCache(result);
   return result;
@@ -1587,8 +1561,34 @@ export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn('[Firestore] Notice saving user record to Firestore:', e);
-    return true;
+    return false;
   }
+}
+
+/**
+ * Personas que cargaron comprobantes pero no están en la tabla de usuarios (p. ej. cuentas
+ * @isf-argentina.org que antes entraban automáticamente). Solo Admin: recorre todos los comprobantes.
+ */
+export async function findUnregisteredSubmitters(
+  registeredEmails: string[]
+): Promise<{ email: string; name: string; count: number; lastDate?: string }[]> {
+  const registered = new Set(registeredEmails.map((e) => e.toLowerCase().trim()));
+  const snap = await getDocs(collection(db, 'expenses'));
+  const found = new Map<string, { email: string; name: string; count: number; lastDate?: string }>();
+  snap.forEach((d) => {
+    const data = d.data() as Expense;
+    const email = String(data.submittedByEmail || '').toLowerCase().trim();
+    if (!email || !email.includes('@') || registered.has(email)) return;
+    const prev = found.get(email);
+    const date = data.createdAt || data.date;
+    found.set(email, {
+      email,
+      name: prev?.name || data.submittedByName || email.split('@')[0],
+      count: (prev?.count || 0) + 1,
+      lastDate: prev?.lastDate && date && prev.lastDate > date ? prev.lastDate : date || prev?.lastDate,
+    });
+  });
+  return Array.from(found.values()).sort((a, b) => b.count - a.count);
 }
 
 export async function deleteCentralUser(email: string): Promise<boolean> {
@@ -1625,7 +1625,7 @@ export async function deleteCentralUser(email: string): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn('[Firestore] Notice deleting user record from Firestore:', e);
-    return true;
+    return false;
   }
 }
 
@@ -1678,9 +1678,15 @@ async function migrateLegacyUserDoc(cleanEmail: string, legacy: AppUserRecord): 
   }
 }
 
+/**
+ * Rol del usuario según la tabla de usuarios (Firestore app_users).
+ * - Devuelve el rol si está registrado, o null si NO está en la tabla (sin acceso).
+ * - Lanza un error si no se pudo verificar (sin conexión): así un corte de red no cierra la sesión.
+ */
 export async function resolveUserRoleFromEmail(email: string): Promise<'admin' | 'user' | null> {
   const cleanEmail = (email || '').toLowerCase().trim();
   if (!cleanEmail) return null;
+  let firestoreChecked = false;
 
   // 1. Direct Firestore check (by clean email document ID)
   try {
@@ -1704,6 +1710,7 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
         }
       }
     }
+    firestoreChecked = true;
   } catch (e) {
     console.warn('[Firestore] Cloud check note, resolving via server:', e);
   }
@@ -1720,13 +1727,16 @@ export async function resolveUserRoleFromEmail(email: string): Promise<'admin' |
       if (json.role === 'admin' || json.role === 'user') {
         return json.role;
       }
+      return null;
     }
+    // 403 = el servidor verificó que no está en la tabla de usuarios
+    if (res.status === 403 || res.status === 401) return null;
   } catch (err) {
     console.warn('[Server Auth] Role check error:', err);
   }
 
-  // If not found in the authorized database or server configuration, return null (unauthorized)
-  return null;
+  if (firestoreChecked) return null;
+  throw new Error('No se pudo verificar el usuario (sin conexión). Se mantiene la sesión actual.');
 }
 
 export { testFirestoreConnection };

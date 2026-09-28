@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Datos locales del servidor (espejo/caché por instancia): no se versionan
+data/

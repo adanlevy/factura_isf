@@ -26,7 +26,12 @@ interface AdminUsersViewProps {
   onUpdateUserRole: (email: string, newRole: 'admin' | 'user') => Promise<void> | void;
   onToggleCcAllOutgoingEmails?: (email: string, ccAll: boolean) => Promise<void> | void;
   onDeleteUser: (email: string) => Promise<void> | void;
+  /** Personas que cargaron comprobantes y no están en la tabla (ya no tienen acceso) */
+  onFindUnregistered?: () => Promise<{ email: string; name: string; count: number; lastDate?: string }[]>;
+  onImportUsers?: (people: { email: string; name: string }[]) => Promise<number>;
 }
+
+type UnregisteredPerson = { email: string; name: string; count: number; lastDate?: string };
 
 export function AdminUsersView({
   users,
@@ -35,14 +40,52 @@ export function AdminUsersView({
   onUpdateUserRole,
   onToggleCcAllOutgoingEmails,
   onDeleteUser,
+  onFindUnregistered,
+  onImportUsers,
 }: AdminUsersViewProps) {
+  const [unregistered, setUnregistered] = useState<UnregisteredPerson[] | null>(null);
+  const [selectedToImport, setSelectedToImport] = useState<Set<string>>(new Set());
+  const [isScanning, setIsScanning] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const handleScanUnregistered = async () => {
+    if (!onFindUnregistered) return;
+    setIsScanning(true);
+    setScanError(null);
+    try {
+      const list = await onFindUnregistered();
+      setUnregistered(list);
+      setSelectedToImport(new Set(list.map((p) => p.email)));
+    } catch (err: any) {
+      setScanError(err?.message || 'No se pudieron revisar los comprobantes.');
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleImportSelected = async () => {
+    if (!onImportUsers || !unregistered) return;
+    const people = unregistered.filter((p) => selectedToImport.has(p.email));
+    if (people.length === 0) return;
+    setIsImporting(true);
+    try {
+      await onImportUsers(people);
+      const remaining = unregistered.filter((p) => !selectedToImport.has(p.email));
+      setUnregistered(remaining);
+      setSelectedToImport(new Set());
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState<'admin' | 'user'>('admin');
+  const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
   const [newCcAllOutgoing, setNewCcAllOutgoing] = useState(false);
   const [newNotes, setNewNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -86,7 +129,7 @@ export function AdminUsersView({
       // Reset form
       setNewEmail('');
       setNewName('');
-      setNewRole('admin');
+      setNewRole('user');
       setNewCcAllOutgoing(false);
       setNewNotes('');
       setIsAddingUser(false);
@@ -174,7 +217,7 @@ export function AdminUsersView({
                 <input
                   type="email"
                   required
-                  placeholder="ejemplo@isf-argentina.org"
+                  placeholder="nombre@dominio.org"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden font-medium"
@@ -275,13 +318,87 @@ export function AdminUsersView({
         </form>
       )}
 
+      {/* Personas que cargaron comprobantes y no están en la tabla */}
+      {onFindUnregistered && onImportUsers && (
+        <div id="unregistered-submitters-card" className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs text-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <UserCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-slate-900">Personas con comprobantes pero sin registro</p>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Solo entran las personas de esta tabla. Si alguien cargaba comprobantes y ya no puede entrar
+                  (por ejemplo, cuentas @isf-argentina.org que antes entraban automáticamente), buscalo acá y dalo de alta como colaborador.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleScanUnregistered}
+              disabled={isScanning}
+              className="shrink-0 px-3.5 py-2 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 disabled:opacity-60 flex items-center gap-1.5"
+            >
+              {isScanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              {isScanning ? 'Revisando comprobantes...' : 'Buscar personas sin registro'}
+            </button>
+          </div>
+
+          {scanError && <p className="text-rose-600 font-semibold">⚠️ {scanError}</p>}
+
+          {unregistered && unregistered.length === 0 && (
+            <p className="text-emerald-700 font-semibold flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Todas las personas que cargaron comprobantes están en la tabla.
+            </p>
+          )}
+
+          {unregistered && unregistered.length > 0 && (
+            <div className="space-y-2">
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
+                {unregistered.map((p) => (
+                  <label key={p.email} className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedToImport.has(p.email)}
+                      onChange={(e) =>
+                        setSelectedToImport((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(p.email);
+                          else next.delete(p.email);
+                          return next;
+                        })
+                      }
+                      className="rounded border-slate-300 text-indigo-600"
+                    />
+                    <span className="flex-1 min-w-0">
+                      <span className="font-semibold text-slate-800 block truncate">{p.name}</span>
+                      <span className="text-slate-500 block truncate">{p.email}</span>
+                    </span>
+                    <span className="text-slate-500 shrink-0">{p.count} comprobante(s)</span>
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={handleImportSelected}
+                disabled={isImporting || selectedToImport.size === 0}
+                className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                Dar de alta como colaboradores ({selectedToImport.size})
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Explanatory Info Card */}
       <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-xs text-indigo-950 flex items-start gap-3">
         <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
         <div className="space-y-1">
           <p className="font-bold">¿Cómo funciona el acceso de usuarios y administradores?</p>
           <p className="text-[11px] text-indigo-800 leading-relaxed">
-            Cuando cualquier miembro del equipo ingresa con su cuenta de Google, la aplicación consulta esta lista en tiempo real.
+            <strong>Solo pueden entrar las personas de esta tabla</strong> (no hay accesos fijos ni automáticos por dominio). Quitar a alguien le quita el acceso.
+            Cuando alguien ingresa con su cuenta de Google, la aplicación consulta esta lista en tiempo real.
             Los usuarios con rol <strong>Administrador</strong> tienen acceso completo a la pestaña de <em>Gestión de Pagos, Proveedores, Categorías, Centros de Costo</em> y a este panel.
             Los usuarios con rol <strong>Colaborador</strong> acceden exclusivamente a cargar sus comprobantes y ver el estado de sus reintegros.
           </p>

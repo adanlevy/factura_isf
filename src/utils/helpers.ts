@@ -599,8 +599,7 @@ export function findVendorByCuitOrName(
 }
 
 /**
- * Sanitiza un Centro de Costos, limpiando emails residuales (como edeolmos@isf-argentina.org)
- * de nombres, carpetas o URLs.
+ * Sanitiza un Centro de Costos, limpiando emails residuales de nombres, carpetas o URLs.
  */
 export function sanitizeCostCenter(cc: CostCenter): CostCenter {
   if (!cc) return cc;
@@ -608,8 +607,7 @@ export function sanitizeCostCenter(cc: CostCenter): CostCenter {
   const removeUnwanted = (str?: string) => {
     if (!str || typeof str !== 'string') return '';
     return str
-      .replace(/edeolmos@isf-argentina\.org/gi, '')
-      .replace(/[a-zA-Z0-9._%+-]+@isf-argentina\.org/gi, '')
+      .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
       .replace(/\s*-\s*$/, '')
       .replace(/^\s*-\s*/, '')
       .trim();
@@ -624,7 +622,7 @@ export function sanitizeCostCenter(cc: CostCenter): CostCenter {
   }
 
   let driveUrl = cc.driveUrl;
-  if (driveUrl && (driveUrl.toLowerCase().includes('edeolmos') || driveUrl.includes('@'))) {
+  if (driveUrl && driveUrl.includes('@')) {
     driveUrl = `https://drive.google.com/drive/search?q=${encodeURIComponent(driveFolder)}`;
   }
 

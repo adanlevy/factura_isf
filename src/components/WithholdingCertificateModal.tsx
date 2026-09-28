@@ -88,7 +88,7 @@ export function WithholdingCertificateModal({
   // Initialize or reset state
   useEffect(() => {
     if (expense && isOpen) {
-      setRecipientEmail(expense.submittedByEmail || 'admin@isf-argentina.org');
+      setRecipientEmail(expense.submittedByEmail || '');
       setSendEmail(true);
       setCustomNotes('');
       if (expense.withholdingCertificateImage) {

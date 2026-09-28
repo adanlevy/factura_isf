@@ -268,7 +268,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
               <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron.</li>
               <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
-              <li><strong>Usuarios / Roles:</strong> habilitar personas, asignar rol y CC global; alta con correo de bienvenida.</li>
+              <li><strong>Usuarios / Roles:</strong> la única fuente de acceso. Habilitar personas, asignar rol y CC global; alta con correo de bienvenida. «Buscar personas sin registro» da de alta en bloque a quienes ya cargaban comprobantes. No se puede quitar al último administrador.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>
             </ul>
           </>
@@ -310,11 +310,11 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
         node: (
           <>
             <ul className="list-disc pl-5 space-y-1 text-slate-600">
-              <li><strong>Acceso restringido:</strong> solo entran los correos habilitados.</li>
+              <li><strong>Acceso restringido:</strong> solo entran las personas de la tabla de Usuarios / Roles (no hay accesos fijos ni automáticos por dominio). Quitar a alguien de la tabla le quita el acceso.</li>
               <li><strong>Datos bancarios:</strong> se usan solo para reintegros y transferencias. No se venden ni ceden a terceros.</li>
               <li><strong>Permisos de Google mínimos</strong> para los usuarios; las operaciones sobre Drive/Gmail las hace el servidor con la cuenta institucional.</li>
               <li><strong>Trazabilidad:</strong> cada cambio queda en el Log de Cambios, registrado con la cuenta de quien lo hizo.</li>
-              <li><strong>Correos institucionales:</strong> un colaborador solo puede enviar correos dentro de la organización (su cuenta, @isf-argentina.org y los emails en copia de los centros de costos); los correos a proveedores los envía Administración.</li>
+              <li><strong>Correos institucionales:</strong> un colaborador solo puede enviar correos a su cuenta, a usuarios de la tabla y a los emails en copia de los centros de costos; los correos a proveedores los envía Administración.</li>
               <li><strong>Archivos en Drive:</strong> solo se tocan archivos de las carpetas registradas en la app, y nunca se borran definitivamente: van a la papelera de Drive.</li>
             </ul>
             <p className="text-slate-500 text-[11px]">Contacto institucional: <a href="mailto:admin@isf-argentina.org" className="text-indigo-600 font-semibold hover:underline">admin@isf-argentina.org</a></p>
@@ -328,7 +328,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
         node: (
           <div className="space-y-2.5">
             {[
-              ['No puedo iniciar sesión / «Acceso denegado»', 'Tu correo no está habilitado. Pedile a un administrador que te agregue en Usuarios / Roles.', false],
+              ['No puedo iniciar sesión / «Acceso denegado»', 'Tu correo no está en la tabla de usuarios (también las cuentas @isf-argentina.org tienen que estar). Pedile a un administrador que te agregue en Usuarios / Roles.', false],
               ['No puedo editar (aparece un candado)', 'El comprobante ya fue pagado y queda bloqueado. Administración puede revertir el pago y luego editarlo.', false],
               ['La IA no detectó monto o fecha', 'La fila queda marcada «Falta Monto o Fecha». Completalos a mano y guardá, o usá «Reintentar».', false],
               ['Aviso «no es CUIT ISF»', 'El comprobante no figura a nombre de ISF. Verificá el destinatario; podés continuar con «Aceptar» si corresponde.', false],

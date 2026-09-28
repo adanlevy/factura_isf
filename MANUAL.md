@@ -318,12 +318,16 @@ La pestaña **"Centro de Costos"** gestiona las **siglas** y su vínculo con **c
 ### 7.10 Usuarios y Roles
 
 La pestaña **"Usuarios / Roles"** administra quién puede entrar y con qué permisos.
-- **Habilitar Usuario / Admin:** *Correo (Google)* obligatorio, *Nombre*, **Rol** (Administrador / Finanzas o Colaborador / Rendidor) y opción **"Poner en copia en emails salientes"** (CC global).
+- **Solo entran las personas de esta tabla.** No hay administradores fijos en el código ni acceso automático por dominio: una cuenta @isf-argentina.org también tiene que estar en la tabla.
+- **Habilitar Usuario / Admin:** *Correo (Google)* obligatorio, *Nombre*, **Rol** (por defecto Colaborador / Rendidor; o Administrador / Finanzas) y opción **"Poner en copia en emails salientes"** (CC global).
 - **Tabla:** cada usuario con su rol (botones **Admin** / **Colaborador** que cambian el rol al instante), el toggle de CC en emails, notas y fecha.
 - Al dar de alta un usuario se le envía un **correo de bienvenida** automático.
-- **Eliminar** un usuario le quita el acceso (volvería a entrar como colaborador solo si un admin lo rehabilita).
+- **Eliminar** un usuario le quita el acceso de inmediato (en la app y en el servidor, en menos de un minuto). Solo vuelve a entrar si un admin lo agrega de nuevo.
+- **Protección:** no se puede quitar ni degradar al **último administrador**, ni eliminar tu propio usuario.
+- **Personas con comprobantes pero sin registro:** el botón **"Buscar personas sin registro"** revisa todos los comprobantes y lista a quienes los cargaron y no están en la tabla (por ejemplo, cuentas @isf-argentina.org que antes entraban automáticamente). Se eligen y se dan de alta como colaboradores con un clic (sin correo de bienvenida).
+- **Alertas de cambios bancarios:** cuando alguien carga o cambia datos bancarios, el aviso se envía a **todos los administradores** de la tabla.
 
-> **Administradores predefinidos** (siempre con acceso, aunque no figuren en la lista): `admin@isf-argentina.org`, `alevy@isf-argentina.org`, `finanzas@isf-argentina.org` y la cuenta Google del propietario técnico.
+> **Instalación inicial:** si la tabla no tiene ningún administrador, el servidor da de alta como admin las cuentas indicadas en la variable de entorno `ADMIN_EMAILS` (separadas por coma). Con al menos un admin en la tabla, esa variable no tiene efecto.
 
 ### 7.11 Sistema y Métricas
 
@@ -360,7 +364,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - Cada **centro de costos** tiene su **carpeta propia** en Drive, donde se archivan las **facturas y tickets**.
 - Los **comprobantes de pago** y **certificados de retención** van todos a una **carpeta aparte** ("Comprobantes de Pago y Retenciones"), configurada en la pestaña Centro de Costos (§7.9).
 - **Nomenclatura de archivos:** `SIGLA-Nombre Solicitante-AAAAMMDD-Monto.ext` (ej. `GPA-Juan Perez-20260514-15400.pdf`). Los comprobantes de pago llevan el sufijo `-ComprobantePago-` y los certificados `-CertificadoRetencion-`.
-- Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (`admin@isf-argentina.org`), usando un *refresh token* guardado en el servidor. Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
+- Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (la del *refresh token* guardado en el servidor). Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
 
 ### 8.3 Correos (Gmail API)
 - Todos los correos son plantillas HTML institucionales, enviadas priorizando la cuenta central para mantener la identidad de ISF.
@@ -379,11 +383,11 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 
 ## 9. Seguridad y privacidad
 
-- **Acceso restringido:** solo entran los correos habilitados. El control de roles se hace a nivel de aplicación (colección `app_users`).
+- **Acceso restringido:** solo entran las personas de la **tabla de usuarios** (colección `app_users`). No hay emails fijos en el código ni acceso por dominio; las reglas de Firestore y el servidor consultan esa tabla.
 - **Datos bancarios:** se usan exclusivamente para reintegros y transferencias. La política de privacidad de la app aclara que **no se venden ni ceden** datos personales a terceros.
 - **Permisos de Google mínimos** para los usuarios; las operaciones sensibles (Drive/Gmail) las hace el servidor con la cuenta institucional.
 - **Trazabilidad:** cada cambio relevante queda en el Log de Cambios y cada llamada a API en la auditoría del sistema. El servidor registra el autor según la cuenta con la que se inició sesión (no se puede registrar a nombre de otra persona).
-- **Correos institucionales:** salen de la cuenta central. Un **colaborador** solo puede enviar a destinatarios de la organización: su propia cuenta, direcciones `@isf-argentina.org`, usuarios habilitados y los emails en copia de los centros de costos. Los correos a proveedores u otros externos los envía **Administración**. Hay un límite de envíos por hora por usuario.
+- **Correos institucionales:** salen de la cuenta central. Un **colaborador** solo puede enviar a su propia cuenta, a usuarios de la tabla de usuarios y a los emails en copia de los centros de costos. Los correos a proveedores u otros externos los envía **Administración**. Hay un límite de envíos por hora por usuario.
 - **Archivos en Google Drive:** el servidor solo modifica archivos que estén en las **carpetas registradas** (centros de costos y carpeta de Comprobantes de Pago y Retenciones). Un colaborador solo puede reemplazar o quitar archivos que subió él mismo. Nada se borra definitivamente: los archivos reemplazados o quitados van a la **papelera de Drive**.
 - **Reglas de Firestore:** `firestore.rules` restringe cada colección por rol (Colaborador / Admin) y se publica desde la consola de Firebase (pestaña *Security*).
 - **Documentos legales:** desde el pie de página se accede a la **Política de Privacidad** y a los **Términos y Condiciones**. Contacto institucional: `admin@isf-argentina.org`.

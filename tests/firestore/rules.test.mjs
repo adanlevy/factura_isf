@@ -87,10 +87,28 @@ await expectDenied('Colaborador se pone en copia de TODOS los emails salientes',
 await expectDenied('Colaborador se escala a admin', () => colab.doc('app_users/colab@gmail.com').update({ role: 'admin' }));
 
 await seed();
+// El acceso sale solo de la tabla de usuarios: una cuenta de la organización sin registro no entra
 const orgMember = as('nuevo@isf-argentina.org');
-await expectDenied('Miembro @isf-argentina.org (no registrado) borra comprobante ajeno', () => deleteWithTombstone(orgMember, ['exp-otro'], 'nuevo@isf-argentina.org'));
-await expectDenied('Miembro @isf-argentina.org se auto-registra como admin', () => orgMember.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', role: 'admin' }));
-await expectDenied('Miembro @isf-argentina.org se auto-registra con CC global', () => orgMember.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', role: 'user', ccAllOutgoingEmails: true }));
+await expectDenied('Cuenta @isf-argentina.org sin registro lee comprobantes', () => orgMember.doc('expenses/exp-otro').get());
+await expectDenied('Cuenta @isf-argentina.org sin registro borra comprobante ajeno', () => deleteWithTombstone(orgMember, ['exp-otro'], 'nuevo@isf-argentina.org'));
+await expectDenied('Cuenta @isf-argentina.org se auto-registra como user', () => orgMember.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', name: 'Nuevo', role: 'user', updatedAt: 'now' }));
+await expectDenied('Cuenta @isf-argentina.org se auto-registra como admin', () => orgMember.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', role: 'admin' }));
+await expectDenied('Cuentas que antes eran admin fijas en el código ya no tienen acceso sin registro', () => as('admin@isf-argentina.org').doc('expenses/exp-otro').get());
+await expectDenied('...ni la cuenta personal que estaba fija como admin', () => as('adanlevy@gmail.com').doc('vendors/v1').get());
+
+// Huecos cerrados en la Fase 3
+await expectDenied('Colaborador crea un comprobante con un segundo dueño (userEmail de otro)', () => colab.doc('expenses/exp-doble').set({ id: 'exp-doble', submittedByEmail: 'colab@gmail.com', userEmail: 'otro@gmail.com', amount: 5, reimbursementStatus: 'PENDING' }));
+await expectDenied('Colaborador crea un comprobante con userEmail propio pero a nombre de otro', () => colab.doc('expenses/exp-doble2').set({ id: 'exp-doble2', submittedByEmail: 'otro@gmail.com', userEmail: 'colab@gmail.com', amount: 5, reimbursementStatus: 'PENDING' }));
+await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('expenses/exp-tarjeta').set({ id: 'exp-tarjeta', submittedByEmail: 'colab@gmail.com', amount: 800, reimbursementStatus: 'NOT_APPLICABLE', paymentType: 'TARJETA_CORPORATIVA', reimbursable: false }));
+await expectDenied('Colaborador convierte un gasto de tarjeta corporativa en reintegro', () => colab.doc('expenses/exp-tarjeta').update({ reimbursementStatus: 'PENDING', paymentType: 'REINTEGRO', reimbursable: true }));
+await expectDenied('Colaborador cambia solo el tipo de pago de un gasto de tarjeta', () => colab.doc('expenses/exp-tarjeta').update({ paymentType: 'REINTEGRO' }));
+await expectDenied('Colaborador registra auditoría a nombre de otro', () => colab.doc('audit_logs/forjado').set({ id: 'forjado', userEmail: 'jefe@isf-argentina.org', action: 'EXPENSE_DELETE' }));
+await expectDenied('Colaborador registra auditoría sin autor', () => colab.doc('audit_logs/sin-autor').set({ id: 'sin-autor', action: 'EXPENSE_DELETE' }));
+await expectDenied('Colaborador registra consumo de API a nombre de otro', () => colab.doc('api_usage_logs/forjado').set({ id: 'forjado', userEmail: 'jefe@isf-argentina.org', estimatedCostUsd: 999 }));
+await expectDenied('Colaborador lee preferencias de otra persona', () => colab.doc('user_preferences/otro_gmail_com').get());
+await expectDenied('Colaborador escribe preferencias de otra persona', () => colab.doc('user_preferences/otro_gmail_com').set({ favoriteCostCenters: ['X'] }));
+await expectDenied('Cuenta Google cualquiera escribe preferencias', () => as('cualquiera@gmail.com').doc('user_preferences/cualquiera_gmail_com').set({ x: 1 }));
+await expectDenied('Colaborador escribe el diagnóstico del sistema', () => colab.doc('system_health/connection_test').set({ ok: false }));
 
 // ------------------------------------------- resurrección por escritura tardía
 await seed();
@@ -110,10 +128,19 @@ await expectAllowed('Colaborador cambia tipo de pago (PENDING -> NOT_APPLICABLE)
 await expectAllowed('Colaborador reemplaza la foto de su comprobante YA PAGADO', () => colab.doc('expenses/exp-colab-pagado').update({ receiptFileName: 'nueva.jpg', driveUploadedUrl: 'https://drive/y', driveUploadStatus: 'SUCCESS', updatedAt: 'now' }));
 await expectAllowed('Colaborador lee comprobantes y proveedores', () => colab.doc('expenses/exp-otro').get().then(() => colab.doc('vendors/v1').get()));
 await expectAllowed('Colaborador crea un proveedor', () => colab.doc('vendors/v2').set({ id: 'v2', name: 'Nuevo' }));
-await expectAllowed('Colaborador agrega un registro de auditoría', () => colab.doc('audit_logs/l1').set({ id: 'l1', action: 'EXPENSE_CREATE' }));
+await expectAllowed('Colaborador agrega un registro de auditoría a su nombre', () => colab.doc('audit_logs/l1').set({ id: 'l1', userEmail: 'colab@gmail.com', action: 'EXPENSE_CREATE' }));
+await expectDenied('Nadie modifica un registro de auditoría existente (ni el autor)', () => colab.doc('audit_logs/l1').update({ action: 'OTRA' }));
+await expectAllowed('Admin vacía la auditoría', () => jefe.doc('audit_logs/l1').delete());
+await expectAllowed('Colaborador registra consumo de API propio', () => colab.doc('api_usage_logs/a1').set({ id: 'a1', userEmail: 'colab@gmail.com', estimatedCostUsd: 0.01 }));
+await expectAllowed('Colaborador registra consumo de API sin usuario (registro del servidor)', () => colab.doc('api_usage_logs/a2').set({ id: 'a2', estimatedCostUsd: 0.01 }));
+await expectAllowed('Colaborador lee y guarda sus propias preferencias', () => colab.doc('user_preferences/colab_gmail_com').set({ email: 'colab@gmail.com', favoriteCostCenters: ['GPA'] }).then(() => colab.doc('user_preferences/colab_gmail_com').get()));
+await expectAllowed('Colaborador lee el diagnóstico del sistema', () => colab.doc('system_health/connection_test').get());
+await expectAllowed('Admin cambia un gasto de tarjeta a reintegro (corrección administrativa)', () => jefe.doc('expenses/exp-tarjeta-admin').set({ id: 'exp-tarjeta-admin', submittedByEmail: 'colab@gmail.com', reimbursementStatus: 'PENDING', paymentType: 'REINTEGRO' }));
 await expectAllowed('Login: colaborador actualiza su nombre/foto (rol igual)', () => colab.doc('app_users/colab@gmail.com').set({ email: 'colab@gmail.com', name: 'Colab Nuevo', picture: 'p.png', role: 'user', updatedAt: 'now' }, { merge: true }));
-await expectAllowed('Login: miembro @isf-argentina.org verificado se auto-registra como user', () => orgMember.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', name: 'Nuevo', role: 'user', updatedAt: 'now' }));
-await expectAllowed('Miembro @isf-argentina.org lee comprobantes', () => orgMember.doc('expenses/exp-otro').get());
+await expectAllowed('Admin da de alta a una cuenta @isf-argentina.org', () => jefe.doc('app_users/nuevo@isf-argentina.org').set({ email: 'nuevo@isf-argentina.org', name: 'Nuevo', role: 'user' }));
+await expectAllowed('...y con el alta ya lee comprobantes', () => as('nuevo@isf-argentina.org').doc('expenses/exp-otro').get());
+await expectAllowed('Admin quita a un usuario de la tabla', () => jefe.doc('app_users/nuevo@isf-argentina.org').delete());
+await expectDenied('...y el usuario quitado ya no lee comprobantes', () => as('nuevo@isf-argentina.org').doc('expenses/exp-otro').get());
 await expectAllowed('Admin liquida un comprobante ajeno (REIMBURSED + pago)', () => jefe.doc('expenses/exp-otro').update({ ...PAID, paymentProofDriveUrl: 'https://drive/z' }));
 await expectAllowed('Admin revierte el pago a pendiente', () => jefe.doc('expenses/exp-otro').update({ reimbursementStatus: 'PENDING' }));
 await expectAllowed('Admin activa la copia global de un usuario', () => jefe.doc('app_users/colab@gmail.com').update({ ccAllOutgoingEmails: true }));

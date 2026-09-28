@@ -144,7 +144,7 @@ export function BatchPaymentModal({
     const map = new Map<string, { name: string; expenses: Expense[] }>();
 
     for (const exp of expenses) {
-      const email = (exp.submittedByEmail || 'admin@isf-argentina.org').trim().toLowerCase();
+      const email = (exp.submittedByEmail || '').trim().toLowerCase();
       const name = exp.submittedByName || exp.submittedByEmail?.split('@')[0] || 'Solicitante';
 
       if (!map.has(email)) {
@@ -298,7 +298,8 @@ export function BatchPaymentModal({
         const groupExpenses = g.expenses.filter((e) => savedSet.has(e.id));
         return { ...g, expenses: groupExpenses, totalAmount: groupExpenses.reduce((sum, e) => sum + (e.amount || 0), 0) };
       })
-      .filter((g) => g.expenses.length > 0);
+      // Sin email de quien cargó el comprobante no hay a quién avisar
+      .filter((g) => g.expenses.length > 0 && Boolean(g.email));
 
     // 4. Send emails to each recipient group if enabled (solo por lo que quedó registrado)
     if (sendEmails && groupsToNotify.length > 0) {
