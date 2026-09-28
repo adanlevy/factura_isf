@@ -60,6 +60,7 @@ import {
   deleteCentralVendors,
   getDeletedExpensesSet,
   subscribeToDriveSettings,
+  isPaymentProofUsedByOtherExpenses,
   saveDriveSettings,
   isExpenseDeletedInSession,
   fetchUserCloudPreferences,
@@ -1322,9 +1323,21 @@ export default function App() {
     showToast('✅ Foto reemplazada en Google Drive y plataforma sin alterar los datos contables.');
   };
 
+  // El pago en lote sube una sola constancia a Drive y la vincula a todos sus comprobantes:
+  // solo se borra el archivo si ningún otro comprobante (fuera de excludeIds) lo sigue usando.
+  const isPaymentProofSharedWithOthers = async (item: Expense, excludeIds: string[]): Promise<boolean> => {
+    const fileId = extractDriveFileId(item.paymentProofDriveUrl);
+    if (!fileId || !item.paymentProofDriveUrl) return false;
+    const usedLocally = expenses.some(
+      (e) => !excludeIds.includes(e.id) && extractDriveFileId(e.paymentProofDriveUrl) === fileId
+    );
+    if (usedLocally) return true;
+    return isPaymentProofUsedByOtherExpenses(item.paymentProofDriveUrl, excludeIds);
+  };
+
   // Borra de Drive y de la caché local los archivos de un comprobante YA eliminado de la base.
   // Se ejecuta solo tras confirmar el borrado: si Firestore lo rechaza, los archivos se conservan.
-  const cleanupDeletedExpenseFiles = (item: Expense) => {
+  const cleanupDeletedExpenseFiles = async (item: Expense, deletedIds: string[] = [item.id]) => {
     removeCachedReceiptFile(item.id).catch(() => {});
     removeCachedPaymentProofFile(item.id).catch(() => {});
     removeCachedWithholdingCertificateFile(item.id).catch(() => {});
@@ -1337,7 +1350,8 @@ export default function App() {
       }).catch(() => {});
     }
     const paymentProofId = extractDriveFileId(item.paymentProofDriveUrl);
-    if (paymentProofId || item.paymentProofFileName) {
+    const paymentProofShared = await isPaymentProofSharedWithOthers(item, deletedIds);
+    if (!paymentProofShared && (paymentProofId || item.paymentProofFileName)) {
       deleteReceiptFromGoogleDrive({
         fileId: paymentProofId || undefined,
         fileName: item.paymentProofFileName,
@@ -1411,7 +1425,9 @@ export default function App() {
     }
 
     // 3. Solo lo confirmado: archivos de Drive y log de cambios
-    toDeleteItems.filter((e) => deletedSet.has(e.id)).forEach(cleanupDeletedExpenseFiles);
+    toDeleteItems
+      .filter((e) => deletedSet.has(e.id))
+      .forEach((e) => cleanupDeletedExpenseFiles(e, deletedIds));
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1482,7 +1498,9 @@ export default function App() {
         }
       }
 
-      if (paymentProofFileId || paymentProofNames.length > 0) {
+      // Si la constancia es compartida (pago en lote), queda en Drive para los demás comprobantes
+      const paymentProofShared = await isPaymentProofSharedWithOthers(exp, [id]);
+      if (!paymentProofShared && (paymentProofFileId || paymentProofNames.length > 0)) {
         try {
           await deleteReceiptFromGoogleDrive({
             fileId: paymentProofFileId,
@@ -1519,7 +1537,8 @@ export default function App() {
       removeCachedWithholdingCertificateFile(id).catch(() => {});
 
       try {
-        await upsertCentralExpenses([updated]);
+        // Borra del documento los datos de pago (set con merge no borra campos ausentes)
+        await upsertCentralExpenses([updated], { clearPaymentFields: true });
         await logAuditEvent({
           userEmail: currentUser?.email,
           userName: currentUser?.name,
@@ -2244,6 +2263,7 @@ export default function App() {
                 onBatchDeleteExpenses={handleBatchDeleteExpenses}
                 onBatchSettleReimbursements={handleBatchSettleReimbursements}
                 onBatchPaymentCompleted={handleBatchPaymentCompleted}
+                driveSettings={driveSettings}
                 onRetryDriveUpload={handleUploadExpenseToDrive}
                 onAddVendor={handleAddVendor}
                 onUpdateVendor={handleUpdateVendor}

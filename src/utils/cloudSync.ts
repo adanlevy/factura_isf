@@ -9,6 +9,7 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  deleteField,
   writeBatch,
   onSnapshot,
   getDoc,
@@ -826,20 +827,44 @@ function withoutDeletedExpenses(items: Expense[]): Expense[] {
   });
 }
 
-async function writeExpensesToFirestore(items: Expense[]): Promise<boolean> {
+// Datos de pago que se borran del documento al revertir un pago. Con set(merge) un campo
+// ausente no se borra, así que hay que pedirlo explícitamente con deleteField().
+const PAYMENT_RESET_FIELDS = [
+  'reimbursedAt',
+  'paymentConfirmedAt',
+  'paymentProofFileName',
+  'paymentProofDriveUrl',
+  'paymentProofAt',
+  'withholdingCertificateFileName',
+  'withholdingCertificateUploadedAt',
+  'withholdingCertificateDriveUrl',
+  'withholdingCertificateSentAt',
+] as const;
+
+function buildExpenseWrite(item: Expense, clearPaymentFields: boolean): any {
+  const data = prepareExpenseForFirestore(item);
+  if (clearPaymentFields) {
+    for (const field of PAYMENT_RESET_FIELDS) {
+      if (data[field] === undefined) data[field] = deleteField();
+    }
+  }
+  return data;
+}
+
+async function writeExpensesToFirestore(items: Expense[], clearPaymentFields = false): Promise<boolean> {
   let allOk = true;
   for (const chunk of chunkArray(items, EXPENSE_WRITE_CHUNK)) {
     try {
       const batch = writeBatch(db);
       for (const item of chunk) {
-        batch.set(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
+        batch.set(doc(db, 'expenses', item.id), buildExpenseWrite(item, clearPaymentFields), { merge: true });
       }
       await batch.commit();
     } catch (e) {
       console.warn('[Firestore] Error en batch de comprobantes, reintentando uno por uno:', e);
       for (const item of chunk) {
         try {
-          await setDoc(doc(db, 'expenses', item.id), prepareExpenseForFirestore(item), { merge: true });
+          await setDoc(doc(db, 'expenses', item.id), buildExpenseWrite(item, clearPaymentFields), { merge: true });
         } catch (err) {
           console.error(`[Firestore] No se pudo guardar el comprobante ${item.id}:`, err);
           allOk = false;
@@ -865,7 +890,10 @@ export async function saveCentralExpenses(expenses: Expense[]): Promise<boolean>
   return ok;
 }
 
-export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> {
+export async function upsertCentralExpenses(
+  items: Expense[],
+  options?: { clearPaymentFields?: boolean }
+): Promise<boolean> {
   const valid = withoutDeletedExpenses(items);
   if (valid.length === 0) return true;
 
@@ -878,7 +906,22 @@ export async function upsertCentralExpenses(items: Expense[]): Promise<boolean> 
     console.warn('[Sync] Notice mirroring expenses to server store:', err);
   });
 
-  return writeExpensesToFirestore(valid);
+  return writeExpensesToFirestore(valid, Boolean(options?.clearPaymentFields));
+}
+
+/**
+ * Un mismo comprobante de pago en Drive puede estar vinculado a varios comprobantes (pago en lote).
+ * Devuelve true si algún comprobante fuera de `excludeIds` sigue usando ese archivo.
+ * Si no se puede verificar (sin conexión, sin permisos) devuelve true: ante la duda no se borra.
+ */
+export async function isPaymentProofUsedByOtherExpenses(driveUrl: string, excludeIds: string[]): Promise<boolean> {
+  try {
+    const snap = await getDocs(query(collection(db, 'expenses'), where('paymentProofDriveUrl', '==', driveUrl)));
+    return snap.docs.some((d) => !excludeIds.includes(d.id));
+  } catch (err) {
+    console.warn('[Firestore] No se pudo verificar si el comprobante de pago está compartido:', err);
+    return true;
+  }
 }
 
 export interface DeleteExpensesResult {

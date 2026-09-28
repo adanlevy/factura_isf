@@ -267,7 +267,7 @@ Con varias filas seleccionadas y **"Pagar"** se abre **"Liquidación y Pago en L
 - Opción **"Aplica retenciones"**.
 - **"Confirmar y Pagar (N)"** marca todos como Pagados y envía los correos.
 
-> **Diferencia técnica:** el pago **individual** archiva la constancia en Google Drive; el pago **en lote** adjunta la constancia a los correos y la guarda en los registros, pero **no la sube a la carpeta de Drive**. Si necesitás la constancia en Drive, usá el pago individual o subila luego.
+> **Constancia en Drive:** igual que el pago individual, el pago **en lote** sube la constancia a la **carpeta de Comprobantes de Pago y Retenciones** (§7.9). Como el lote se usa para **una única transferencia que reintegra varios comprobantes**, se sube **un solo archivo** (nombre `SIGLA-Solicitante-AAAAMMDD-Total-ComprobantePago-Lote-…`) y queda vinculado a todos los comprobantes del lote. Si después se revierte o elimina uno de ellos, el archivo **se conserva** mientras algún otro comprobante lo siga usando.
 
 ### 7.5 Retenciones: certificado de retenciones
 

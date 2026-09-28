@@ -256,8 +256,8 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Pago en lote</h4>
             <p className="text-slate-600">Con varias filas seleccionadas, «Pagar» agrupa los comprobantes <strong>por solicitante</strong> (cada uno recibe su correo con desglose). <strong>«Confirmar y Pagar (N)»</strong> marca todos como Pagados.</p>
-            <Callout warn>
-              <strong>Diferencia:</strong> el pago individual archiva la constancia en Drive; el pago en lote la adjunta a los correos y la guarda en el registro, pero <strong>no la sube a la carpeta de Drive</strong>.
+            <Callout>
+              <strong>Constancia en Drive:</strong> igual que el pago individual, el pago en lote sube la constancia a la carpeta de Comprobantes de Pago y Retenciones. Se sube <strong>un solo archivo</strong> (una transferencia que reintegra varios comprobantes) vinculado a todos; si se revierte o elimina uno, el archivo se conserva mientras otro comprobante lo use.
             </Callout>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Retenciones, reversión y más</h4>
