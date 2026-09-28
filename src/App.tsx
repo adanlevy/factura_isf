@@ -54,9 +54,16 @@ import {
   fetchCentralSync,
   saveCentralExpenses,
   saveCentralVendors,
-  saveCentralCostCenters,
   saveCentralCategories,
   upsertCentralExpenses,
+  patchCentralExpenses,
+  upsertCentralExpensesDetailed,
+  pickExpenseFields,
+  diffExpenseFields,
+  saveExpenseChanges,
+  renameExpenseFieldValue,
+  deleteCentralCostCenter,
+  saveSingleCostCenter,
   deleteCentralExpenses,
   deleteCentralVendors,
   getDeletedExpensesSet,
@@ -505,12 +512,50 @@ export default function App() {
     return true;
   };
 
+  const toastTimerRef = useRef<number | null>(null);
   const showToast = (message: string) => {
     setToastMessage(message);
-    setTimeout(() => {
+    // Un temporizador anterior no debe ocultar un mensaje más nuevo antes de tiempo
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
       setToastMessage(null);
     }, 4000);
   };
+  const SAVE_ERROR_HINT = 'sin permisos o sin conexión';
+  // Campos de pago: al revertir se borran; al pagar se escriben (sin tocar el resto del comprobante)
+  const PAYMENT_REVERT_FIELDS = [
+    'reimbursementStatus',
+    'reimbursedAt',
+    'paymentConfirmedAt',
+    'paymentProofFileName',
+    'paymentProofDriveUrl',
+    'paymentProofAt',
+    'withholdingCertificateFileName',
+    'withholdingCertificateUploadedAt',
+    'withholdingCertificateDriveUrl',
+    'withholdingCertificateSentAt',
+    'updatedAt',
+  ] as const;
+  const BATCH_PAYMENT_FIELDS = [
+    'reimbursementStatus',
+    'reimbursedAt',
+    'paymentConfirmedAt',
+    'transferDetails',
+    'paymentProofImage',
+    'paymentProofFileName',
+    'paymentProofAt',
+    'paymentProofDriveUrl',
+    'appliesWithholdings',
+    'updatedAt',
+  ] as const;
+  const DRIVE_RECEIPT_FIELDS = [
+    'driveUploadStatus',
+    'driveUploadedFileName',
+    'driveFolderTarget',
+    'driveUploadedUrl',
+    'driveUploadedAt',
+    'driveFileId',
+  ] as const;
 
   // --- VENDOR MANAGEMENT ACTIONS ---
   const handleAddVendor = async (newVendorData: Omit<Vendor, 'id' | 'createdAt'>) => {
@@ -519,9 +564,14 @@ export default function App() {
       id: `v-${Date.now()}`,
       createdAt: new Date().toISOString(),
     };
-    const next = [newVendor, ...vendors];
-    setVendors(next);
-    await saveCentralVendors(next);
+    setVendors((prev) => [newVendor, ...prev]);
+    // Solo el proveedor nuevo: reescribir todo el catálogo fallaba para Colaboradores
+    // (no pueden modificar proveedores existentes) y pisaba cambios de otros Admins
+    if (!(await saveCentralVendors([newVendor]))) {
+      setVendors((prev) => prev.filter((v) => v.id !== newVendor.id));
+      showToast(`⚠️ No se pudo agregar el proveedor "${newVendor.name}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -544,9 +594,13 @@ export default function App() {
       id: `v-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       createdAt: new Date().toISOString(),
     }));
-    const next = [...initialized, ...vendors];
-    setVendors(next);
-    await saveCentralVendors(next);
+    setVendors((prev) => [...initialized, ...prev]);
+    if (!(await saveCentralVendors(initialized))) {
+      const ids = new Set(initialized.map((v) => v.id));
+      setVendors((prev) => prev.filter((v) => !ids.has(v.id)));
+      showToast(`⚠️ No se pudieron importar los proveedores (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -573,10 +627,13 @@ export default function App() {
     const newCuit = (updatedVendor.cuit || updatedVendor.bankDetails?.cuitCuil || '').trim();
     const newCuitDigits = newCuit.replace(/[^0-9]/g, '');
 
-    // 1. Update vendors state and central persistence
-    const nextVendors = vendors.map((v) => (v.id === updatedVendor.id ? updatedVendor : v));
-    setVendors(nextVendors);
-    await saveCentralVendors(nextVendors);
+    // 1. Update vendors state and central persistence (solo el proveedor editado)
+    setVendors((prev) => prev.map((v) => (v.id === updatedVendor.id ? updatedVendor : v)));
+    if (!(await saveCentralVendors([updatedVendor]))) {
+      if (prevVendor) setVendors((prev) => prev.map((v) => (v.id === prevVendor.id ? prevVendor : v)));
+      showToast(`⚠️ No se pudo actualizar el proveedor "${updatedVendor.name}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     // Compute diff and audit log
     const diffs = computeObjectDiff(prevVendor, updatedVendor, {
@@ -622,6 +679,8 @@ export default function App() {
 
     const updatedExpensesList: Expense[] = [];
     const updatedExpenses = expenses.map((e) => {
+      // Un comprobante ya pagado conserva los datos con los que se pagó
+      if (e.reimbursementStatus === 'REIMBURSED') return e;
       const isPersonalReimbursement = Boolean(
         (e.paymentType === 'REINTEGRO' || e.paymentMethod === 'Reintegro') &&
         e.submittedByName?.trim()
@@ -690,10 +749,15 @@ export default function App() {
 
     if (updatedExpensesList.length > 0) {
       setExpenses(updatedExpenses);
-      try {
-        await upsertCentralExpenses(updatedExpensesList);
-      } catch (err) {
-        console.error('Error cascading vendor update to expenses:', err);
+      const cascade = await patchCentralExpenses(
+        updatedExpensesList.map((e) => ({
+          id: e.id,
+          changes: pickExpenseFields(e, ['vendor', 'cuit', 'bankDetails', 'transferDetails', 'updatedAt']),
+        }))
+      );
+      if (!cascade.ok) {
+        showToast(`⚠️ Proveedor actualizado, pero ${cascade.failedIds.length} comprobante(s) no se pudieron sincronizar.`);
+        return;
       }
     }
 
@@ -707,7 +771,11 @@ export default function App() {
   const handleDeleteVendor = async (id: string) => {
     const vendorToDelete = vendors.find((v) => v.id === id);
     setVendors((prev) => prev.filter((v) => v.id !== id));
-    await deleteCentralVendors([id]);
+    if (!(await deleteCentralVendors([id]))) {
+      if (vendorToDelete) setVendors((prev) => [vendorToDelete, ...prev.filter((v) => v.id !== id)]);
+      showToast(`⚠️ No se pudo eliminar el proveedor (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -737,6 +805,8 @@ export default function App() {
 
       const updatedExpensesList: Expense[] = [];
       const updatedExpenses = expenses.map((e) => {
+        // Un comprobante ya pagado conserva los datos con los que se pagó
+        if (e.reimbursementStatus === 'REIMBURSED') return e;
         const expVendor = (e.vendor || '').trim().toLowerCase();
         if (otherVendorNames.has(expVendor)) {
           return e;
@@ -779,10 +849,12 @@ export default function App() {
 
       if (updatedExpensesList.length > 0) {
         setExpenses(updatedExpenses);
-        try {
-          await upsertCentralExpenses(updatedExpensesList);
-        } catch (err) {
-          console.error('Error updating expenses on vendor delete:', err);
+        // bankDetails: undefined se borra de verdad del documento (con set+merge quedaba)
+        const cascade = await patchCentralExpenses(
+          updatedExpensesList.map((e) => ({ id: e.id, changes: { bankDetails: undefined, updatedAt: e.updatedAt } }))
+        );
+        if (!cascade.ok) {
+          console.warn('Error updating expenses on vendor delete:', cascade.failedIds);
         }
       }
 
@@ -837,9 +909,10 @@ export default function App() {
           driveUploadedAt: new Date().toISOString(),
         };
         setExpenses((prev) =>
-          prev.map((e) => (e.id === expenseToUpload.id ? updatedObj : e))
+          prev.map((e) => (e.id === expenseToUpload.id ? { ...e, ...pickExpenseFields(updatedObj, DRIVE_RECEIPT_FIELDS) } : e))
         );
-        upsertCentralExpenses([updatedObj]);
+        // Solo los datos de Drive: no se pisa lo que otra persona haya cambiado en el comprobante
+        await patchCentralExpenses([{ id: expenseToUpload.id, changes: pickExpenseFields(updatedObj, DRIVE_RECEIPT_FIELDS) }]);
         showToast(`✅ Comprobante subido exitosamente a Drive ("${res.folderName}")`);
       } else {
         setExpenses((prev) =>
@@ -882,6 +955,20 @@ export default function App() {
     return true;
   };
 
+  // Si el comprobante no llegó a guardarse, el archivo que se subió a Drive no queda huérfano
+  const discardUploadIfExpenseNotSaved = async (
+    expenseId: string,
+    savePromise: Promise<{ failedIds: string[] }>,
+    res: { success: boolean; fileId?: string }
+  ): Promise<boolean> => {
+    const { failedIds } = await savePromise;
+    if (!failedIds.includes(expenseId)) return false;
+    if (res.success && res.fileId) deleteReceiptFromGoogleDrive({ fileId: res.fileId }).catch(() => {});
+    return true;
+  };
+
+  const SLOW_SAVE_MESSAGE = '⏳ Guardando... Si no hay conexión, se sincroniza apenas vuelva.';
+
   const handleSaveNewExpense = (newExpense: Expense) => {
     // If expense has a receipt, initialize driveUploadStatus to PENDING
     const initialExpense: Expense = {
@@ -893,7 +980,9 @@ export default function App() {
     };
 
     setExpenses((prev) => [initialExpense, ...prev.filter((e) => e.id !== initialExpense.id)]);
-    upsertCentralExpenses([initialExpense]);
+    // El correo de confirmación y el registro de auditoría salen recién con el guardado confirmado
+    const savePromise = upsertCentralExpensesDetailed([initialExpense]);
+    const slowNotice = window.setTimeout(() => showToast(SLOW_SAVE_MESSAGE), 8000);
 
     // Auto upload to Google Drive ONLY on creation if receipt is attached
     if (newExpense.receiptImage) {
@@ -904,8 +993,9 @@ export default function App() {
         expense: newExpense,
         costCenter: matchingCc,
       })
-        .then((res) => {
+        .then(async (res) => {
           if (discardUploadIfExpenseDeleted(newExpense.id, res)) return;
+          if (await discardUploadIfExpenseNotSaved(newExpense.id, savePromise, res)) return;
           if (res.success) {
             const updatedDriveFields = {
               driveUploadStatus: 'SUCCESS' as const,
@@ -921,7 +1011,7 @@ export default function App() {
                   : e
               )
             );
-            upsertCentralExpenses([{ ...newExpense, ...updatedDriveFields }]);
+            patchCentralExpenses([{ id: newExpense.id, changes: updatedDriveFields }]);
           } else {
             const errorFields = { driveUploadStatus: 'ERROR' as const };
             setExpenses((prev) =>
@@ -931,7 +1021,7 @@ export default function App() {
                   : e
               )
             );
-            upsertCentralExpenses([{ ...newExpense, ...errorFields }]);
+            patchCentralExpenses([{ id: newExpense.id, changes: errorFields }]);
           }
         })
         .catch((e) => {
@@ -947,6 +1037,14 @@ export default function App() {
             )
           );
         });
+    }
+
+    savePromise.then(({ failedIds }) => {
+    window.clearTimeout(slowNotice);
+    if (failedIds.includes(initialExpense.id)) {
+      setExpenses((prev) => prev.filter((e) => e.id !== initialExpense.id));
+      showToast(`⚠️ No se pudo guardar el comprobante de "${newExpense.vendor}" (${SAVE_ERROR_HINT}). Volvé a cargarlo.`);
+      return;
     }
 
     // Send automatic confirmation email to the user who uploaded the receipt
@@ -1012,6 +1110,7 @@ export default function App() {
         submittedBy: initialExpense.submittedByEmail || currentUser?.email,
       },
     }).catch((e) => console.warn('Audit log error on expense create:', e));
+    });
   };
 
   const handleSaveBatchExpenses = (newExpenses: Expense[]) => {
@@ -1023,7 +1122,8 @@ export default function App() {
     }));
 
     setExpenses((prev) => [...initializedExpenses, ...prev]);
-    upsertCentralExpenses(initializedExpenses);
+    const savePromise = upsertCentralExpensesDetailed(initializedExpenses);
+    const slowNotice = window.setTimeout(() => showToast(SLOW_SAVE_MESSAGE), 8000);
 
     // Trigger Google Drive uploads in background
     initializedExpenses.forEach((exp) => {
@@ -1035,8 +1135,9 @@ export default function App() {
           expense: exp,
           costCenter: matchingCc,
         })
-          .then((res) => {
+          .then(async (res) => {
             if (discardUploadIfExpenseDeleted(exp.id, res)) return;
+            if (await discardUploadIfExpenseNotSaved(exp.id, savePromise, res)) return;
             if (res.success) {
               const updatedDriveFields = {
                 driveUploadStatus: 'SUCCESS' as const,
@@ -1052,7 +1153,7 @@ export default function App() {
                     : e
                 )
               );
-              upsertCentralExpenses([{ ...exp, ...updatedDriveFields }]);
+              patchCentralExpenses([{ id: exp.id, changes: updatedDriveFields }]);
             } else {
               const errorFields = { driveUploadStatus: 'ERROR' as const };
               setExpenses((prev) =>
@@ -1062,7 +1163,7 @@ export default function App() {
                     : e
                 )
               );
-              upsertCentralExpenses([{ ...exp, ...errorFields }]);
+              patchCentralExpenses([{ id: exp.id, changes: errorFields }]);
             }
           })
           .catch((e) => {
@@ -1081,13 +1182,25 @@ export default function App() {
       }
     });
 
+    savePromise.then(({ failedIds }) => {
+    window.clearTimeout(slowNotice);
+    const failedSet = new Set(failedIds);
+    if (failedSet.size > 0) {
+      setExpenses((prev) => prev.filter((e) => !failedSet.has(e.id)));
+    }
+    const savedExpenses = initializedExpenses.filter((e) => !failedSet.has(e.id));
+    if (savedExpenses.length === 0) {
+      showToast(`⚠️ No se pudo guardar ningún comprobante (${SAVE_ERROR_HINT}). Volvé a cargarlos.`);
+      return;
+    }
+
     // Send single consolidated summary email for all batch uploaded receipts
-    const batchTargetRecipient = (initializedExpenses[0]?.submittedByEmail || currentUser?.email || '').trim();
+    const batchTargetRecipient = (savedExpenses[0]?.submittedByEmail || currentUser?.email || '').trim();
     if (batchTargetRecipient) {
       sendReceiptUploadConfirmationEmail({
-        expenses: initializedExpenses,
+        expenses: savedExpenses,
         currentUser: currentUser || {
-          name: initializedExpenses[0]?.submittedByName || batchTargetRecipient.split('@')[0],
+          name: savedExpenses[0]?.submittedByName || batchTargetRecipient.split('@')[0],
           email: batchTargetRecipient,
           role: 'user',
         },
@@ -1098,7 +1211,7 @@ export default function App() {
       })
         .then((res) => {
           if (res.success) {
-            showToast(`📧 Resumen con los ${initializedExpenses.length} comprobantes enviado a ${batchTargetRecipient}.`);
+            showToast(`📧 Resumen con los ${savedExpenses.length} comprobantes enviado a ${batchTargetRecipient}.`);
           } else {
             console.warn('Batch receipt upload email notice:', res.error || res.message);
           }
@@ -1109,7 +1222,7 @@ export default function App() {
     }
 
     // Audit log: registrar cada comprobante subido en el lote
-    initializedExpenses.forEach((exp) => {
+    savedExpenses.forEach((exp) => {
       logAuditEvent({
         userEmail: currentUser?.email || exp.submittedByEmail,
         userName: currentUser?.name || exp.submittedByName,
@@ -1146,39 +1259,53 @@ export default function App() {
       }).catch((e) => console.warn('Audit log error on batch expense item create:', e));
     });
 
-    if (initializedExpenses.length > 1) {
-      const totalAmount = initializedExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    if (savedExpenses.length > 1) {
+      const totalAmount = savedExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
       logAuditEvent({
-        userEmail: currentUser?.email || initializedExpenses[0]?.submittedByEmail,
-        userName: currentUser?.name || initializedExpenses[0]?.submittedByName,
+        userEmail: currentUser?.email || savedExpenses[0]?.submittedByEmail,
+        userName: currentUser?.name || savedExpenses[0]?.submittedByName,
         action: 'BATCH_CREATE',
         actionLabel: 'Carga en Lote de Comprobantes',
         entityType: 'expense',
         entityId: `batch-${Date.now()}`,
-        entityName: `${initializedExpenses.length} comprobantes`,
-        summary: `Se cargaron ${initializedExpenses.length} comprobantes en lote por un monto total de ${formatCurrency(totalAmount)}.`,
+        entityName: `${savedExpenses.length} comprobantes`,
+        summary: `Se cargaron ${savedExpenses.length} comprobantes en lote por un monto total de ${formatCurrency(totalAmount)}.`,
         metadata: {
-          count: initializedExpenses.length,
+          count: savedExpenses.length,
           totalAmount,
         },
       }).catch((e) => console.warn('Audit log error on batch summary create:', e));
     }
 
-    showToast(`✅ ${initializedExpenses.length} comprobantes guardados exitosamente.`);
+    showToast(
+      failedSet.size > 0
+        ? `⚠️ Se guardaron ${savedExpenses.length} comprobante(s); ${failedSet.size} no se pudieron guardar (${SAVE_ERROR_HINT}).`
+        : `✅ ${savedExpenses.length} comprobantes guardados exitosamente.`
+    );
+    });
   };
 
   const handleUpdateExpense = async (updatedExpense: Expense) => {
-    const prevExpense = expenses.find((e) => e.id === updatedExpense.id);
+    const current = expenses.find((e) => e.id === updatedExpense.id);
+    // Base: el comprobante tal como estaba al abrir el editor. Solo se guardan los campos que la
+    // persona cambió; si mientras tanto otro Admin lo pagó, ese pago no se pisa.
+    const prevExpense = editingExpense && editingExpense.id === updatedExpense.id ? editingExpense : current;
     const timestamped: Expense = {
       ...updatedExpense,
       updatedAt: new Date().toISOString(),
     };
-    setExpenses((prev) => prev.map((e) => (e.id === timestamped.id ? timestamped : e)));
+    const changes = diffExpenseFields(prevExpense, timestamped);
+    const merged: Expense = { ...(current || timestamped), ...changes, updatedAt: timestamped.updatedAt };
+    setExpenses((prev) => prev.map((e) => (e.id === timestamped.id ? merged : e)));
     if (viewingReceiptExpense && viewingReceiptExpense.id === timestamped.id) {
-      setViewingReceiptExpense(timestamped);
+      setViewingReceiptExpense(merged);
+    }
+    if (!(await saveExpenseChanges(prevExpense, timestamped))) {
+      if (current) setExpenses((prev) => prev.map((e) => (e.id === current.id ? current : e)));
+      // El modal muestra el error y queda abierto con los datos cargados
+      throw new Error(`No se pudieron guardar los cambios (${SAVE_ERROR_HINT}).`);
     }
     try {
-      await upsertCentralExpenses([timestamped]);
 
       const diffs = computeObjectDiff(prevExpense, timestamped, {
         vendor: 'Proveedor',
@@ -1217,17 +1344,31 @@ export default function App() {
     }
   };
 
-  const handleWithholdingCertificateSaved = async (updatedExpense: Expense) => {
+  const handleWithholdingCertificateSaved = async (
+    updatedExpense: Expense,
+    emailOutcome?: { attempted: boolean; sent: boolean; error?: string }
+  ): Promise<boolean> => {
     const timestamped: Expense = {
       ...updatedExpense,
       updatedAt: new Date().toISOString(),
     };
-    setExpenses((prev) => prev.map((e) => (e.id === timestamped.id ? timestamped : e)));
+    const base = withholdingModalExpense && withholdingModalExpense.id === timestamped.id
+      ? withholdingModalExpense
+      : expenses.find((e) => e.id === timestamped.id);
+    const original = expenses.find((e) => e.id === timestamped.id);
+    const changes = diffExpenseFields(base, timestamped);
+    setExpenses((prev) =>
+      prev.map((e) => (e.id === timestamped.id ? { ...e, ...changes, withholdingCertificateImage: timestamped.withholdingCertificateImage } : e))
+    );
     if (viewingReceiptExpense && viewingReceiptExpense.id === timestamped.id) {
       setViewingReceiptExpense(timestamped);
     }
+    if (!(await saveExpenseChanges(base, timestamped))) {
+      if (original) setExpenses((prev) => prev.map((e) => (e.id === original.id ? original : e)));
+      showToast(`⚠️ No se pudo guardar el certificado de "${timestamped.vendor}" (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
     try {
-      await upsertCentralExpenses([timestamped]);
 
       await logAuditEvent({
         userEmail: currentUser?.email,
@@ -1240,10 +1381,15 @@ export default function App() {
         summary: `Se adjuntó certificado de retención para el comprobante de "${timestamped.vendor}".`,
       });
 
-      showToast(`📄 Certificado de retención guardado para ${timestamped.vendor}.`);
+      showToast(
+        emailOutcome?.attempted && !emailOutcome.sent
+          ? `⚠️ Certificado guardado para ${timestamped.vendor}, pero no se pudo enviar el correo${emailOutcome.error ? `: ${emailOutcome.error}` : '.'}`
+          : `📄 Certificado de retención guardado para ${timestamped.vendor}.`
+      );
     } catch (err) {
-      console.error('Error saving withholding cert:', err);
+      console.warn('Audit log error on withholding cert:', err);
     }
+    return true;
   };
 
   const handleReplaceExpenseReceipt = async (
@@ -1293,8 +1439,19 @@ export default function App() {
       prev.map((e) => (e.id === targetExpense.id ? updatedExpense : e))
     );
 
-    // Guardar en Firestore central (sin IA / sin OCR)
-    upsertCentralExpenses([updatedExpense]);
+    // Guardar en Firestore central (sin IA / sin OCR): solo los campos del archivo
+    patchCentralExpenses([
+      {
+        id: targetExpense.id,
+        changes: {
+          receiptImage: newFileBase64,
+          receiptFileName: updatedExpense.receiptFileName,
+          ...pickExpenseFields(updatedExpense, DRIVE_RECEIPT_FIELDS),
+        },
+      },
+    ]).then((res) => {
+      if (!res.ok) showToast(`⚠️ El archivo se subió a Drive, pero no se pudo registrar en el sistema (${SAVE_ERROR_HINT}).`);
+    });
 
     // Registrar en auditoría el cambio de archivo
     logAuditEvent({
@@ -1476,14 +1633,24 @@ export default function App() {
       };
       setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
 
+      // 0. Guardar primero: si la base rechaza la reversión, no se avisa a nadie ni se toca Drive
+      const reverted = await patchCentralExpenses([{ id, changes: pickExpenseFields(updated, PAYMENT_REVERT_FIELDS) }]);
+      if (!reverted.ok) {
+        setExpenses((prev) => prev.map((e) => (e.id === id ? exp : e)));
+        showToast(`⚠️ No se pudo revertir el pago de "${exp.vendor}" (${SAVE_ERROR_HINT}). No se hicieron cambios.`);
+        return;
+      }
+
       // 1. Enviar email avisando que se revirtió el pago
+      let reversalEmailOk = false;
       try {
-        await sendPaymentReversalEmail({
+        const emailRes = await sendPaymentReversalEmail({
           expense: exp,
           costCenters,
           appUsers,
           currentUser,
         });
+        reversalEmailOk = Boolean(emailRes?.success);
       } catch (emailErr) {
         console.warn('Notice sending payment reversal email:', emailErr);
       }
@@ -1538,8 +1705,6 @@ export default function App() {
       removeCachedWithholdingCertificateFile(id).catch(() => {});
 
       try {
-        // Borra del documento los datos de pago (set con merge no borra campos ausentes)
-        await upsertCentralExpenses([updated], { clearPaymentFields: true });
         await logAuditEvent({
           userEmail: currentUser?.email,
           userName: currentUser?.name,
@@ -1548,39 +1713,72 @@ export default function App() {
           entityType: 'expense',
           entityId: id,
           entityName: `${exp.vendor} ($${exp.amount})`,
-          summary: `Se revirtió el pago de "${exp.vendor}" a Pendiente. Se envió email de aviso y se eliminaron los comprobantes de transferencia y retención de Google Drive.`,
+          summary: `Se revirtió el pago de "${exp.vendor}" a Pendiente.${
+            reversalEmailOk ? ' Se envió email de aviso.' : ' No se pudo enviar el email de aviso.'
+          } Los comprobantes de transferencia y retención se enviaron a la papelera de Google Drive.`,
         });
-        showToast(`ℹ️ Pago de "${exp.vendor}" revertido a Pendiente. Notificación enviada y comprobantes de Drive removidos.`);
+        showToast(
+          reversalEmailOk
+            ? `ℹ️ Pago de "${exp.vendor}" revertido a Pendiente. Notificación enviada y comprobantes de Drive a la papelera.`
+            : `⚠️ Pago de "${exp.vendor}" revertido a Pendiente, pero no se pudo enviar el correo de aviso.`
+        );
       } catch (err) {
         console.error('Error updating status in cloud:', err);
       }
     }
   };
 
-  const handleBatchPaymentCompleted = async (updatedExpenses: Expense[], emailsSentCount: number) => {
+  // Registra un pago en lote: escribe solo los campos del pago (no pisa otros cambios) y
+  // devuelve los IDs que quedaron guardados. Los correos se mandan recién después.
+  const handleBatchPaymentSave = async (updatedExpenses: Expense[]): Promise<string[]> => {
+    const originals = new Map(expenses.map((e) => [e.id, e]));
     const updatedMap = new Map(updatedExpenses.map((e) => [e.id, e]));
-    setExpenses((prev) => prev.map((e) => updatedMap.get(e.id) || e));
+    setExpenses((prev) => prev.map((e) => (updatedMap.has(e.id) ? { ...e, ...pickExpenseFields(updatedMap.get(e.id)!, BATCH_PAYMENT_FIELDS) } : e)));
 
-    try {
-      await upsertCentralExpenses(updatedExpenses);
-      await logAuditEvent({
-        userEmail: currentUser?.email,
-        userName: currentUser?.name,
-        action: 'EXPENSE_STATUS_CHANGE',
-        actionLabel: 'Liquidación y Pago en Lote',
-        entityType: 'expense',
-        entityId: `batch-${Date.now()}`,
-        entityName: `${updatedExpenses.length} comprobantes`,
-        summary: `Se liquidaron y pagaron ${updatedExpenses.length} comprobantes en lote.${emailsSentCount > 0 ? ` Se enviaron ${emailsSentCount} avisos por correo.` : ''}`,
-      });
-    } catch (err) {
-      console.error('Error batch updating status in cloud:', err);
+    const res = await patchCentralExpenses(
+      updatedExpenses.map((e) => ({ id: e.id, changes: pickExpenseFields(e, BATCH_PAYMENT_FIELDS) })),
+      { mirror: updatedExpenses }
+    );
+    if (res.failedIds.length > 0) {
+      const failed = new Set(res.failedIds);
+      setExpenses((prev) => prev.map((e) => (failed.has(e.id) && originals.has(e.id) ? originals.get(e.id)! : e)));
     }
+    return updatedExpenses.map((e) => e.id).filter((id) => !res.failedIds.includes(id));
+  };
 
-    if (emailsSentCount > 0) {
-      showToast(`🎉 Se liquidaron ${updatedExpenses.length} comprobantes y se enviaron ${emailsSentCount} avisos por email.`);
+  const handleBatchPaymentCompleted = async (
+    savedExpenses: Expense[],
+    emailsSentCount: number,
+    info?: { failedCount: number; emailsExpected: number }
+  ) => {
+    const failedCount = info?.failedCount || 0;
+    const emailsFailed = Math.max(0, (info?.emailsExpected || 0) - emailsSentCount);
+
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'EXPENSE_STATUS_CHANGE',
+      actionLabel: 'Liquidación y Pago en Lote',
+      entityType: 'expense',
+      entityId: `batch-${Date.now()}`,
+      entityName: `${savedExpenses.length} comprobantes`,
+      summary: `Se liquidaron y pagaron ${savedExpenses.length} comprobantes en lote.${
+        emailsSentCount > 0 ? ` Se enviaron ${emailsSentCount} avisos por correo.` : ''
+      }${emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''}${
+        failedCount > 0 ? ` ${failedCount} comprobante(s) no se pudieron registrar.` : ''
+      }`,
+    }).catch((err) => console.warn('Audit log error on batch payment:', err));
+
+    if (failedCount > 0 || emailsFailed > 0) {
+      showToast(
+        `⚠️ Se liquidaron ${savedExpenses.length} comprobante(s).${
+          failedCount > 0 ? ` ${failedCount} no se pudieron registrar (${SAVE_ERROR_HINT}).` : ''
+        }${emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''}`
+      );
+    } else if (emailsSentCount > 0) {
+      showToast(`🎉 Se liquidaron ${savedExpenses.length} comprobantes y se enviaron ${emailsSentCount} avisos por email.`);
     } else {
-      showToast(`✅ Se marcaron ${updatedExpenses.length} comprobantes como Reintegrados / Liquidados.`);
+      showToast(`✅ Se marcaron ${savedExpenses.length} comprobantes como Reintegrados / Liquidados.`);
     }
   };
 
@@ -1603,10 +1801,18 @@ export default function App() {
       };
     });
 
+    // Guardar primero; solo se avisa por lo que quedó registrado
+    const savedIds = new Set(await handleBatchPaymentSave(updatedExpenses));
+    const savedExpenses = updatedExpenses.filter((e) => savedIds.has(e.id));
+    if (savedExpenses.length === 0) {
+      showToast(`⚠️ No se pudo registrar la liquidación (${SAVE_ERROR_HINT}). No se envió ningún correo.`);
+      return;
+    }
+
     // Group and send notification emails to submitters
     let emailsSentCount = 0;
     const groups = new Map<string, { name: string; items: Expense[] }>();
-    for (const exp of updatedExpenses) {
+    for (const exp of savedExpenses) {
       const email = (exp.submittedByEmail || 'admin@isf-argentina.org').trim().toLowerCase();
       const name = exp.submittedByName || exp.submittedByEmail?.split('@')[0] || 'Solicitante';
       if (!groups.has(email)) groups.set(email, { name, items: [] });
@@ -1642,7 +1848,7 @@ export default function App() {
         </div>`;
 
         const cc = resolveEmailCcRecipients({ toEmail: email, expenses: group.items, costCenters, appUsers });
-        await sendGmailMessage({
+        const sendRes = await sendGmailMessage({
           to: email,
           cc: cc.length > 0 ? cc : undefined,
           subject,
@@ -1650,13 +1856,16 @@ export default function App() {
           accessToken: token || undefined,
           fromName: currentUser?.name || 'ISF Finanzas',
         });
-        emailsSentCount++;
+        if (sendRes.success) emailsSentCount++;
       } catch (e) {
         console.warn('Error sending batch settle email to', email, e);
       }
     }
 
-    await handleBatchPaymentCompleted(updatedExpenses, emailsSentCount);
+    await handleBatchPaymentCompleted(savedExpenses, emailsSentCount, {
+      failedCount: updatedExpenses.length - savedExpenses.length,
+      emailsExpected: groups.size,
+    });
   };
 
   const handleAddNewCostCenter = async (newCc: Omit<CostCenter, 'id'>) => {
@@ -1664,9 +1873,13 @@ export default function App() {
       ...newCc,
       id: `cc-${Date.now()}`,
     });
-    const updated = [...costCenters, item];
-    setCostCenters(updated);
-    await saveCentralCostCenters(updated);
+    setCostCenters((prev) => [...prev, item]);
+    // Solo el centro nuevo (antes se reescribía la lista completa)
+    if (!(await saveSingleCostCenter(item))) {
+      setCostCenters((prev) => prev.filter((c) => c.id !== item.id));
+      showToast(`⚠️ No se pudo crear el centro de costos "${item.name}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1687,9 +1900,12 @@ export default function App() {
     const oldItem = costCenters.find((c) => c.id === sanitized.id);
     const oldName = oldItem ? oldItem.name : sanitized.name;
 
-    const updated = costCenters.map((cc) => (cc.id === sanitized.id ? sanitized : cc));
-    setCostCenters(updated);
-    await saveCentralCostCenters(updated);
+    setCostCenters((prev) => prev.map((cc) => (cc.id === sanitized.id ? sanitized : cc)));
+    if (!(await saveSingleCostCenter(sanitized))) {
+      if (oldItem) setCostCenters((prev) => prev.map((cc) => (cc.id === oldItem.id ? oldItem : cc)));
+      showToast(`⚠️ No se pudo actualizar el centro de costos "${sanitized.name}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     const diffs = computeObjectDiff(oldItem, sanitized, {
       name: 'Nombre del Centro de Costos',
@@ -1717,15 +1933,32 @@ export default function App() {
       setExpenses((prev) =>
         prev.map((e) => (e.project === oldName ? { ...e, project: sanitized.name } : e))
       );
+      // Renombrar en TODOS los comprobantes de la base (antes solo cambiaba en pantalla y se revertía)
+      try {
+        const renamed = await renameExpenseFieldValue('project', oldName, sanitized.name);
+        showToast(
+          renamed.failed > 0
+            ? `⚠️ Centro de costos actualizado; ${renamed.failed} comprobante(s) no se pudieron renombrar.`
+            : `✅ Centro de costos "${sanitized.name}" (${sanitized.code}) actualizado en ${renamed.updated} comprobante(s).`
+        );
+      } catch (err) {
+        console.error('Error renaming cost center in expenses:', err);
+        showToast(`⚠️ Centro de costos actualizado, pero no se pudo renombrar en los comprobantes (${SAVE_ERROR_HINT}).`);
+      }
+      return;
     }
     showToast(`✅ Centro de costos "${sanitized.name}" (${sanitized.code}) actualizado.`);
   };
 
   const handleDeleteCostCenter = async (id: string) => {
     const toDelete = costCenters.find((c) => c.id === id);
-    const updated = costCenters.filter((cc) => cc.id !== id);
-    setCostCenters(updated);
-    await saveCentralCostCenters(updated);
+    setCostCenters((prev) => prev.filter((cc) => cc.id !== id));
+    // Borrado real del documento (antes se reescribía la lista sin él y el centro reaparecía)
+    if (!(await deleteCentralCostCenter(id))) {
+      if (toDelete) setCostCenters((prev) => [...prev.filter((c) => c.id !== id), toDelete]);
+      showToast(`⚠️ No se pudo eliminar el centro de costos "${toDelete?.name || id}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1751,9 +1984,12 @@ export default function App() {
         driveFolder: `Carpeta ${costCenterName}`,
         driveUrl: `https://drive.google.com/drive/search?q=${encodeURIComponent(costCenterName)}`,
       };
-      const updated = [...costCenters, item];
-      setCostCenters(updated);
-      await saveCentralCostCenters(updated);
+      setCostCenters((prev) => [...prev, item]);
+      if (!(await saveSingleCostCenter(item))) {
+        setCostCenters((prev) => prev.filter((c) => c.id !== item.id));
+        showToast(`⚠️ No se pudo crear el centro de costos "${costCenterName}" (${SAVE_ERROR_HINT}).`);
+        return;
+      }
 
       await logAuditEvent({
         userEmail: currentUser?.email,
@@ -1772,9 +2008,14 @@ export default function App() {
 
   const handleAddNewCategory = async (category: string) => {
     if (!availableCategories.includes(category)) {
+      const previous = availableCategories;
       const updated = [...availableCategories, category];
       setAvailableCategories(updated);
-      await saveCentralCategories(updated);
+      if (!(await saveCentralCategories(updated))) {
+        setAvailableCategories(previous);
+        showToast(`⚠️ No se pudo crear la categoría "${category}" (${SAVE_ERROR_HINT}).`);
+        return;
+      }
 
       await logAuditEvent({
         userEmail: currentUser?.email,
@@ -1792,13 +2033,27 @@ export default function App() {
   };
 
   const handleUpdateCategory = async (oldName: string, newName: string) => {
+    const previous = availableCategories;
     const updated = availableCategories.map((c) => (c === oldName ? newName : c));
     setAvailableCategories(updated);
-    await saveCentralCategories(updated);
+    if (!(await saveCentralCategories(updated))) {
+      setAvailableCategories(previous);
+      showToast(`⚠️ No se pudo renombrar la categoría "${oldName}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     setExpenses((prev) =>
       prev.map((e) => (e.category === oldName ? { ...e, category: newName } : e))
     );
+    // Renombrar en TODOS los comprobantes de la base, no solo en los cargados en pantalla
+    let renamedInfo = '';
+    try {
+      const renamed = await renameExpenseFieldValue('category', oldName, newName);
+      renamedInfo = renamed.failed > 0 ? ` (${renamed.failed} comprobante(s) no se pudieron actualizar)` : ` en ${renamed.updated} comprobante(s)`;
+    } catch (err) {
+      console.error('Error renaming category in expenses:', err);
+      renamedInfo = ' (no se pudo actualizar en los comprobantes)';
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1819,13 +2074,18 @@ export default function App() {
       ],
     });
 
-    showToast(`✅ Categoría "${oldName}" modificada a "${newName}".`);
+    showToast(`✅ Categoría "${oldName}" modificada a "${newName}"${renamedInfo}.`);
   };
 
   const handleDeleteCategory = async (category: string) => {
+    const previous = availableCategories;
     const updated = availableCategories.filter((c) => c !== category);
     setAvailableCategories(updated);
-    await saveCentralCategories(updated);
+    if (!(await saveCentralCategories(updated))) {
+      setAvailableCategories(previous);
+      showToast(`⚠️ No se pudo eliminar la categoría "${category}" (${SAVE_ERROR_HINT}).`);
+      return;
+    }
 
     await logAuditEvent({
       userEmail: currentUser?.email,
@@ -1998,23 +2258,8 @@ export default function App() {
             <p style="font-size: 12px; color: #64748b;">Área de Administración & Finanzas — ISF Argentina</p>
           </div>`;
 
-    // Immediately update timestamp in UI
-    setExpenses((prev) =>
-      prev.map((e) => {
-        if (e.id !== expense.id) return e;
-        if (mode === 'REQUEST_BANK_DETAILS') {
-          return { ...e, bankDetailsRequestedAt: timestamp };
-        } else {
-          return {
-            ...e,
-            paymentConfirmedAt: timestamp,
-            reimbursementStatus: 'REIMBURSED',
-            reimbursedAt: new Date().toISOString().slice(0, 10),
-          };
-        }
-      })
-    );
-
+    let sent = false;
+    let sendError = '';
     try {
       const response = await authFetch('/api/send-email', {
         method: 'POST',
@@ -2026,19 +2271,37 @@ export default function App() {
           accessToken: getStoredWorkspaceToken(),
         }),
       });
-      const data = await response.json();
-      if (data.success) {
-        showToast(
-          mode === 'REQUEST_BANK_DETAILS'
-            ? `📧 Solicitud de datos enviada directamente a ${to}`
-            : `📧 Confirmación de pago enviada directamente a ${to}`
-        );
-      } else {
-        showToast(`📧 Email registrado y despachado para ${to}`);
-      }
+      const data = await response.json().catch(() => ({}));
+      sent = Boolean(response.ok && data.success);
+      sendError = data?.error || '';
     } catch (err: any) {
-      showToast(`📧 Email despachado para ${to}`);
+      sendError = err?.message || '';
     }
+
+    if (!sent) {
+      showToast(`⚠️ No se pudo enviar el correo a ${to}${sendError ? `: ${sendError}` : '.'}`);
+      return;
+    }
+
+    // Recién con el correo enviado se registra (y se guarda en la base, antes quedaba solo en pantalla)
+    const changes: Partial<Expense> =
+      mode === 'REQUEST_BANK_DETAILS'
+        ? { bankDetailsRequestedAt: timestamp, updatedAt: timestamp }
+        : {
+            paymentConfirmedAt: timestamp,
+            reimbursementStatus: 'REIMBURSED',
+            reimbursedAt: timestamp.slice(0, 10),
+            updatedAt: timestamp,
+          };
+    setExpenses((prev) => prev.map((e) => (e.id === expense.id ? { ...e, ...changes } : e)));
+    const saved = await patchCentralExpenses([{ id: expense.id, changes }]);
+    showToast(
+      !saved.ok
+        ? `⚠️ Correo enviado a ${to}, pero no se pudo registrar en el sistema (${SAVE_ERROR_HINT}).`
+        : mode === 'REQUEST_BANK_DETAILS'
+        ? `📧 Solicitud de datos enviada directamente a ${to}`
+        : `📧 Confirmación de pago enviada directamente a ${to}`
+    );
   };
 
   // Payment trigger (Opens PaymentProcessModal with payment receipt upload and confirmation flow)
@@ -2071,7 +2334,16 @@ export default function App() {
 
     if (updatedItem) {
       try {
-        await upsertCentralExpenses([updatedItem]);
+        const changedFields =
+          mode === 'request_bank_details'
+            ? ['bankDetailsRequestedAt', 'updatedAt']
+            : ['paymentConfirmedAt', 'reimbursementStatus', 'reimbursedAt', 'updatedAt'];
+        const saved = await patchCentralExpenses([{ id: expenseId, changes: pickExpenseFields(updatedItem, changedFields) }]);
+        if (!saved.ok) {
+          if (targetExpense) setExpenses((prev) => prev.map((e) => (e.id === expenseId ? targetExpense : e)));
+          showToast(`⚠️ El correo salió, pero no se pudo registrar en el sistema (${SAVE_ERROR_HINT}).`);
+          return;
+        }
         await logAuditEvent({
           userEmail: currentUser?.email,
           userName: currentUser?.name,
@@ -2097,19 +2369,27 @@ export default function App() {
     );
   };
 
-  const handlePaymentCompleted = async (updatedExpense: Expense) => {
+  const handlePaymentCompleted = async (updatedExpense: Expense): Promise<boolean> => {
     const timestamped: Expense = {
       ...updatedExpense,
       updatedAt: new Date().toISOString(),
     };
-    setExpenses((prev) =>
-      prev.map((e) => (e.id === timestamped.id ? timestamped : e))
-    );
+    // Base: el comprobante tal como estaba al abrir el modal (así no se pisan cambios de otros)
+    const base = paymentModalExpense && paymentModalExpense.id === timestamped.id
+      ? paymentModalExpense
+      : expenses.find((e) => e.id === timestamped.id);
+    const original = expenses.find((e) => e.id === timestamped.id);
+    const changes = diffExpenseFields(base, timestamped);
+    setExpenses((prev) => prev.map((e) => (e.id === timestamped.id ? { ...e, ...changes, paymentProofImage: timestamped.paymentProofImage } : e)));
     if (viewingReceiptExpense && viewingReceiptExpense.id === timestamped.id) {
       setViewingReceiptExpense(timestamped);
     }
+    if (!(await saveExpenseChanges(base, timestamped))) {
+      if (original) setExpenses((prev) => prev.map((e) => (e.id === original.id ? original : e)));
+      showToast(`⚠️ No se pudo registrar el pago de "${timestamped.vendor}" (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
     try {
-      await upsertCentralExpenses([timestamped]);
       await logAuditEvent({
         userEmail: currentUser?.email,
         userName: currentUser?.name,
@@ -2122,9 +2402,9 @@ export default function App() {
       });
       showToast(`✅ Pago y comprobante registrados exitosamente para ${timestamped.submittedByName || timestamped.vendor}`);
     } catch (err) {
-      console.error('Error persisting payment in cloud:', err);
-      showToast('⚠️ Hubo un problema al sincronizar con la nube, reintentando...');
+      console.warn('Audit log error on payment:', err);
     }
+    return true;
   };
 
   const canSwitchRole = useMemo(() => {
@@ -2269,6 +2549,7 @@ export default function App() {
                 onBatchDeleteExpenses={handleBatchDeleteExpenses}
                 onBatchSettleReimbursements={handleBatchSettleReimbursements}
                 onBatchPaymentCompleted={handleBatchPaymentCompleted}
+                onBatchPaymentSave={handleBatchPaymentSave}
                 driveSettings={driveSettings}
                 onRetryDriveUpload={handleUploadExpenseToDrive}
                 onAddVendor={handleAddVendor}
@@ -2488,6 +2769,7 @@ export default function App() {
         currentUser={currentUser}
         onClose={() => setPaymentModalExpense(null)}
         onPaymentCompleted={handlePaymentCompleted}
+        onNotify={showToast}
       />
 
       <EditExpenseModal

@@ -255,8 +255,9 @@ Con **"Pagar"** se abre **"Pagar Comprobante y Liquidar Reintegro"**:
 4. **"Aplica Retenciones"** (opcional): si lo tildás, el comprobante quedará como **"Pagado - Pend. Retención"** (naranja) hasta que subas el certificado.
 5. **"Confirmar Pago"**. Al confirmar, el sistema:
    - Sube el comprobante de transferencia a la **carpeta de Comprobantes de Pago y Retenciones** (ver §7.9). Si esa carpeta no está configurada, lo sube a la carpeta del centro de costos.
-   - **Envía un correo de confirmación** al solicitante (con copia automática — ver §8.3), con los datos de la transferencia y la constancia adjunta.
    - Marca el comprobante como **Pagado / Reintegrado** con su fecha.
+   - Recién entonces **envía un correo de confirmación** al solicitante (con copia automática — ver §8.3), con los datos de la transferencia y la constancia adjunta. Si el pago no se pudo registrar, **no sale ningún correo**; si el correo falla, el pago queda registrado y la app avisa que no se envió.
+   - Elegir **"Pagado"** desde *Editar comprobante* ya no lo marca pagado directamente: guarda los cambios y abre esta misma ventana de pago.
 
 ### 7.4 Pago en lote
 
@@ -265,6 +266,8 @@ Con varias filas seleccionadas y **"Pagar"** se abre **"Liquidación y Pago en L
 - **"Enviar aviso de liquidación por email a los solicitantes"** (recomendado, activado por defecto) con la lista de destinatarios.
 - Podés adjuntar **un único comprobante de transferencia** que se envía en todos los correos.
 - Opción **"Aplica retenciones"**.
+- Solo incluye comprobantes **pendientes**: los gastos con tarjeta corporativa o débito (que no se reintegran) quedan afuera aunque estén seleccionados.
+- El pago se registra **antes** de enviar los correos: si no se pudo registrar, no se avisa a nadie.
 - **"Confirmar y Pagar (N)"** marca todos como Pagados y envía los correos.
 
 > **Constancia en Drive:** igual que el pago individual, el pago **en lote** sube la constancia a la **carpeta de Comprobantes de Pago y Retenciones** (§7.9). Como el lote se usa para **una única transferencia que reintegra varios comprobantes**, se sube **un solo archivo** (nombre `SIGLA-Solicitante-AAAAMMDD-Total-ComprobantePago-Lote-…`) y queda vinculado a todos los comprobantes del lote. Si después se revierte o elimina uno de ellos, el archivo **se conserva** mientras algún otro comprobante lo siga usando.
@@ -299,13 +302,15 @@ La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas banc
   - **Controles:** alias y CBU/CVU **duplicados están prohibidos**; un CUIT duplicado se permite solo tildando una confirmación.
 - **Importar CSV:** pegá filas desde Google Sheets/Excel o subí un archivo `.csv/.tsv`. Detecta columnas y duplicados y muestra una previsualización antes de importar.
 - **Ver gastos de un proveedor:** botón **"Gastos"** lleva a *Gestión de Pagos* filtrado por ese proveedor.
-- **Eliminar:** si el proveedor tiene comprobantes vinculados, la aplicación **desvincula los datos de cuenta** de esos comprobantes pero **conserva el nombre/factura**.
+- **Editar:** los cambios de nombre, CUIT o cuenta se copian a los comprobantes **pendientes** de ese proveedor. Los comprobantes **ya pagados** conservan los datos con los que se pagaron.
+- **Eliminar:** si el proveedor tiene comprobantes pendientes vinculados, la aplicación **desvincula los datos de cuenta** de esos comprobantes pero **conserva el nombre/factura** (los pagados no se modifican).
 
 ### 7.9 Centros de Costos
 
 La pestaña **"Centro de Costos"** gestiona las **siglas** y su vínculo con **carpetas de Google Drive**.
 - **Nuevo Centro de Costos:** *Sigla* (mayúsculas, hasta 8 caracteres), *Nombre* (obligatorio), *Link de Google Drive* (pegás la URL de la carpeta y el nombre se detecta solo) y *Emails en copia* (las personas que se ponen en CC de todo correo relacionado con ese centro de costos).
 - **Tabla:** Sigla (clic para copiar), Nombre, Emails en Copia, Carpeta/Link de Drive y acciones (editar en línea / eliminar).
+- **Renombrar** un centro de costos (o una categoría) lo actualiza en **todos** los comprobantes de la base, no solo en los que se ven en pantalla.
 - **Carpeta de Comprobantes de Pago y Retenciones** (recuadro arriba de todo, *no es un centro de costos*): acá se define **una única carpeta de Drive** donde van **todos** los comprobantes de pago y certificados de retención, sin importar el centro de costos del gasto. Pegás el link de la carpeta (el nombre se detecta solo), **"Guardar"**; se puede **"Cambiar carpeta"** o **"Quitar"**. Solo los administradores pueden modificarla. Mientras no esté configurada, esos archivos van a la carpeta del centro de costos. Cambiarla **no mueve** los archivos ya subidos.
 
 > Los **totales por centro de costos** no se muestran en esta pestaña; se obtienen exportando o filtrando en *Gestión de Pagos*.

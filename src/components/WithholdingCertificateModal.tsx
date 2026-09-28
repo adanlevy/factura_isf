@@ -44,7 +44,11 @@ interface WithholdingCertificateModalProps {
   // Carpeta única de comprobantes de pago y retenciones (Centro de Costos > configuración)
   driveSettings?: DriveSettings | null;
   appUsers?: AppUserRecord[];
-  onSaved: (updatedExpense: Expense) => void;
+  /** Guarda el certificado; devuelve false si no se pudo registrar. */
+  onSaved: (
+    updatedExpense: Expense,
+    emailOutcome?: { attempted: boolean; sent: boolean; error?: string }
+  ) => Promise<boolean | void> | boolean | void;
   onRevertPayment?: (expenseId: string) => void;
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
@@ -188,6 +192,7 @@ export function WithholdingCertificateModal({
 
     // 2. Send email notification if enabled
     let emailSent = false;
+    let emailError: string | undefined;
     if (sendEmail && recipientEmail) {
       try {
         const token = currentUserAccessToken || getStoredWorkspaceToken();
@@ -250,7 +255,7 @@ export function WithholdingCertificateModal({
           appUsers,
         });
 
-        await sendGmailMessage({
+        const sendRes = await sendGmailMessage({
           to: recipientEmail,
           cc: ccRecipients.length > 0 ? ccRecipients : undefined,
           subject,
@@ -259,9 +264,12 @@ export function WithholdingCertificateModal({
           fromName: user?.name || 'ISF Finanzas',
           attachments,
         });
-        emailSent = true;
-      } catch (emailErr) {
+        // Solo queda como "enviado" si Gmail lo aceptó
+        emailSent = sendRes.success;
+        emailError = sendRes.error;
+      } catch (emailErr: any) {
         console.warn('Withholding email send fallback:', emailErr);
+        emailError = emailErr?.message;
       }
     }
 
@@ -277,8 +285,16 @@ export function WithholdingCertificateModal({
       updatedAt: timestamp,
     };
 
+    const saved = await onSaved(updatedExpense, {
+      attempted: Boolean(sendEmail && recipientEmail),
+      sent: emailSent,
+      error: emailError,
+    });
     setIsExecuting(false);
-    onSaved(updatedExpense);
+    if (saved === false) {
+      alert('No se pudo registrar el certificado en el sistema (sin permisos o sin conexión). Probá de nuevo.');
+      return;
+    }
     onClose();
   };
 

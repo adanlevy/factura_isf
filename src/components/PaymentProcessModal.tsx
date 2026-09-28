@@ -35,7 +35,9 @@ interface PaymentProcessModalProps {
   // Carpeta única de comprobantes de pago y retenciones (Centro de Costos > configuración)
   driveSettings?: DriveSettings | null;
   appUsers?: AppUserRecord[];
-  onPaymentCompleted: (updatedExpense: Expense) => void;
+  /** Registra el pago; devuelve false si no se pudo guardar. */
+  onPaymentCompleted: (updatedExpense: Expense) => Promise<boolean | void> | boolean | void;
+  onNotify?: (message: string) => void;
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
 }
@@ -48,6 +50,7 @@ export function PaymentProcessModal({
   driveSettings = null,
   appUsers = [],
   onPaymentCompleted,
+  onNotify,
   currentUser,
   currentUserAccessToken,
 }: PaymentProcessModalProps) {
@@ -193,7 +196,41 @@ export function PaymentProcessModal({
       cachePaymentProofFile(expense.id, paymentProofBase64).catch(() => {});
     }
 
-    // 2. Build email and send confirmation to submitter
+    // 2. Registrar el pago ANTES de avisar: si la base lo rechaza, no sale el correo de "ya te pagamos"
+    const currentTransferSnapshot =
+      expense.transferDetails ||
+      formatTransferDetails(expense) ||
+      (expense.bankDetails ? formatTransferDetails({ bankDetails: expense.bankDetails, vendor: expense.vendor, cuit: expense.cuit }) : '');
+
+    const updatedExpense: Expense = {
+      ...expense,
+      reimbursementStatus: 'REIMBURSED',
+      reimbursedAt: timestamp.slice(0, 10),
+      paymentConfirmedAt: timestamp,
+      updatedAt: timestamp,
+      transferDetails: currentTransferSnapshot || expense.transferDetails,
+      appliesWithholdings: appliesWithholdings,
+      paymentProofImage: paymentProofBase64 || expense.paymentProofImage,
+      paymentProofFileName: paymentProofFileName || expense.paymentProofFileName,
+      paymentProofAt: paymentProofBase64 ? timestamp : expense.paymentProofAt,
+      paymentProofDriveUrl: finalPaymentProofUrl || expense.paymentProofDriveUrl,
+      driveUploadedFileName: expense.driveUploadedFileName || normalizedFileName,
+      driveFolderTarget: expense.driveFolderTarget || folderName,
+      driveUploadedUrl: expense.driveUploadedUrl || folderUrl,
+      driveUploadStatus: expense.driveUploadStatus || 'SUCCESS',
+      driveUploadedAt: expense.driveUploadedAt || timestamp,
+    };
+
+    const saved = await onPaymentCompleted(updatedExpense);
+    if (saved === false) {
+      setIsExecuting(false);
+      alert('No se pudo registrar el pago en el sistema (sin permisos o sin conexión). No se envió el correo.');
+      return;
+    }
+
+    // 3. Build email and send confirmation to submitter
+    let emailOk = false;
+    let emailError: string | undefined;
     const isPdfProof = paymentProofFileName?.toLowerCase().endsWith('.pdf');
     const isImageProof = Boolean(paymentProofBase64 && !isPdfProof);
 
@@ -297,7 +334,7 @@ export function PaymentProcessModal({
         appUsers,
       });
 
-      await sendGmailMessage({
+      const sendRes = await sendGmailMessage({
         to: recipientEmail,
         cc: ccRecipients.length > 0 ? ccRecipients : undefined,
         subject: emailSubject,
@@ -306,37 +343,18 @@ export function PaymentProcessModal({
         fromName: user?.name || 'ISF Finanzas',
         attachments,
       });
-    } catch (emailErr) {
+      emailOk = sendRes.success;
+      emailError = sendRes.error;
+    } catch (emailErr: any) {
       console.warn('Email notification error fallback:', emailErr);
+      emailError = emailErr?.message;
     }
 
-    // 3. Update expense model
-    const currentTransferSnapshot =
-      expense.transferDetails ||
-      formatTransferDetails(expense) ||
-      (expense.bankDetails ? formatTransferDetails({ bankDetails: expense.bankDetails, vendor: expense.vendor, cuit: expense.cuit }) : '');
-
-    const updatedExpense: Expense = {
-      ...expense,
-      reimbursementStatus: 'REIMBURSED',
-      reimbursedAt: timestamp.slice(0, 10),
-      paymentConfirmedAt: timestamp,
-      updatedAt: timestamp,
-      transferDetails: currentTransferSnapshot || expense.transferDetails,
-      appliesWithholdings: appliesWithholdings,
-      paymentProofImage: paymentProofBase64 || expense.paymentProofImage,
-      paymentProofFileName: paymentProofFileName || expense.paymentProofFileName,
-      paymentProofAt: paymentProofBase64 ? timestamp : expense.paymentProofAt,
-      paymentProofDriveUrl: finalPaymentProofUrl || expense.paymentProofDriveUrl,
-      driveUploadedFileName: expense.driveUploadedFileName || normalizedFileName,
-      driveFolderTarget: expense.driveFolderTarget || folderName,
-      driveUploadedUrl: expense.driveUploadedUrl || folderUrl,
-      driveUploadStatus: expense.driveUploadStatus || 'SUCCESS',
-      driveUploadedAt: expense.driveUploadedAt || timestamp,
-    };
-
+    // 4. Aviso final
     setIsExecuting(false);
-    onPaymentCompleted(updatedExpense);
+    if (!emailOk) {
+      onNotify?.(`⚠️ Pago registrado, pero no se pudo enviar el correo a ${recipientEmail}${emailError ? `: ${emailError}` : '.'}`);
+    }
     onClose();
   };
 

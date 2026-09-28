@@ -343,13 +343,25 @@ export function EditExpenseModal({
         updatedAt: new Date().toISOString(),
       };
 
+      // Con el flujo de pago disponible, NO se marca como pagado acá: se guardan los datos editados
+      // y se abre "Pagar"; recién al confirmar el pago queda Pagado (con constancia y correo).
+      // Antes quedaba pagado aunque se cancelara el pago.
+      const expenseToSave: Expense =
+        onProcessPayment && isPendingType
+          ? {
+              ...updatedExpense,
+              reimbursementStatus: expense?.reimbursementStatus === 'REIMBURSED' ? 'REIMBURSED' : 'PENDING',
+              reimbursedAt: expense?.reimbursementStatus === 'REIMBURSED' ? expense?.reimbursedAt : undefined,
+            }
+          : updatedExpense;
+
       setIsSaving(true);
       try {
-        await onUpdate(updatedExpense);
+        await onUpdate(expenseToSave);
         onClose();
 
-        if (onProcessPayment) {
-          onProcessPayment(updatedExpense);
+        if (onProcessPayment && expenseToSave.reimbursementStatus === 'PENDING') {
+          onProcessPayment(expenseToSave);
         }
       } catch (err: any) {
         alert('Error al actualizar comprobante en Firestore: ' + (err.message || err));
@@ -383,14 +395,18 @@ export function EditExpenseModal({
       (bankData.cbuCvu?.trim() || bankData.alias?.trim() || bankData.bankName?.trim() || bankData.accountHolder?.trim() || bankData.cuitCuil?.trim())
     );
 
-    if (hasBank && (bankData.cbuCvu || bankData.alias || bankData.bankName)) {
-      notifyBankDetailsChange({
-        updatedBy: { email: currentUser?.email || 'admin@isf-argentina.org', name: currentUser?.name || 'Administrador' },
-        targetType: paymentType === 'PAGO_PROVEEDOR' ? 'vendor' : 'user',
-        targetName: paymentType === 'PAGO_PROVEEDOR' ? `Proveedor: ${formData.vendor}` : `Colaborador: ${formData.submittedByName || currentUser?.name || 'Usuario'}`,
-        bankDetails: bankData,
-      }).catch((err) => console.warn('Bank details notification error:', err));
-    }
+    // El aviso a Administración sale solo si los datos bancarios cambiaron, y después de guardar
+    const norm = (v?: string) => (v || '').trim().toLowerCase();
+    const prevBank = expense?.bankDetails;
+    const bankChanged = Boolean(
+      hasBank &&
+        (bankData.cbuCvu || bankData.alias || bankData.bankName) &&
+        (norm(prevBank?.cbuCvu) !== norm(bankData.cbuCvu) ||
+          norm(prevBank?.alias) !== norm(bankData.alias) ||
+          norm(prevBank?.bankName) !== norm(bankData.bankName) ||
+          norm(prevBank?.accountHolder) !== norm(bankData.accountHolder) ||
+          norm(prevBank?.cuitCuil) !== norm(bankData.cuitCuil))
+    );
 
     const isPendingType = paymentType === 'REINTEGRO' || paymentType === 'PAGO_PROVEEDOR';
     const computedStatus: ReimbursementStatus = allowStatusChange
@@ -426,9 +442,17 @@ export function EditExpenseModal({
             : undefined,
         updatedAt: new Date().toISOString(),
       });
+      if (bankChanged) {
+        notifyBankDetailsChange({
+          updatedBy: { email: currentUser?.email || 'admin@isf-argentina.org', name: currentUser?.name || 'Administrador' },
+          targetType: paymentType === 'PAGO_PROVEEDOR' ? 'vendor' : 'user',
+          targetName: paymentType === 'PAGO_PROVEEDOR' ? `Proveedor: ${formData.vendor}` : `Colaborador: ${formData.submittedByName || currentUser?.name || 'Usuario'}`,
+          bankDetails: bankData,
+        }).catch((err) => console.warn('Bank details notification error:', err));
+      }
       onClose();
     } catch (err: any) {
-      alert('Error al guardar comprobante en Firestore: ' + (err.message || err));
+      alert('Error al guardar comprobante: ' + (err.message || err));
     } finally {
       setIsSaving(false);
     }

@@ -61,7 +61,12 @@ interface AdminMovementViewProps {
   onDeleteExpense?: (id: string) => void;
   onBatchDeleteExpenses?: (ids: string[]) => void;
   onBatchSettleReimbursements: (ids: string[]) => void;
-  onBatchPaymentCompleted?: (updatedExpenses: Expense[], emailsSentCount: number) => Promise<void> | void;
+  onBatchPaymentCompleted?: (
+    updatedExpenses: Expense[],
+    emailsSentCount: number,
+    info?: { failedCount: number; emailsExpected: number }
+  ) => Promise<void> | void;
+  onBatchPaymentSave?: (updatedExpenses: Expense[]) => Promise<string[]>;
   appUsers?: AppUserRecord[];
   currentUser?: UserProfile;
   driveSettings?: DriveSettings | null;
@@ -100,6 +105,7 @@ export function AdminMovementView({
   onBatchDeleteExpenses,
   onBatchSettleReimbursements,
   onBatchPaymentCompleted,
+  onBatchPaymentSave,
   onRetryDriveUpload,
   onAddVendor,
   onUpdateVendor,
@@ -334,7 +340,7 @@ export function AdminMovementView({
   // Mass actions
   const handleOpenBatchSettleModal = () => {
     const pendingSelectedIds = selectedExpenses
-      .filter((e) => e.reimbursementStatus !== 'REIMBURSED')
+      .filter((e) => e.reimbursementStatus === 'PENDING')
       .map((e) => e.id);
     if (pendingSelectedIds.length === 0) {
       setBatchSettleWarning('Ninguno de los comprobantes seleccionados está en estado pendiente de pago.');
@@ -346,7 +352,7 @@ export function AdminMovementView({
 
   const handleConfirmBatchSettle = () => {
     const pendingSelectedIds = selectedExpenses
-      .filter((e) => e.reimbursementStatus !== 'REIMBURSED')
+      .filter((e) => e.reimbursementStatus === 'PENDING')
       .map((e) => e.id);
     if (pendingSelectedIds.length > 0) {
       onBatchSettleReimbursements(pendingSelectedIds);
@@ -1380,15 +1386,19 @@ export function AdminMovementView({
       <BatchPaymentModal
         isOpen={showBatchSettleModal}
         onClose={() => setShowBatchSettleModal(false)}
-        expenses={selectedExpenses.filter((e) => e.reimbursementStatus !== 'REIMBURSED')}
+        // Solo pendientes: los gastos con tarjeta corporativa / débito (NOT_APPLICABLE) no se reintegran
+        expenses={selectedExpenses.filter((e) => e.reimbursementStatus === 'PENDING')}
         costCenters={costCenters}
         vendors={vendors}
         appUsers={appUsers}
         currentUser={currentUser}
         driveSettings={driveSettings}
-        onPaymentCompleted={async (updatedExpenses, emailsSentCount) => {
+        onSavePayments={async (updatedExpenses) =>
+          onBatchPaymentSave ? onBatchPaymentSave(updatedExpenses) : updatedExpenses.map((e) => e.id)
+        }
+        onPaymentCompleted={async (updatedExpenses, emailsSentCount, info) => {
           if (onBatchPaymentCompleted) {
-            await onBatchPaymentCompleted(updatedExpenses, emailsSentCount);
+            await onBatchPaymentCompleted(updatedExpenses, emailsSentCount, info);
           } else {
             onBatchSettleReimbursements(updatedExpenses.map((e) => e.id));
           }
