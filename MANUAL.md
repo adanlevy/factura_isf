@@ -326,6 +326,7 @@ La pestaña **"Usuarios / Roles"** administra quién puede entrar y con qué per
 - **Protección:** no se puede quitar ni degradar al **último administrador**, ni eliminar tu propio usuario.
 - **Personas con comprobantes pero sin registro:** el botón **"Buscar personas sin registro"** revisa todos los comprobantes y lista a quienes los cargaron y no están en la tabla (por ejemplo, cuentas @isf-argentina.org que antes entraban automáticamente). Se eligen y se dan de alta como colaboradores con un clic (sin correo de bienvenida).
 - **Alertas de cambios bancarios:** cuando alguien carga o cambia datos bancarios, el aviso se envía a **todos los administradores** de la tabla.
+- **Un registro por persona:** las primeras versiones guardaban a cada usuario con una clave "limpia" (`juan_isf-argentina_org`). La app los unifica sola al registro con el email (`juan@isf-argentina.org`) cuando entra un administrador: si había dos, se conserva el rol del registro con email y la diferencia queda anotada en el Log de Cambios.
 
 > **Instalación inicial:** si la tabla no tiene ningún administrador, el servidor da de alta como admin las cuentas indicadas en la variable de entorno `ADMIN_EMAILS` (separadas por coma). Con al menos un admin en la tabla, esa variable no tiene efecto.
 

@@ -76,6 +76,7 @@ import {
   fetchCentralUsers,
   saveCentralUser,
   findUnregisteredSubmitters,
+  unifyLegacyUserDocs,
   deleteCentralUser,
   subscribeToUsersFirestore,
   getLocalUsersCache,
@@ -174,6 +175,7 @@ export default function App() {
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
+  const legacyUsersUnifiedRef = useRef(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
@@ -471,6 +473,35 @@ export default function App() {
     const unsubscribe = subscribeToDriveSettings(setDriveSettings);
     return () => unsubscribe();
   }, [isFirebaseAuthReady, currentUser?.email]);
+
+  // Unificación de la tabla de usuarios (registros con clave vieja juan_dominio_org -> juan@dominio.org).
+  // La hace el primer Admin que entra en la sesión; si no hay registros viejos, no escribe nada.
+  useEffect(() => {
+    if (!isFirebaseAuthReady || currentUser?.role !== 'admin' || legacyUsersUnifiedRef.current) return;
+    legacyUsersUnifiedRef.current = true;
+    unifyLegacyUserDocs()
+      .then(async (res) => {
+        const total = res.migrated.length + res.removed.length;
+        if (total === 0 && res.failed.length === 0) return;
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'USER_ROLE_CHANGE',
+          actionLabel: 'Unificación de Registros de Usuarios',
+          entityType: 'user',
+          entityId: 'unify-legacy-users',
+          entityName: `${total} registro(s)`,
+          summary:
+            `Se unificaron registros de usuarios con el formato viejo de clave.` +
+            (res.migrated.length ? ` Pasados al formato actual: ${res.migrated.join(', ')}.` : '') +
+            (res.removed.length ? ` Duplicados viejos eliminados: ${res.removed.join(', ')}.` : '') +
+            (res.roleConflicts.length ? ` Con rol distinto en el registro viejo (se conservó el actual): ${res.roleConflicts.join(', ')}.` : '') +
+            (res.failed.length ? ` No se pudieron unificar: ${res.failed.join(', ')}.` : ''),
+        }).catch(() => {});
+        if (total > 0) showToast(`👥 Tabla de usuarios unificada: ${total} registro(s) duplicado(s) o en formato viejo corregido(s).`);
+      })
+      .catch((err) => console.warn('No se pudo unificar la tabla de usuarios:', err));
+  }, [isFirebaseAuthReady, currentUser?.role, currentUser?.email]);
 
   const handleSaveDriveSettings = async (next: DriveSettings): Promise<boolean> => {
     const previous = driveSettings;

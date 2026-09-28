@@ -1661,6 +1661,51 @@ export function subscribeToUsersFirestore(
  * app_users/{email}, así que se crea ese documento canónico copiando el mismo rol
  * (las reglas solo permiten copiar el rol que ya asignó un admin).
  */
+/**
+ * Unifica la tabla de usuarios: las primeras versiones guardaban a cada persona con una clave
+ * "limpia" (juan_isf-argentina_org) y hoy la clave es el email (juan@isf-argentina.org).
+ * Por cada registro viejo: si ya existe el registro con email, se completa con los datos que le
+ * falten (nunca el rol: vale el del registro con email) y se borra el viejo; si no existe, se crea
+ * con el mismo rol y se borra el viejo. Solo Admin.
+ */
+export async function unifyLegacyUserDocs(): Promise<{ migrated: string[]; removed: string[]; roleConflicts: string[]; failed: string[] }> {
+  const result = { migrated: [] as string[], removed: [] as string[], roleConflicts: [] as string[], failed: [] as string[] };
+  const snap = await getDocs(collection(db, 'app_users'));
+  const byId = new Map(snap.docs.map((d) => [d.id, d.data() as AppUserRecord]));
+
+  for (const [docId, data] of byId) {
+    const email = String(data?.email || '').toLowerCase().trim();
+    // Solo registros viejos: clave distinta del email y que coincide con su versión "limpia"
+    if (!email || docId === email || docId !== email.replace(/[^a-zA-Z0-9_-]/g, '_')) continue;
+    try {
+      const canonical = byId.get(email);
+      const batch = writeBatch(db);
+      if (canonical) {
+        if (data.role && canonical.role && data.role !== canonical.role) result.roleConflicts.push(email);
+        // Datos que el registro con email no tenga (el rol no se toca)
+        const missing: Record<string, unknown> = {};
+        for (const key of ['name', 'picture', 'notes', 'createdAt', 'ccAllOutgoingEmails', 'addedBy'] as const) {
+          if ((canonical as any)[key] === undefined && (data as any)[key] !== undefined) missing[key] = (data as any)[key];
+        }
+        if (Object.keys(missing).length > 0) batch.set(doc(db, 'app_users', email), missing, { merge: true });
+        result.removed.push(email);
+      } else {
+        if (data.role !== 'admin' && data.role !== 'user') continue; // sin rol válido: no se migra
+        batch.set(doc(db, 'app_users', email), sanitizeForFirestore({ ...data, email, updatedAt: new Date().toISOString() }));
+        result.migrated.push(email);
+      }
+      batch.delete(doc(db, 'app_users', docId));
+      await batch.commit();
+    } catch (e) {
+      console.warn(`[Usuarios] No se pudo unificar el registro viejo ${docId}:`, e);
+      result.failed.push(email);
+      result.migrated = result.migrated.filter((x) => x !== email);
+      result.removed = result.removed.filter((x) => x !== email);
+    }
+  }
+  return result;
+}
+
 async function migrateLegacyUserDoc(cleanEmail: string, legacy: AppUserRecord): Promise<void> {
   if ((auth.currentUser?.email || '').toLowerCase().trim() !== cleanEmail) return;
   const canonical: Record<string, unknown> = {

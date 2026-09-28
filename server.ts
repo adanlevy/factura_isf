@@ -825,31 +825,39 @@ function legacyUserKey(email: string): string {
 }
 
 /**
- * Crea el documento canónico app_users/{email} para usuarios registrados con la clave de las
- * primeras versiones (p. ej. juan_gmail_com). Las reglas de Firestore identifican a los usuarios
- * por email: sin esto, un usuario @gmail.com registrado hace tiempo no podría leer datos.
- * No toca los documentos viejos y saltea usuarios dados de baja.
+ * Unifica la tabla de usuarios al iniciar: las primeras versiones guardaban a cada persona con una
+ * clave "limpia" (juan_gmail_com). Si ya existe app_users/{email}, se completa con los datos que le
+ * falten (el rol no se toca) y se borra el viejo; si no existe, se crea con el mismo rol y se borra
+ * el viejo. Así queda un registro por persona.
  */
 async function migrateLegacyUserDocs() {
   if (!adminDb) return;
   try {
-    const deleted = new Set(getDeletedUsersList().map((e) => e.toLowerCase().trim()));
     const snap = await adminDb.collection("app_users").get();
-    const canonicalIds = new Set(snap.docs.map((d) => d.id));
-    let migrated = 0;
-    for (const legacyDoc of snap.docs) {
-      const data = legacyDoc.data() || {};
-      const email = String(data.email || "").toLowerCase().trim();
-      if (!email || legacyDoc.id === email || canonicalIds.has(email) || deleted.has(email)) continue;
-      if (legacyDoc.id !== legacyUserKey(email)) continue;
-      if (data.role !== "admin" && data.role !== "user") continue;
-      await adminDb.collection("app_users").doc(email).set({ ...data, email, updatedAt: new Date().toISOString() });
-      canonicalIds.add(email);
-      migrated++;
+    const byId = new Map(snap.docs.map((d) => [d.id, d.data() || {}]));
+    let unified = 0;
+    for (const [docId, data] of byId) {
+      const email = String((data as any).email || "").toLowerCase().trim();
+      if (!email || docId === email || docId !== legacyUserKey(email)) continue;
+      const canonical = byId.get(email) as any;
+      const batch = adminDb.batch();
+      if (canonical) {
+        const missing: Record<string, unknown> = {};
+        for (const key of ["name", "picture", "notes", "createdAt", "ccAllOutgoingEmails", "addedBy"]) {
+          if (canonical[key] === undefined && (data as any)[key] !== undefined) missing[key] = (data as any)[key];
+        }
+        if (Object.keys(missing).length > 0) batch.set(adminDb.collection("app_users").doc(email), missing, { merge: true });
+      } else {
+        if ((data as any).role !== "admin" && (data as any).role !== "user") continue;
+        batch.set(adminDb.collection("app_users").doc(email), { ...data, email, updatedAt: new Date().toISOString() });
+      }
+      batch.delete(adminDb.collection("app_users").doc(docId));
+      await batch.commit();
+      unified++;
     }
-    if (migrated > 0) console.log(`[Users] Migrados ${migrated} usuario(s) del formato de clave viejo a app_users/{email}.`);
+    if (unified > 0) console.log(`[Users] Unificados ${unified} registro(s) de usuario con clave vieja.`);
   } catch (e: any) {
-    console.warn("[Users] No se pudo migrar usuarios con clave vieja:", e?.message || e);
+    console.warn("[Users] No se pudo unificar la tabla de usuarios:", e?.message || e);
   }
 }
 
@@ -1335,10 +1343,6 @@ app.post("/api/auth/resolve-role", authenticateFirebaseUser, (req, res) => {
   res.json({ role: req.user?.role || null, canSwitchRole: Boolean(req.user?.canSwitchRole) });
 });
 
-// Helper: Read tombstoned deleted users
-function getDeletedUsersList(): string[] {
-  return readCollection<string[]>("deleted-users", []);
-}
 
 // Instalación inicial: si la tabla de usuarios no tiene ningún administrador y se configuró
 // ADMIN_EMAILS, esas cuentas se dan de alta como admin. Con al menos un admin, no hace nada.
