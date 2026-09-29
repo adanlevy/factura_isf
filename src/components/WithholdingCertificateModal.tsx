@@ -45,10 +45,9 @@ interface WithholdingCertificateModalProps {
   driveSettings?: DriveSettings | null;
   appUsers?: AppUserRecord[];
   /** Guarda el certificado; devuelve false si no se pudo registrar. */
-  onSaved: (
-    updatedExpense: Expense,
-    emailOutcome?: { attempted: boolean; sent: boolean; error?: string }
-  ) => Promise<boolean | void> | boolean | void;
+  onSaved: (updatedExpense: Expense, info?: { emailPending: boolean }) => Promise<boolean | void> | boolean | void;
+  /** Resultado del correo con el certificado (después de guardarlo) */
+  onEmailResult?: (expenseId: string, result: { sent: boolean; error?: string; sentAt: string }) => void;
   onRevertPayment?: (expenseId: string) => void;
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
@@ -62,6 +61,7 @@ export function WithholdingCertificateModal({
   driveSettings = null,
   appUsers = [],
   onSaved,
+  onEmailResult,
   onRevertPayment,
   currentUser,
   currentUserAccessToken,
@@ -190,7 +190,26 @@ export function WithholdingCertificateModal({
       cacheWithholdingCertificateFile(expense.id, fileBase64).catch(() => {});
     }
 
-    // 2. Send email notification if enabled
+    // 2. Registrar el certificado ANTES de avisar: si la base lo rechaza, no sale el correo
+    const willEmail = Boolean(sendEmail && recipientEmail);
+    const updatedExpense: Expense = {
+      ...expense,
+      appliesWithholdings: true,
+      withholdingCertificateImage: fileBase64,
+      withholdingCertificateFileName: fileName,
+      withholdingCertificateUploadedAt: timestamp,
+      withholdingCertificateDriveUrl: finalDriveUrl,
+      updatedAt: timestamp,
+    };
+
+    const saved = await onSaved(updatedExpense, { emailPending: willEmail });
+    if (saved === false) {
+      setIsExecuting(false);
+      alert('No se pudo registrar el certificado en el sistema (sin permisos o sin conexión). No se envió el correo.');
+      return;
+    }
+
+    // 3. Send email notification if enabled
     let emailSent = false;
     let emailError: string | undefined;
     if (sendEmail && recipientEmail) {
@@ -273,28 +292,12 @@ export function WithholdingCertificateModal({
       }
     }
 
-    // 3. Update expense object
-    const updatedExpense: Expense = {
-      ...expense,
-      appliesWithholdings: true,
-      withholdingCertificateImage: fileBase64,
-      withholdingCertificateFileName: fileName,
-      withholdingCertificateUploadedAt: timestamp,
-      withholdingCertificateDriveUrl: finalDriveUrl,
-      withholdingCertificateSentAt: emailSent ? timestamp : expense.withholdingCertificateSentAt,
-      updatedAt: timestamp,
-    };
 
-    const saved = await onSaved(updatedExpense, {
-      attempted: Boolean(sendEmail && recipientEmail),
-      sent: emailSent,
-      error: emailError,
-    });
-    setIsExecuting(false);
-    if (saved === false) {
-      alert('No se pudo registrar el certificado en el sistema (sin permisos o sin conexión). Probá de nuevo.');
-      return;
+    // 4. Resultado del correo (se registra la fecha de envío solo si Gmail lo aceptó)
+    if (willEmail) {
+      onEmailResult?.(expense.id, { sent: emailSent, error: emailError, sentAt: timestamp });
     }
+    setIsExecuting(false);
     onClose();
   };
 

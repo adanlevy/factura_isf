@@ -115,6 +115,8 @@ export interface ExpenseQueryOptions {
   period?: '30days' | 'currentYear' | 'lastYear' | 'all' | string;
   costCenter?: string;
   limitCount?: number;
+  /** Solo los comprobantes de esta persona (vista de Colaborador): todos, sin límite ni paginación */
+  submittedByEmail?: string;
 }
 
 export interface SyncPayload {
@@ -131,6 +133,8 @@ export interface UserPreferencesPayload {
   categoryCostCenterPatterns?: Record<string, Record<string, number>>;
   lastSelectedCostCenter?: string;
   theme?: string;
+  /** Datos bancarios del perfil (privados: las reglas solo dejan leerlos a su dueño) */
+  bankDetails?: Record<string, any>;
 }
 
 // Persistent tombstone tracking of deleted expenses across sessions and browser tabs
@@ -504,6 +508,11 @@ export function mergeVendorsList(local: Vendor[], incoming: Vendor[]): Vendor[] 
  */
 export function buildExpensesFirestoreQuery(options?: ExpenseQueryOptions) {
   const expensesCol = collection(db, 'expenses');
+  // Colaborador: TODOS sus comprobantes (antes veía solo los suyos que caían entre los últimos 50
+  // de toda la organización). Sin orderBy para no requerir un índice compuesto: se ordena en pantalla.
+  if (options?.submittedByEmail) {
+    return query(expensesCol, where('submittedByEmail', '==', options.submittedByEmail.toLowerCase().trim()));
+  }
   const constraints: QueryConstraint[] = [];
   const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
 
@@ -553,7 +562,7 @@ export async function fetchExpensesPage(options?: ExpenseQueryOptions): Promise<
     const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
     return {
       expenses,
-      hasMore: snap.size >= limitCount,
+      hasMore: options?.submittedByEmail ? false : snap.size >= limitCount,
     };
   } catch (err) {
     console.warn('[Firestore] Query with constraints failed, trying fallback query:', err);
@@ -601,7 +610,7 @@ export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<S
     const expenses: Expense[] = [];
     expensesSnap.forEach((d) => expenses.push(d.data() as Expense));
     const limitCount = options?.limitCount || 50;
-    const hasMore = expensesSnap.size >= limitCount;
+    const hasMore = options?.submittedByEmail ? false : expensesSnap.size >= limitCount;
 
     let vendors: Vendor[] = [];
     vendorsSnap.forEach((d) => vendors.push(normalizeVendorBankDetails(d.data() as Vendor)));
@@ -720,11 +729,30 @@ function handleExpensesSnapshot(
 /**
  * Real-time Firestore Subscriptions with query-level filtering and pagination support.
  */
+/**
+ * Admin: todos los comprobantes pendientes de pago, siempre cargados (además de la página actual),
+ * para que Gestión de Pagos, los totales y el pago en lote no dependan de la paginación.
+ */
+export function subscribeToPendingExpenses(onUpdate: (payload: RealtimeUpdate) => void): () => void {
+  return onSnapshot(
+    query(collection(db, 'expenses'), where('reimbursementStatus', '==', 'PENDING')),
+    (snap) =>
+      handleExpensesSnapshot(snap, Number.POSITIVE_INFINITY, (payload) => {
+        // hasMore es de la página principal: esta suscripción no lo toca
+        const { hasMore: _ignored, ...rest } = payload as any;
+        onUpdate(rest);
+      }),
+    (err) => console.warn('[Firestore Live] pending expenses listener note:', err.message)
+  );
+}
+
 export function subscribeToRealtimeFirestore(
   onUpdate: (payload: Partial<SyncPayload> & { hasMore?: boolean }) => void,
   options?: ExpenseQueryOptions
 ): () => void {
-  const currentLimit = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
+  const currentLimit = options?.submittedByEmail
+    ? Number.POSITIVE_INFINITY
+    : options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
   let expensesQuery;
   try {
     expensesQuery = buildExpensesFirestoreQuery(options);
@@ -1442,10 +1470,12 @@ export async function saveUserCloudPreferences(userEmail: string, preferences: U
     const docRef = doc(db, 'user_preferences', safeKey);
     await setDoc(docRef, sanitizeForFirestore({ ...preferences, email: userEmail }), { merge: true });
 
+    // El espejo del servidor no guarda datos bancarios
+    const { bankDetails: _bank, ...serverPrefs } = preferences;
     authFetch('/api/data/user-prefs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: userEmail, preferences }),
+      body: JSON.stringify({ email: userEmail, preferences: serverPrefs }),
     }).catch(() => {});
 
     return true;
@@ -1563,32 +1593,6 @@ export async function saveCentralUser(user: AppUserRecord): Promise<boolean> {
     console.warn('[Firestore] Notice saving user record to Firestore:', e);
     return false;
   }
-}
-
-/**
- * Personas que cargaron comprobantes pero no están en la tabla de usuarios (p. ej. cuentas
- * @isf-argentina.org que antes entraban automáticamente). Solo Admin: recorre todos los comprobantes.
- */
-export async function findUnregisteredSubmitters(
-  registeredEmails: string[]
-): Promise<{ email: string; name: string; count: number; lastDate?: string }[]> {
-  const registered = new Set(registeredEmails.map((e) => e.toLowerCase().trim()));
-  const snap = await getDocs(collection(db, 'expenses'));
-  const found = new Map<string, { email: string; name: string; count: number; lastDate?: string }>();
-  snap.forEach((d) => {
-    const data = d.data() as Expense;
-    const email = String(data.submittedByEmail || '').toLowerCase().trim();
-    if (!email || !email.includes('@') || registered.has(email)) return;
-    const prev = found.get(email);
-    const date = data.createdAt || data.date;
-    found.set(email, {
-      email,
-      name: prev?.name || data.submittedByName || email.split('@')[0],
-      count: (prev?.count || 0) + 1,
-      lastDate: prev?.lastDate && date && prev.lastDate > date ? prev.lastDate : date || prev?.lastDate,
-    });
-  });
-  return Array.from(found.values()).sort((a, b) => b.count - a.count);
 }
 
 export async function deleteCentralUser(email: string): Promise<boolean> {

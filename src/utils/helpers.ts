@@ -163,6 +163,26 @@ export function formatUploadDateTime(
   }
 }
 
+/**
+ * Celda de CSV segura: escapa comillas y neutraliza textos que Excel / Sheets ejecutarían como
+ * fórmula (empiezan con = + - @, tabulación o retorno), p. ej. un proveedor "=HYPERLINK(...)".
+ */
+/**
+ * Solo deja pasar enlaces https de Google (Drive / Docs). Un enlace guardado en un comprobante
+ * con otro esquema (p. ej. "javascript:...") podría ejecutar código al abrirlo desde la app.
+ */
+export function safeExternalUrl(url?: string | null): string | undefined {
+  if (!url || typeof url !== 'string') return undefined;
+  const trimmed = url.trim();
+  return /^https:\/\/([a-z0-9-]+\.)*google\.com(\/|$)/i.test(trimmed) ? trimmed : undefined;
+}
+
+export function csvCell(value: unknown): string {
+  let text = value === undefined || value === null ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 export function exportToCSV(expenses: Expense[]): void {
   const headers = [
     'ID',
@@ -184,26 +204,26 @@ export function exportToCSV(expenses: Expense[]): void {
   ];
 
   const rows = expenses.map((exp) => [
-    `"${exp.id}"`,
-    `"${formatUploadDateTime(exp.createdAt, exp.date).formatted}"`,
-    `"${exp.date}"`,
-    `"${(exp.submittedByName || '').replace(/"/g, '""')}"`,
-    `"${(exp.submittedByEmail || '').replace(/"/g, '""')}"`,
-    `"${(exp.vendor || '').replace(/"/g, '""')}"`,
-    `"${(exp.invoiceNumber || '').replace(/"/g, '""')}"`,
-    `"${(exp.category || '').replace(/"/g, '""')}"`,
-    `"${(exp.project || '').replace(/"/g, '""')}"`,
-    `"${exp.currency || 'ARS'}"`,
-    exp.amount || 0,
+    csvCell(exp.id),
+    csvCell(formatUploadDateTime(exp.createdAt, exp.date).formatted),
+    csvCell(exp.date),
+    csvCell(exp.submittedByName),
+    csvCell(exp.submittedByEmail),
+    csvCell(exp.vendor),
+    csvCell(exp.invoiceNumber),
+    csvCell(exp.category),
+    csvCell(exp.project),
+    csvCell(exp.currency || 'ARS'),
+    Number(exp.amount) || 0,
     exp.reimbursable ? 'SÍ' : 'NO',
     exp.reimbursementStatus === 'PENDING'
       ? 'Pendiente'
       : exp.reimbursementStatus === 'REIMBURSED'
       ? 'Reintegrado'
       : 'No Aplica',
-    `"${(exp.paymentMethod || '').replace(/"/g, '""')}"`,
-    `"${(exp.notes || '').replace(/"/g, '""')}"`,
-    `"${(exp.voiceTranscription || '').replace(/"/g, '""')}"`,
+    csvCell(exp.paymentMethod),
+    csvCell(exp.notes),
+    csvCell(exp.voiceTranscription),
   ]);
 
   const csvContent =
@@ -217,6 +237,7 @@ export function exportToCSV(expenses: Expense[]): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**

@@ -3,6 +3,7 @@ import { User, Shield, Check, CreditCard, Mail, CheckCircle2, Server, Lock, LogO
 import { UserProfile, UserBankDetails } from '../types';
 import { getStoredUserBankDetails, saveStoredUserBankDetails } from '../utils/auth';
 import { checkCentralizedDriveStatus, notifyBankDetailsChange } from '../utils/googleWorkspace';
+import { saveUserCloudPreferences } from '../utils/cloudSync';
 
 interface AuthProfileModalProps {
   isOpen: boolean;
@@ -59,6 +60,8 @@ export function AuthProfileModal({
   const handleSaveBank = (e: React.FormEvent) => {
     e.preventDefault();
     saveStoredUserBankDetails(currentUser.email, bankDetails);
+    // También en las preferencias privadas de la nube: al cerrar sesión se borra este navegador
+    saveUserCloudPreferences(currentUser.email, { bankDetails: { ...bankDetails } }).catch(() => {});
     onUpdateUser({
       ...currentUser,
       bankDetails,

@@ -61,6 +61,34 @@ service cloud.firestore {
       ];
     }
 
+    // Campos que el dueño puede editar mientras el comprobante está pendiente (lista cerrada).
+    // Quedan afuera los datos de pago/liquidación, la transferencia y el dueño.
+    function ownerEditableFields() {
+      return [
+        'date', 'vendor', 'cuit', 'recipientCuit', 'recipientName', 'isIsfRecipient',
+        'amount', 'currency', 'invoiceNumber', 'category', 'project',
+        'submittedByName', 'submittedByPicture', 'bankDetails',
+        'reimbursable', 'reimbursementStatus', 'reimbursementNotes', 'paymentType', 'paymentMethod',
+        'notes', 'accountingNotes', 'items', 'appliesWithholdings',
+        'voiceTranscription', 'aiConfidenceSummary', 'isAiExtracted',
+        'receiptFileName', 'driveFileId', 'driveUploadedFileName', 'driveFolderTarget',
+        'driveFolderUrl', 'driveUploadedUrl', 'driveUploadStatus', 'driveUploadedAt', 'updatedAt'
+      ];
+    }
+
+    // Los enlaces que carga un usuario solo pueden ser https de Google (Drive / Docs): un enlace
+    // "javascript:..." en un comprobante podría ejecutar código al abrirlo un Admin.
+    function isSafeLinkField(data, field) {
+      return !data.keys().hasAny([field]) ||
+        data.get(field, '') == null ||
+        data.get(field, '') == '' ||
+        (data.get(field, '') is string && data.get(field, '').matches('https://([a-z0-9-]+[.])*google[.]com(/.*)?'));
+    }
+
+    function hasSafeLinks(data) {
+      return isSafeLinkField(data, 'driveUploadedUrl') && isSafeLinkField(data, 'driveFolderUrl');
+    }
+
     function isExpenseOwner(data) {
       return (data.get('submittedByEmail', '') is string && data.get('submittedByEmail', '').lower() == userEmail()) ||
              (data.get('userEmail', '') is string && data.get('userEmail', '').lower() == userEmail());
@@ -93,11 +121,16 @@ service cloud.firestore {
         // convertirse en reintegro: solo Administración cambia su tipo o estado
         !(resource.data.get('reimbursementStatus', '') == 'NOT_APPLICABLE' &&
           changed.hasAny(['reimbursementStatus', 'paymentType', 'reimbursable'])) &&
+        hasSafeLinks(request.resource.data) &&
         (
-          // pendiente: puede editar datos, pero nunca liquidarlo ni tocar campos de pago
-          (!isPaidExpense(resource.data) && !isPaidExpense(request.resource.data) && !changed.hasAny(paymentFields())) ||
-          // pagado: solo foto / estado de Drive
-          (isPaidExpense(resource.data) && changed.hasOnly(receiptFields()))
+          // pendiente: solo los campos editables (nunca liquidarlo ni tocar datos de pago)
+          (!isPaidExpense(resource.data) && !isPaidExpense(request.resource.data) &&
+            changed.hasOnly(ownerEditableFields()) &&
+            request.resource.data.get('reimbursementStatus', 'PENDING') in ['PENDING', 'NOT_APPLICABLE']) ||
+          // pagado: el archivo es evidencia contable; el dueño solo puede completar una subida a
+          // Drive que había quedado pendiente (nunca reemplazar el archivo ya registrado)
+          (isPaidExpense(resource.data) && changed.hasOnly(receiptFields()) &&
+            resource.data.get('driveUploadedUrl', '') == '')
         );
     }
 
@@ -111,6 +144,7 @@ service cloud.firestore {
         isAdmin() || (
           isNewExpenseOwner(request.resource.data) &&
           !isPaidExpense(request.resource.data) &&
+          hasSafeLinks(request.resource.data) &&
           !request.resource.data.keys().hasAny(paymentFields())
         )
       );
