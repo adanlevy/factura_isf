@@ -93,7 +93,7 @@ Es el equipo administrativo, financiero y de tesorería. Tiene **acceso total**:
 - **Log de Cambios** — auditoría de todo lo que se modifica.
 
 ### Cambio de vista
-Un usuario administrador puede alternar entre "vista Administrador" y "vista Colaborador" desde su **perfil** (botones **Admin** / **Colaborador**), útil para ver la aplicación como la ve un rendidor. Un colaborador **no** puede pasarse a Administrador: el rol lo asigna un administrador desde *Usuarios / Roles*.
+Un usuario administrador puede alternar entre "vista Administrador" y "vista Colaborador" desde su **perfil** (botones **Admin** / **Colaborador**), útil para ver la aplicación como la ve un rendidor. La vista elegida se mantiene hasta que la cambies (no cambia tus permisos reales). Un colaborador **no** puede pasarse a Administrador: el rol lo asigna un administrador desde *Usuarios / Roles*.
 
 ---
 
@@ -187,7 +187,7 @@ El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de 
 
 ### 6.4 Mis Gastos: ver, buscar, editar y eliminar
 
-La pestaña **"Mis Gastos"** muestra **solo tus comprobantes** (los que cargaste vos). Arriba ves tu total: *"Comprobantes de {vos}: {cantidad} • Monto acumulado: {total}"*.
+La pestaña **"Mis Gastos"** muestra **todos tus comprobantes** (los cargados con tu email), sin importar cuántos haya cargado el resto de la organización. Arriba ves tu total: *"Comprobantes de {vos}: {cantidad} • Monto acumulado: {total}"*.
 
 - **Buscar:** caja de búsqueda por proveedor, centro de costos, CUIT, notas, N° de factura, monto, alias/CBU, etc.
 - **Ordenar:** hacé clic en el encabezado de cualquier columna (Fecha Carga, Fecha Doc., Nombre/Factura, Centro de Costos, Monto, Estado…).
@@ -204,7 +204,9 @@ El **visor de comprobante** muestra la imagen o PDF y todos los datos: Monto, Ce
 
 Tiene **pestañas** según lo que exista: *Factura / Ticket Original*, *Comprobante de Pago* y *Certificado de Retención*.
 
-Desde el visor podés **Descargar**, **Ver en Drive** y **Reemplazar** la foto/archivo. **Reemplazar** cambia el archivo (por ejemplo, una foto borrosa por una nítida) **sin alterar los datos contables**, y actualiza también la copia en Google Drive.
+Desde el visor podés **Descargar**, **Ver en Drive** y **Reemplazar** la foto/archivo. **Reemplazar** cambia el archivo (por ejemplo, una foto borrosa por una nítida) **sin alterar los datos contables**, y actualiza también la copia en Google Drive. Una vez **pagado**, el archivo queda como evidencia contable: **solo Administración** puede reemplazarlo.
+
+Los enlaces a Drive de un comprobante solo se abren si son enlaces de Google (`https://…google.com`); cualquier otro enlace se ignora por seguridad.
 
 ### 6.6 Correos automáticos que vas a recibir
 
@@ -289,7 +291,9 @@ Un comprobante ya pagado puede volver a **Pendiente** (botón **"Revertir"** al 
 
 ### 7.7 Exportar CSV
 
-En *Gestión de Pagos*, **"Exportar CSV"** descarga los comprobantes seleccionados (o todos los filtrados) a una planilla, ideal para conciliaciones y contabilidad.
+En *Gestión de Pagos*, **"Exportar CSV"** descarga los comprobantes seleccionados (o todos los filtrados) a una planilla, ideal para conciliaciones y contabilidad. Los textos que empiezan con `=`, `+`, `-` o `@` se exportan con un apóstrofo adelante para que Excel no los ejecute como fórmula.
+
+*Gestión de Pagos* siempre tiene cargados **todos los comprobantes pendientes de pago**, aunque sean anteriores a la página que se está viendo.
 
 ### 7.8 Proveedores
 
@@ -324,7 +328,6 @@ La pestaña **"Usuarios / Roles"** administra quién puede entrar y con qué per
 - Al dar de alta un usuario se le envía un **correo de bienvenida** automático.
 - **Eliminar** un usuario le quita el acceso de inmediato (en la app y en el servidor, en menos de un minuto). Solo vuelve a entrar si un admin lo agrega de nuevo.
 - **Protección:** no se puede quitar ni degradar al **último administrador**, ni eliminar tu propio usuario.
-- **Personas con comprobantes pero sin registro:** el botón **"Buscar personas sin registro"** revisa todos los comprobantes y lista a quienes los cargaron y no están en la tabla (por ejemplo, cuentas @isf-argentina.org que antes entraban automáticamente). Se eligen y se dan de alta como colaboradores con un clic (sin correo de bienvenida).
 - **Alertas de cambios bancarios:** cuando alguien carga o cambia datos bancarios, el aviso se envía a **todos los administradores** de la tabla.
 - **Un registro por persona:** las primeras versiones guardaban a cada usuario con una clave "limpia" (`juan_isf-argentina_org`). La app los unifica sola al registro con el email (`juan@isf-argentina.org`) cuando entra un administrador: si había dos, se conserva el rol del registro con email y la diferencia queda anotada en el Log de Cambios.
 
@@ -391,6 +394,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Correos institucionales:** salen de la cuenta central. Un **colaborador** solo puede enviar a su propia cuenta, a usuarios de la tabla de usuarios y a los emails en copia de los centros de costos. Los correos a proveedores u otros externos los envía **Administración**. Hay un límite de envíos por hora por usuario.
 - **Archivos en Google Drive:** el servidor solo modifica archivos que estén en las **carpetas registradas** (centros de costos y carpeta de Comprobantes de Pago y Retenciones). Un colaborador solo puede reemplazar o quitar archivos que subió él mismo. Nada se borra definitivamente: los archivos reemplazados o quitados van a la **papelera de Drive**.
 - **Reglas de Firestore:** `firestore.rules` restringe cada colección por rol (Colaborador / Admin) y se publica desde la consola de Firebase (pestaña *Security*).
+- **Cerrar sesión borra los datos de este navegador:** comprobantes, archivos cacheados, usuarios y la caché de la base. Los datos bancarios de tu perfil se guardan en tus preferencias privadas y se recuperan al volver a entrar. Útil en computadoras compartidas.
 - **Documentos legales:** desde el pie de página se accede a la **Política de Privacidad** y a los **Términos y Condiciones**. Contacto institucional: `admin@isf-argentina.org`.
 
 ---

@@ -1,4 +1,5 @@
 import React from 'react';
+import { safeExternalUrl } from '../utils/helpers';
 
 interface GoogleDriveIconProps {
   className?: string;
@@ -59,9 +60,10 @@ export function GoogleDriveLinkButton({
   label?: string;
   iconOnly?: boolean;
 }) {
+  // Solo enlaces https de Google: un enlace cargado a mano no puede ejecutar código al abrirse
   const finalUrl =
-    url ||
-    driveUrl ||
+    safeExternalUrl(url) ||
+    safeExternalUrl(driveUrl) ||
     (driveFolder ? `https://drive.google.com/drive/search?q=${encodeURIComponent(driveFolder)}` : '');
 
   if (!finalUrl) return null;

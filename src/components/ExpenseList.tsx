@@ -110,23 +110,13 @@ export function ExpenseList({
   const userExpenses = useMemo(() => {
     if (!currentUser?.email) return expenses;
     const userEmail = currentUser.email.toLowerCase().trim();
-    const userName = (currentUser.name || '').toLowerCase().trim();
 
+    // "Mis Gastos" = los comprobantes cargados con MI email. Ya no se asocia por nombre: dos
+    // personas con el mismo nombre veían lo del otro. Los que no tienen email quedan para Admin.
     return expenses.filter((e) => {
       const expEmail = (e.submittedByEmail || '').toLowerCase().trim();
-      const expName = (e.submittedByName || '').toLowerCase().trim();
-
-      if (expEmail) {
-        return expEmail === userEmail;
-      }
-      if (expName && userName) {
-        return expName === userName;
-      }
-      // If user is admin or if the expense has no recorded submitter email, include it
-      if (currentUser.role === 'admin' && !expEmail) {
-        return true;
-      }
-      return false;
+      if (expEmail) return expEmail === userEmail;
+      return currentUser.role === 'admin';
     });
   }, [expenses, currentUser]);
 

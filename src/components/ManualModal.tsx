@@ -268,7 +268,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
               <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron.</li>
               <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
-              <li><strong>Usuarios / Roles:</strong> la única fuente de acceso. Habilitar personas, asignar rol y CC global; alta con correo de bienvenida. «Buscar personas sin registro» da de alta en bloque a quienes ya cargaban comprobantes. No se puede quitar al último administrador.</li>
+              <li><strong>Usuarios / Roles:</strong> la única fuente de acceso. Habilitar personas, asignar rol y CC global; alta con correo de bienvenida. No se puede quitar al último administrador.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>
             </ul>
           </>

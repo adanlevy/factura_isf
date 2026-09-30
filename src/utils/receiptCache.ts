@@ -116,3 +116,15 @@ export const removeCachedReceiptFile = removeCachedFile;
 export const removeCachedPaymentProofFile = (expenseId: string) => removeCachedFile(`${expenseId}_payment_proof`);
 export const removeCachedWithholdingCertificateFile = (expenseId: string) => removeCachedFile(`${expenseId}_withholding_cert`);
 
+
+/** Borra todos los archivos cacheados en este navegador (al cerrar sesión). */
+export async function clearAllCachedFiles(): Promise<void> {
+  memoryCache.clear();
+  if (typeof window === 'undefined' || !window.indexedDB) return;
+  await new Promise<void>((resolve) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+    req.onblocked = () => resolve();
+  });
+}

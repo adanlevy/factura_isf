@@ -96,6 +96,12 @@ await expectDenied('Cuenta @isf-argentina.org se auto-registra como admin', () =
 await expectDenied('Cuentas que antes eran admin fijas en el código ya no tienen acceso sin registro', () => as('admin@isf-argentina.org').doc('expenses/exp-otro').get());
 await expectDenied('...ni la cuenta personal que estaba fija como admin', () => as('adanlevy@gmail.com').doc('vendors/v1').get());
 
+// Fase 4: lista cerrada de campos del dueño y enlaces seguros
+await expectDenied('Colaborador carga un enlace javascript: en su comprobante', () => colab.doc('expenses/exp-colab').update({ driveUploadedUrl: 'javascript:alert(document.cookie)' }));
+await expectDenied('Colaborador crea un comprobante con un enlace que no es de Google', () => colab.doc('expenses/exp-link').set({ id: 'exp-link', submittedByEmail: 'colab@gmail.com', amount: 5, reimbursementStatus: 'PENDING', driveUploadedUrl: 'https://phishing.example/x' }));
+await expectDenied('Colaborador escribe el texto de transferencia (lo define Administración)', () => colab.doc('expenses/exp-colab').update({ transferDetails: 'CBU 999 - cuenta propia' }));
+await expectDenied('Colaborador agrega un campo fuera de la lista (approvedBy)', () => colab.doc('expenses/exp-colab').update({ approvedBy: 'jefe@isf-argentina.org' }));
+
 // Huecos cerrados en la Fase 3
 await expectDenied('Colaborador crea un comprobante con un segundo dueño (userEmail de otro)', () => colab.doc('expenses/exp-doble').set({ id: 'exp-doble', submittedByEmail: 'colab@gmail.com', userEmail: 'otro@gmail.com', amount: 5, reimbursementStatus: 'PENDING' }));
 await expectDenied('Colaborador crea un comprobante con userEmail propio pero a nombre de otro', () => colab.doc('expenses/exp-doble2').set({ id: 'exp-doble2', submittedByEmail: 'otro@gmail.com', userEmail: 'colab@gmail.com', amount: 5, reimbursementStatus: 'PENDING' }));
@@ -122,10 +128,12 @@ await expectAllowed('Admin puede quitar un tombstone (restauración manual)', ()
 await seed();
 await expectAllowed('Colaborador crea su comprobante (Reintegro, pendiente)', () => colab.doc('expenses/exp-n1').set({ id: 'exp-n1', submittedByEmail: 'colab@gmail.com', amount: 10, reimbursementStatus: 'PENDING', reimbursable: true, paymentType: 'REINTEGRO', bankDetails: { cbuCvu: '2222222222222222222222' }, date: '2026-09-20', project: 'GPA' }));
 await expectAllowed('Colaborador crea su comprobante (Tarjeta corporativa)', () => colab.doc('expenses/exp-n2').set({ id: 'exp-n2', submittedByEmail: 'colab@gmail.com', amount: 10, reimbursementStatus: 'NOT_APPLICABLE', paymentType: 'TARJETA_CORPORATIVA', bankDetails: null, date: '2026-09-20' }));
-await expectAllowed('Callback de Drive actualiza su comprobante pendiente', () => colab.doc('expenses/exp-n1').set({ driveUploadStatus: 'SUCCESS', driveUploadedUrl: 'https://drive/x', updatedAt: 'now' }, { merge: true }));
+await expectAllowed('Callback de Drive actualiza su comprobante pendiente', () => colab.doc('expenses/exp-n1').set({ driveUploadStatus: 'SUCCESS', driveUploadedUrl: 'https://drive.google.com/file/d/abc/view', updatedAt: 'now' }, { merge: true }));
 await expectAllowed('Colaborador edita monto/CBU de su comprobante pendiente', () => colab.doc('expenses/exp-colab').update({ amount: 1500, bankDetails: { cbuCvu: '3333333333333333333333' }, updatedAt: 'now' }));
 await expectAllowed('Colaborador cambia tipo de pago (PENDING -> NOT_APPLICABLE)', () => colab.doc('expenses/exp-colab').update({ paymentType: 'TARJETA_CORPORATIVA', reimbursementStatus: 'NOT_APPLICABLE', reimbursable: false }));
-await expectAllowed('Colaborador reemplaza la foto de su comprobante YA PAGADO', () => colab.doc('expenses/exp-colab-pagado').update({ receiptFileName: 'nueva.jpg', driveUploadedUrl: 'https://drive/y', driveUploadStatus: 'SUCCESS', updatedAt: 'now' }));
+await expectAllowed('Colaborador completa la subida a Drive (pendiente) de su comprobante YA PAGADO', () => colab.doc('expenses/exp-colab-pagado').update({ driveUploadedUrl: 'https://drive.google.com/file/d/y/view', driveUploadStatus: 'SUCCESS', updatedAt: 'now' }));
+await expectDenied('...pero no puede reemplazar el archivo ya registrado de un comprobante pagado', () => colab.doc('expenses/exp-colab-pagado').update({ receiptFileName: 'otra.jpg', driveUploadedUrl: 'https://drive.google.com/file/d/z/view', updatedAt: 'now' }));
+await expectAllowed('Colaborador edita notas, categoría y centro de su comprobante pendiente', () => colab.doc('expenses/exp-n1').update({ notes: 'Taxi', accountingNotes: 'Taxi', category: 'Viajes', project: 'SEAP', updatedAt: 'now' }));
 await expectAllowed('Colaborador lee comprobantes y proveedores', () => colab.doc('expenses/exp-otro').get().then(() => colab.doc('vendors/v1').get()));
 await expectAllowed('Colaborador crea un proveedor', () => colab.doc('vendors/v2').set({ id: 'v2', name: 'Nuevo' }));
 await expectAllowed('Colaborador agrega un registro de auditoría a su nombre', () => colab.doc('audit_logs/l1').set({ id: 'l1', userEmail: 'colab@gmail.com', action: 'EXPENSE_CREATE' }));

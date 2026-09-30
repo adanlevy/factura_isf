@@ -24,7 +24,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { AuditLogEntry, AuditLogEntityType, AuditLogAction, UserProfile } from '../types';
-import { formatDate, matchesSearch } from '../utils/helpers';
+import { formatDate, matchesSearch, csvCell } from '../utils/helpers';
 
 interface AuditLogsViewProps {
   logs: AuditLogEntry[];
@@ -223,14 +223,14 @@ export function AuditLogsView({
         : '';
 
       return [
-        `"${dateFormatted}"`,
-        `"${l.userName || ''}"`,
-        `"${l.userEmail || ''}"`,
-        `"${l.actionLabel || l.action}"`,
-        `"${l.entityType}"`,
-        `"${(l.entityName || '').replace(/"/g, '""')}"`,
-        `"${(l.summary || '').replace(/"/g, '""')}"`,
-        `"${changesStr.replace(/"/g, '""')}"`,
+        csvCell(dateFormatted),
+        csvCell(l.userName),
+        csvCell(l.userEmail),
+        csvCell(l.actionLabel || l.action),
+        csvCell(l.entityType),
+        csvCell(l.entityName),
+        csvCell(l.summary),
+        csvCell(changesStr),
       ].join(',');
     });
 
@@ -243,6 +243,7 @@ export function AuditLogsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const getEntityIcon = (type: AuditLogEntityType) => {

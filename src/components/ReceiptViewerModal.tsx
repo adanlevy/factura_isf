@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Receipt,
@@ -18,7 +18,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { Expense, CostCenter } from '../types';
-import { formatCurrency, formatDate, generateDriveFileName, formatTransferDetails, getGoogleDrivePreviewUrl } from '../utils/helpers';
+import { formatCurrency, formatDate, generateDriveFileName, formatTransferDetails, getGoogleDrivePreviewUrl, safeExternalUrl } from '../utils/helpers';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import {
@@ -38,7 +38,7 @@ interface ReceiptViewerModalProps {
 }
 
 export function ReceiptViewerModal({
-  expense,
+  expense: rawExpense,
   costCenters = [],
   onClose,
   onProcessPayment,
@@ -46,6 +46,20 @@ export function ReceiptViewerModal({
   onReplaceReceipt,
   onOpenWithholdingModal,
 }: ReceiptViewerModalProps) {
+  // Los enlaces guardados en el comprobante se abren solo si son https de Google (Drive / Docs)
+  const expense = useMemo(
+    () =>
+      rawExpense
+        ? {
+            ...rawExpense,
+            driveUploadedUrl: safeExternalUrl(rawExpense.driveUploadedUrl),
+            paymentProofDriveUrl: safeExternalUrl(rawExpense.paymentProofDriveUrl),
+            withholdingCertificateDriveUrl: safeExternalUrl(rawExpense.withholdingCertificateDriveUrl),
+            driveFolderUrl: safeExternalUrl(rawExpense.driveFolderUrl),
+          }
+        : rawExpense,
+    [rawExpense]
+  );
   const [copiedName, setCopiedName] = useState(false);
   const [isUploadingDrive, setIsUploadingDrive] = useState(false);
   const [resolvedReceiptUrl, setResolvedReceiptUrl] = useState<string | null>(null);
@@ -176,7 +190,7 @@ export function ReceiptViewerModal({
         return;
       }
       if (expense.withholdingCertificateDriveUrl) {
-        window.open(expense.withholdingCertificateDriveUrl, '_blank');
+        window.open(expense.withholdingCertificateDriveUrl, '_blank', 'noopener,noreferrer');
         return;
       }
     }
@@ -192,7 +206,7 @@ export function ReceiptViewerModal({
         return;
       }
       if (expense.paymentProofDriveUrl) {
-        window.open(expense.paymentProofDriveUrl, '_blank');
+        window.open(expense.paymentProofDriveUrl, '_blank', 'noopener,noreferrer');
         return;
       }
     }
@@ -206,7 +220,7 @@ export function ReceiptViewerModal({
       link.click();
       document.body.removeChild(link);
     } else if (expense.driveUploadedUrl || driveUrl) {
-      window.open(expense.driveUploadedUrl || driveUrl, '_blank');
+      window.open(expense.driveUploadedUrl || safeExternalUrl(driveUrl), '_blank', 'noopener,noreferrer');
     }
   };
 

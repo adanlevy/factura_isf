@@ -23,10 +23,11 @@ import { UserLoginGate } from './components/UserLoginGate';
 import { LegalPagesModal } from './components/LegalPagesModal';
 import { ManualModal } from './components/ManualModal';
 import { UpdateAvailableBanner } from './components/UpdateAvailableBanner';
+import { clearLocalSessionData } from './utils/sessionCleanup';
 import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
-import { getStoredAuth, saveStoredAuth } from './utils/auth';
+import { getStoredAuth, saveStoredAuth, getStoredUserBankDetails, saveStoredUserBankDetails } from './utils/auth';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from './lib/firebase';
 import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName, escapeHtml } from './utils/helpers';
@@ -75,13 +76,13 @@ import {
   saveUserCloudPreferences,
   fetchCentralUsers,
   saveCentralUser,
-  findUnregisteredSubmitters,
   unifyLegacyUserDocs,
   deleteCentralUser,
   subscribeToUsersFirestore,
   getLocalUsersCache,
   deduplicateUsers,
   subscribeToRealtimeFirestore,
+  subscribeToPendingExpenses,
   fetchExpensesPage,
   ExpenseQueryOptions,
   testFirestoreConnection,
@@ -121,6 +122,13 @@ export default function App() {
   });
 
   const [isFirebaseAuthReady, setIsFirebaseAuthReady] = useState(false);
+  // Rol REAL según la tabla de usuarios. currentUser.role es la vista activa: un Admin puede
+  // "ver como Colaborador" sin perder su rol (antes la sincronización lo devolvía a Admin).
+  const [permissionRole, setPermissionRole] = useState<'admin' | 'user' | null>(null);
+  const permissionRoleRef = useRef<'admin' | 'user' | null>(null);
+  useEffect(() => {
+    permissionRoleRef.current = permissionRole;
+  }, [permissionRole]);
 
   // Synchronize Firebase Auth state as the single source of truth for Firestore permissions
   useEffect(() => {
@@ -136,6 +144,7 @@ export default function App() {
               picture: firebaseUser.photoURL || undefined,
               role: detectedRole,
             };
+            setPermissionRole(detectedRole);
             setCurrentUser(profile);
             saveStoredAuth(profile);
           } else {
@@ -223,11 +232,11 @@ export default function App() {
     try {
       const nextLimit = queryLimit + 50;
       setQueryLimit(nextLimit);
-      const res = await fetchExpensesPage({
-        period: queryPeriod,
-        costCenter: queryCostCenter,
-        limitCount: nextLimit,
-      });
+      const res = await fetchExpensesPage(
+        permissionRole === 'admin'
+          ? { period: queryPeriod, costCenter: queryCostCenter, limitCount: nextLimit }
+          : { submittedByEmail: currentUser?.email }
+      );
       if (res.expenses && res.expenses.length > 0) {
         setExpenses((prev) => mergeExpensesList(prev, res.expenses));
       }
@@ -261,6 +270,11 @@ export default function App() {
     }
 
     let isMounted = true;
+    // Colaborador: todos sus comprobantes (sin paginación). Admin: la página filtrada de toda la organización.
+    const expenseQueryOptions: ExpenseQueryOptions =
+      permissionRole === 'admin'
+        ? { period: queryPeriod, costCenter: queryCostCenter, limitCount: queryLimit }
+        : { submittedByEmail: currentUser.email };
 
     // Clean up any old legacy local storage keys to ensure only the central database is used
     try {
@@ -279,11 +293,7 @@ export default function App() {
       setIsCloudSyncing(true);
       try {
         await testFirestoreConnection();
-        const cloudData = await fetchCentralSync({
-          period: queryPeriod,
-          costCenter: queryCostCenter,
-          limitCount: queryLimit,
-        });
+        const cloudData = await fetchCentralSync(expenseQueryOptions);
         if (cloudData && isMounted) {
           const deletedSet = getDeletedExpensesSet();
           if (Array.isArray(cloudData.expenses)) {
@@ -343,7 +353,9 @@ export default function App() {
             const meInCloud = uniqueCloudUsers.find(
               (u) => u.email.toLowerCase().trim() === currentEmailClean
             );
-            if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {
+            // Solo un cambio REAL de rol en la tabla (no la vista "ver como Colaborador")
+            if (meInCloud && meInCloud.role && meInCloud.role !== permissionRoleRef.current) {
+              setPermissionRole(meInCloud.role);
               const updatedUser: UserProfile = {
                 ...current,
                 role: meInCloud.role,
@@ -364,6 +376,16 @@ export default function App() {
           const userPrefs = await fetchUserCloudPreferences(currentUser.email);
           if (userPrefs && userPrefs.categoryCostCenterPatterns) {
             hydrateUserPatternsFromCloud(currentUser.email, userPrefs.categoryCostCenterPatterns);
+          }
+          // Datos bancarios del perfil: la copia de la nube restaura este navegador (se borra al
+          // cerrar sesión); si solo existían en este navegador (versiones anteriores), se suben.
+          if (userPrefs?.bankDetails) {
+            saveStoredUserBankDetails(currentUser.email, userPrefs.bankDetails);
+          } else {
+            const localBank = getStoredUserBankDetails(currentUser.email);
+            if (localBank && (localBank.cbuCvu || localBank.alias)) {
+              saveUserCloudPreferences(currentUser.email, { bankDetails: localBank }).catch(() => {});
+            }
           }
         }
       } catch (err) {
@@ -402,12 +424,29 @@ export default function App() {
         }
         setLastSyncTime(new Date());
       },
-      {
-        period: queryPeriod,
-        costCenter: queryCostCenter,
-        limitCount: queryLimit,
-      }
+      expenseQueryOptions
     );
+
+    // Admin: los pendientes de pago siempre cargados, más allá de la página actual
+    let unsubscribePending = () => {};
+    if (permissionRole === 'admin') {
+      unsubscribePending = subscribeToPendingExpenses((incoming) => {
+        if (!isMounted) return;
+        const deletedSet = getDeletedExpensesSet();
+        const removedIds = incoming.removedExpenseIds || [];
+        if (removedIds.length > 0) {
+          setExpenses((prev) => prev.filter((e) => !removedIds.includes(e.id)));
+        }
+        if (incoming.expenses) {
+          setExpenses((prev) =>
+            mergeExpensesList(
+              prev.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id)),
+              incoming.expenses!.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id))
+            )
+          );
+        }
+      });
+    }
 
     const unsubscribeUsers = subscribeToUsersFirestore((incomingUsers) => {
       if (!isMounted) return;
@@ -422,7 +461,8 @@ export default function App() {
           const meInCloud = uniqueIncoming.find(
             (u) => u.email.toLowerCase().trim() === currentEmailClean
           );
-          if (meInCloud && meInCloud.role && meInCloud.role !== current.role) {
+          if (meInCloud && meInCloud.role && meInCloud.role !== permissionRoleRef.current) {
+            setPermissionRole(meInCloud.role);
             const updatedUser: UserProfile = {
               ...current,
               role: meInCloud.role,
@@ -456,10 +496,11 @@ export default function App() {
     return () => {
       isMounted = false;
       unsubscribeRealtime();
+      unsubscribePending();
       unsubscribeUsers();
       unsubscribeAuditLogs();
     };
-  }, [isFirebaseAuthReady, currentUser?.email, currentUser?.role, queryPeriod, queryCostCenter, queryLimit]);
+  }, [isFirebaseAuthReady, currentUser?.email, currentUser?.role, permissionRole, queryPeriod, queryCostCenter, queryLimit]);
 
   // Sync current user to auth session storage
   useEffect(() => {
@@ -1377,7 +1418,7 @@ export default function App() {
 
   const handleWithholdingCertificateSaved = async (
     updatedExpense: Expense,
-    emailOutcome?: { attempted: boolean; sent: boolean; error?: string }
+    info?: { emailPending: boolean }
   ): Promise<boolean> => {
     const timestamped: Expense = {
       ...updatedExpense,
@@ -1412,15 +1453,36 @@ export default function App() {
         summary: `Se adjuntó certificado de retención para el comprobante de "${timestamped.vendor}".`,
       });
 
-      showToast(
-        emailOutcome?.attempted && !emailOutcome.sent
-          ? `⚠️ Certificado guardado para ${timestamped.vendor}, pero no se pudo enviar el correo${emailOutcome.error ? `: ${emailOutcome.error}` : '.'}`
-          : `📄 Certificado de retención guardado para ${timestamped.vendor}.`
-      );
+      // Si además se envía por correo, el aviso final lo da handleWithholdingEmailResult
+      if (!info?.emailPending) showToast(`📄 Certificado de retención guardado para ${timestamped.vendor}.`);
     } catch (err) {
       console.warn('Audit log error on withholding cert:', err);
     }
     return true;
+  };
+
+  // Un comprobante ya pagado es evidencia contable: solo Administración puede reemplazar su archivo
+  const handleRequestReplaceReceipt = (exp: Expense) => {
+    if (exp.reimbursementStatus === 'REIMBURSED' && permissionRole !== 'admin') {
+      showToast('🔒 Este comprobante ya fue pagado: solo Administración puede reemplazar su archivo.');
+      return;
+    }
+    setExpenseToReplaceReceipt(exp);
+  };
+
+  // Resultado del correo del certificado (se envía después de guardarlo)
+  const handleWithholdingEmailResult = async (
+    expenseId: string,
+    result: { sent: boolean; error?: string; sentAt: string }
+  ) => {
+    const vendor = expenses.find((e) => e.id === expenseId)?.vendor || 'el comprobante';
+    if (!result.sent) {
+      showToast(`⚠️ Certificado guardado para ${vendor}, pero no se pudo enviar el correo${result.error ? `: ${result.error}` : '.'}`);
+      return;
+    }
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, withholdingCertificateSentAt: result.sentAt } : e)));
+    await patchCentralExpenses([{ id: expenseId, changes: { withholdingCertificateSentAt: result.sentAt } }]);
+    showToast(`📄 Certificado de retención guardado y enviado por correo (${vendor}).`);
   };
 
   const handleReplaceExpenseReceipt = async (
@@ -2175,46 +2237,6 @@ export default function App() {
     return target?.role === 'admin' && admins.length <= 1;
   };
 
-  // Alta en bloque de personas que ya cargaban comprobantes (sin correo de bienvenida: ya usan la app)
-  const handleImportExistingSubmitters = async (people: { email: string; name: string }[]): Promise<number> => {
-    let added = 0;
-    const addedUsers: AppUserRecord[] = [];
-    for (const p of people) {
-      const record: AppUserRecord = {
-        email: p.email.toLowerCase().trim(),
-        name: p.name || p.email.split('@')[0],
-        role: 'user',
-        createdAt: new Date().toISOString(),
-        addedBy: currentUser?.email,
-        notes: 'Alta desde "Personas con comprobantes sin registro"',
-      };
-      if (await saveCentralUser(record)) {
-        added++;
-        addedUsers.push(record);
-      }
-    }
-    if (addedUsers.length > 0) {
-      const addedSet = new Set(addedUsers.map((u) => u.email));
-      setAppUsers((prev) => [...addedUsers, ...prev.filter((u) => !addedSet.has(u.email.toLowerCase()))]);
-      await logAuditEvent({
-        userEmail: currentUser?.email,
-        userName: currentUser?.name,
-        action: 'USER_ROLE_CHANGE',
-        actionLabel: 'Alta de Usuarios en Bloque',
-        entityType: 'user',
-        entityId: 'import-submitters',
-        entityName: `${addedUsers.length} colaborador(es)`,
-        summary: `Se registraron como colaboradores ${addedUsers.length} persona(s) que ya habían cargado comprobantes: ${addedUsers.map((u) => u.email).join(', ')}.`,
-      });
-    }
-    showToast(
-      added === people.length
-        ? `✅ ${added} persona(s) registradas como colaboradores.`
-        : `⚠️ Se registraron ${added} de ${people.length} persona(s) (${SAVE_ERROR_HINT}).`
-    );
-    return added;
-  };
-
   const handleUpdateUserRole = async (email: string, newRole: 'admin' | 'user') => {
     const existing = appUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
     const oldRole = existing?.role || 'user';
@@ -2526,9 +2548,9 @@ export default function App() {
     if (record && record.role) {
       return record.role === 'admin';
     }
-    // 2. Profile role established by backend authentication check
-    return currentUser.role === 'admin';
-  }, [currentUser?.email, currentUser?.role, appUsers]);
+    // 2. Rol real verificado al iniciar sesión (no la vista activa)
+    return permissionRole === 'admin';
+  }, [currentUser?.email, permissionRole, appUsers]);
 
   const handleSwitchUserRole = (role: 'admin' | 'user') => {
     if (!currentUser) return;
@@ -2550,13 +2572,16 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    signOut(auth).catch(console.warn);
+  const handleLogout = async () => {
+    setIsAuthProfileOpen(false);
+    showToast('Cerrando sesión y borrando los datos de este navegador...');
+    await signOut(auth).catch(console.warn);
     saveStoredAuth(null);
     saveStoredWorkspaceToken(null);
-    setCurrentUser(null);
-    setIsAuthProfileOpen(false);
-    showToast('Sesión de Google cerrada.');
+    // No quedan comprobantes, usuarios ni archivos del usuario anterior en este navegador
+    await clearLocalSessionData();
+    // Recarga limpia: nada del usuario anterior queda en memoria
+    window.location.reload();
   };
 
   const pendingReimbursementAmount = useMemo(() => {
@@ -2582,6 +2607,7 @@ export default function App() {
         <UpdateAvailableBanner />
         <UserLoginGate
           onLogin={(profile) => {
+            setPermissionRole(profile.role);
             setCurrentUser(profile);
             saveStoredAuth(profile);
             showToast(`¡Bienvenido/a, ${profile.name}!`);
@@ -2628,7 +2654,7 @@ export default function App() {
               onViewReceipt={(exp) => setViewingReceiptExpense(exp)}
               onOpenNewModal={() => setIsScannerModalOpen(true)}
               onDeleteExpense={handleDeleteExpense}
-              onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
+              onReplaceReceipt={handleRequestReplaceReceipt}
               queryPeriod={queryPeriod}
               onPeriodChange={handlePeriodChange}
               queryCostCenter={queryCostCenter}
@@ -2665,7 +2691,7 @@ export default function App() {
                 onRetryDriveUpload={handleUploadExpenseToDrive}
                 onAddVendor={handleAddVendor}
                 onUpdateVendor={handleUpdateVendor}
-                onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
+                onReplaceReceipt={handleRequestReplaceReceipt}
                 onOpenWithholdingModal={(exp) => setWithholdingModalExpense(exp)}
                 initialFilterVendor={initialFilterVendor}
                 queryPeriod={queryPeriod}
@@ -2733,8 +2759,6 @@ export default function App() {
               onUpdateUserRole={handleUpdateUserRole}
               onToggleCcAllOutgoingEmails={handleToggleCcAllOutgoingEmails}
               onDeleteUser={handleDeleteAppUser}
-              onFindUnregistered={() => findUnregisteredSubmitters(appUsers.map((u) => u.email))}
-              onImportUsers={handleImportExistingSubmitters}
             />
           )}
 
@@ -2849,7 +2873,11 @@ export default function App() {
         onClose={() => setViewingReceiptExpense(null)}
         onProcessPayment={currentUser.role === 'admin' ? handleDirectPayExpense : undefined}
         onUploadToDrive={handleUploadExpenseToDrive}
-        onReplaceReceipt={(exp) => setExpenseToReplaceReceipt(exp)}
+        onReplaceReceipt={
+          permissionRole === 'admin' || viewingReceiptExpense?.reimbursementStatus !== 'REIMBURSED'
+            ? handleRequestReplaceReceipt
+            : undefined
+        }
         onOpenWithholdingModal={currentUser.role === 'admin' ? (exp) => setWithholdingModalExpense(exp) : undefined}
       />
 
@@ -2862,6 +2890,7 @@ export default function App() {
         currentUser={currentUser || undefined}
         onClose={() => setWithholdingModalExpense(null)}
         onSaved={handleWithholdingCertificateSaved}
+        onEmailResult={handleWithholdingEmailResult}
         onRevertPayment={handleToggleReimbursementStatus}
       />
 
