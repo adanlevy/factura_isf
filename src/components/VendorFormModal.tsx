@@ -94,16 +94,8 @@ export function VendorFormModal({
         }
 
         // Normalize currency
-        let initialCurrency: '$Ar' | 'u$' = '$Ar';
-        if (
-          initialData.bankDetails?.currency === 'u$' ||
-          initialData.bankDetails?.currency === 'USD' ||
-          rawType.includes('usd') ||
-          rawType.includes('u$') ||
-          rawType.includes('dolar')
-        ) {
-          initialCurrency = 'u$';
-        }
+        // La app opera solo en pesos
+        const initialCurrency: '$Ar' = '$Ar';
 
         setBankDetails({
           bankName: initialData.bankDetails?.bankName || '',
@@ -330,7 +322,7 @@ export function VendorFormModal({
         ? {
             bankName: bankDetails.bankName.trim(),
             accountType: bankDetails.accountType || 'Indefinido',
-            currency: bankDetails.currency || '$Ar',
+            currency: '$Ar',
             cbuCvu: bankDetails.cbuCvu.trim(),
             alias: bankDetails.alias.trim(),
             cuitCuil: cleanCuit || (bankDetails.cuitCuil || '').trim(),
@@ -822,14 +814,9 @@ export function VendorFormModal({
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">Moneda de la Cuenta</label>
-                    <select
-                      value={bankDetails.currency || '$Ar'}
-                      onChange={(e) => setBankDetails({ ...bankDetails, currency: e.target.value as '$Ar' | 'u$' })}
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden transition cursor-pointer font-bold text-indigo-900"
-                    >
-                      <option value="$Ar">$Ar (Pesos)</option>
-                      <option value="u$">u$ (Dólares)</option>
-                    </select>
+                    <div className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-slate-100 font-bold text-slate-600">
+                      $Ar (Pesos)
+                    </div>
                   </div>
                 </div>
               </div>

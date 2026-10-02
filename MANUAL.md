@@ -145,7 +145,7 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 
 **Qué hace la IA automáticamente:** cada archivo aparece como una fila con una miniatura y el cartel **"Analizando IA…"**. La Inteligencia Artificial (Google Gemini) **lee el comprobante** y completa:
 - **Proveedor / comercio**
-- **Monto** y **moneda** (por defecto ARS)
+- **Monto** (la app opera solo en **pesos argentinos, ARS**)
 - **Fecha**
 - **CUIT** del emisor
 - **N° de factura / ticket**
@@ -157,7 +157,7 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 **Qué tenés que completar o revisar vos:**
 - Verificar/corregir **Monto** y **Fecha** (son obligatorios; si la IA no los detecta con certeza, la fila queda marcada como *"Falta Monto o Fecha"* y hay que completarlos a mano).
 - Elegir el **Centro de Costos** (obligatorio).
-- Elegir el **Tipo de pago** (ver §6.2).
+- Elegir el **Tipo de pago** (ver §6.2). **Es obligatorio**: sin tipo de pago no se puede guardar.
 - Completar **datos de cuenta** si corresponde (reintegro o pago a proveedor).
 - Notas contables si querés.
 
@@ -178,7 +178,8 @@ El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de 
 
 - En **Reintegro**, si no tenés datos de cuenta cargados, la aplicación los toma de tu perfil, o podés usar el botón **"Ingresar mi cuenta"**.
 - En **Pago a Proveedor**, elegís el proveedor del **catálogo oficial** y sus datos (CBU, alias, CUIT, titular) se completan solos y quedan en modo lectura.
-- La IA **no** decide el tipo de pago: lo elegís vos. Si no elegís ninguno, el sistema asume **Tarjeta Corporativa**.
+- La IA **no** decide el tipo de pago: lo elegís vos, y es obligatorio. **Reintegro** y **Pago a Proveedor** quedan *Pendientes* de pago; las tarjetas quedan como *Directo*.
+- Un gasto cargado como **tarjeta** no se puede convertir después en Reintegro o Pago a Proveedor desde la edición del colaborador: lo corrige Administración.
 
 ### 6.3 Centro de costos y categoría
 
@@ -261,6 +262,10 @@ Con **"Pagar"** se abre **"Pagar Comprobante y Liquidar Reintegro"**:
    - Recién entonces **envía un correo de confirmación** al solicitante (con copia automática — ver §8.3), con los datos de la transferencia y la constancia adjunta. Si el pago no se pudo registrar, **no sale ningún correo**; si el correo falla, el pago queda registrado y la app avisa que no se envió.
    - Elegir **"Pagado"** desde *Editar comprobante* ya no lo marca pagado directamente: guarda los cambios y abre esta misma ventana de pago.
 
+> **Pagos simultáneos:** antes de abrir *Pagar* y al confirmar, la app verifica con la base que el comprobante siga pendiente. Si otra persona lo pagó mientras tanto, no se registra de nuevo ni se envía otro correo.
+>
+> **Datos bancarios:** la columna *Datos de Cuenta*, la ventana de pago y el correo muestran siempre la **cuenta guardada en el comprobante** (la que se paga). Si el catálogo de proveedores tiene otra cuenta para ese proveedor, aparece **"⚠️ Distinta al catálogo"** para revisarlo antes de pagar.
+
 ### 7.4 Pago en lote
 
 Con varias filas seleccionadas y **"Pagar"** se abre **"Liquidación y Pago en Lote"**:
@@ -301,7 +306,7 @@ La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas banc
 
 - **Tarjetas de estadística:** cantidad de proveedores y facturación total registrada.
 - **Buscar / Ordenar:** por nombre, CUIT, email, alias o CBU; orden alfabético, por fecha, por facturación o por cantidad de comprobantes.
-- **Nuevo Proveedor** (formulario): *Nombre o Razón Social* (obligatorio), *CUIT/CUIL*, **datos bancarios** (Alias, CBU/CVU, Banco, Tipo de Cuenta, Moneda) y observaciones.
+- **Nuevo Proveedor** (formulario): *Nombre o Razón Social* (obligatorio), *CUIT/CUIL*, **datos bancarios** (Alias, CBU/CVU, Banco, Tipo de Cuenta; cuentas en pesos) y observaciones.
   - **Lectura con IA:** se puede adjuntar una *Constancia de CUIT* o comprobante bancario (PDF/imagen o Ctrl+V) y la IA completa los campos.
   - **Controles:** alias y CBU/CVU **duplicados están prohibidos**; un CUIT duplicado se permite solo tildando una confirmación.
 - **Importar CSV:** pegá filas desde Google Sheets/Excel o subí un archivo `.csv/.tsv`. Detecta columnas y duplicados y muestra una previsualización antes de importar.
@@ -414,7 +419,7 @@ La fila queda marcada como *"Falta Monto o Fecha"*. Completá esos campos a mano
 El comprobante no figura a nombre de Ingeniería Sin Fronteras. Verificá el destinatario; podés continuar igual con **"Aceptar"** si corresponde.
 
 **El comprobante dice "Fallo Drive".**
-La subida a Google Drive falló. Usá **"Reintentar"** en la fila. El dato contable ya quedó guardado igual.
+La subida a Google Drive falló (o quedó *"Subida trabada"*). Usá **"Reintentar"** junto al estado, en *Mis Gastos*. El dato contable ya quedó guardado igual. Si el archivo ya no está en ese navegador, usá **"Reemplazar"** en el visor para volver a adjuntarlo. Al **cerrar sesión** con subidas pendientes, la app avisa antes, porque esos archivos se borran del navegador.
 
 **¿Dónde quedan archivadas las fotos de las facturas?**
 En la **carpeta de Google Drive del centro de costos** correspondiente, con nombre estandarizado. Se accede desde el ícono de carpeta en la fila o desde el visor. Los comprobantes de pago y certificados de retención, en cambio, quedan en la carpeta única de **Comprobantes de Pago y Retenciones** (§7.9).

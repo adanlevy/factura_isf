@@ -36,6 +36,8 @@ interface ExpenseListProps {
   onOpenNewModal: () => void;
   onDeleteExpense?: (id: string) => void;
   onReplaceReceipt?: (expense: Expense) => void;
+  /** Reintentar la subida a Drive de un comprobante propio */
+  onRetryDriveUpload?: (expense: Expense) => void;
   // Server-side query filtering & pagination
   queryPeriod?: string;
   onPeriodChange?: (period: string) => void;
@@ -48,6 +50,59 @@ interface ExpenseListProps {
   onLoadMore?: () => void;
 }
 
+// Una subida "en curso" que lleva más de 3 minutos se considera trabada (p. ej. se cerró la pestaña)
+const STALE_UPLOAD_MS = 3 * 60 * 1000;
+
+/** Estado de la subida del archivo a Drive, según lo guardado en la base (no solo en memoria). */
+function DriveStatusBadge({ expense, onRetry }: { expense: Expense; onRetry?: (expense: Expense) => void }) {
+  const status = expense.driveUploadStatus;
+  const startedAt = new Date(expense.updatedAt || expense.createdAt || 0).getTime();
+  const isStale = status === 'PENDING' && Date.now() - startedAt > STALE_UPLOAD_MS;
+  const retryButton =
+    onRetry && (status === 'ERROR' || isStale) ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRetry(expense);
+        }}
+        className="ml-1 inline-flex items-center text-[9px] font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+        title="Volver a subir el archivo a Google Drive"
+      >
+        Reintentar
+      </button>
+    ) : null;
+
+  if (status === 'ERROR' || isStale) {
+    return (
+      <span className="inline-flex items-center">
+        <span className="inline-flex items-center text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1 py-0.2 rounded">
+          <AlertCircle className="w-2.5 h-2.5 mr-0.5 text-rose-600 shrink-0" />
+          {isStale ? 'Subida trabada' : 'Fallo Drive'}
+        </span>
+        {retryButton}
+      </span>
+    );
+  }
+  if (status === 'PENDING') {
+    return (
+      <span className="inline-flex items-center text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded">
+        <Clock className="w-2.5 h-2.5 mr-0.5 text-amber-600 animate-spin shrink-0" />
+        Subiendo...
+      </span>
+    );
+  }
+  if (status === 'SUCCESS') {
+    return (
+      <span className="inline-flex items-center text-[9px] text-emerald-700">
+        <Check className="w-2.5 h-2.5 mr-0.5 text-emerald-600 shrink-0" />
+        En Drive
+      </span>
+    );
+  }
+  return null;
+}
+
 export function ExpenseList({
   expenses,
   costCenters = [],
@@ -58,6 +113,7 @@ export function ExpenseList({
   onOpenNewModal,
   onDeleteExpense,
   onReplaceReceipt,
+  onRetryDriveUpload,
   queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
@@ -403,26 +459,9 @@ export function ExpenseList({
                             title={`Abrir carpeta de ${expense.project} en Google Drive`}
                           />
                         </div>
-                        {expense.receiptImage && (
-                          <div className="mt-0.5">
-                            {expense.driveUploadStatus === 'ERROR' ? (
-                              <span className="inline-flex items-center text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1 py-0.2 rounded">
-                                <AlertCircle className="w-2.5 h-2.5 mr-0.5 text-rose-600 shrink-0" />
-                                Fallo Drive
-                              </span>
-                            ) : expense.driveUploadStatus === 'PENDING' ? (
-                              <span className="inline-flex items-center text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded">
-                                <Clock className="w-2.5 h-2.5 mr-0.5 text-amber-600 animate-spin shrink-0" />
-                                Subiendo...
-                              </span>
-                            ) : expense.driveUploadStatus === 'SUCCESS' ? (
-                              <span className="inline-flex items-center text-[9px] text-emerald-700">
-                                <Check className="w-2.5 h-2.5 mr-0.5 text-emerald-600 shrink-0" />
-                                En Drive
-                              </span>
-                            ) : null}
-                          </div>
-                        )}
+                        <div className="mt-0.5">
+                          <DriveStatusBadge expense={expense} onRetry={onRetryDriveUpload} />
+                        </div>
                       </td>
 
                       {/* 5. Monto */}
@@ -700,6 +739,7 @@ export function ExpenseList({
                         iconOnly={true}
                         title={`Abrir carpeta de ${expense.project} en Google Drive`}
                       />
+                      <DriveStatusBadge expense={expense} onRetry={onRetryDriveUpload} />
                     </div>
                   </div>
                   {(expense.accountingNotes || expense.notes) && (

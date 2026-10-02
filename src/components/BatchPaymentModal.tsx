@@ -24,6 +24,7 @@ import {
   formatTransferDetails,
   generateDriveFileName,
   escapeHtml,
+  hasPayableBankDetails,
 } from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
@@ -32,6 +33,8 @@ import {
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
   getPaymentsFolderTarget,
+  extractDriveFileId,
+  deleteReceiptFromGoogleDrive,
 } from '../utils/googleWorkspace';
 import { cachePaymentProofFile } from '../utils/receiptCache';
 
@@ -288,9 +291,14 @@ export function BatchPaymentModal({
     const savedSet = new Set(savedIds);
     const savedExpenses = updatedExpenses.filter((e) => savedSet.has(e.id));
     if (savedExpenses.length === 0) {
+      // La constancia recién subida no queda huérfana en Drive (va a la papelera)
+      const orphanId = sharedProofDriveUrl ? extractDriveFileId(sharedProofDriveUrl) : null;
+      if (orphanId) deleteReceiptFromGoogleDrive({ fileId: orphanId }).catch(() => {});
       setIsExecuting(false);
       setExecutionStep('');
-      alert('No se pudo registrar el pago en el sistema (sin permisos o sin conexión). No se envió ningún correo.');
+      alert(
+        'No se registró ningún pago: los comprobantes ya habían sido pagados por otra persona, o no hay permisos / conexión. No se envió ningún correo.'
+      );
       return;
     }
     const groupsToNotify = recipientGroups
@@ -368,7 +376,7 @@ export function BatchPaymentModal({
             .join('');
 
           // Consolidated bank details
-          const sampleBank = group.expenses.find((e) => e.bankDetails)?.bankDetails;
+          const sampleBank = group.expenses.find((e) => hasPayableBankDetails(e.bankDetails))?.bankDetails;
 
           const emailBodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 650px; margin: 0 auto; background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
             <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px;">

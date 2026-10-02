@@ -13,8 +13,17 @@ import {
   Eye,
   FileSpreadsheet,
 } from 'lucide-react';
-import { Expense, CostCenter, UserProfile, AppUserRecord, DriveSettings } from '../types';
-import { formatCurrency, generateDriveFileName, formatPaymentEmailSubject, formatTransferDetails, escapeHtml } from '../utils/helpers';
+import { Expense, CostCenter, UserProfile, AppUserRecord, DriveSettings, Vendor } from '../types';
+import {
+  formatCurrency,
+  generateDriveFileName,
+  formatPaymentEmailSubject,
+  formatTransferDetails,
+  escapeHtml,
+  hasPayableBankDetails,
+  findVendorByCuitOrName,
+  vendorBankMismatch,
+} from '../utils/helpers';
 import { resolveEmailCcRecipients } from '../utils/emailCc';
 import {
   uploadReceiptToGoogleDrive,
@@ -23,6 +32,7 @@ import {
   getStoredWorkspaceToken,
   getStoredWorkspaceUser,
   extractDriveFileId,
+  deleteReceiptFromGoogleDrive,
 } from '../utils/googleWorkspace';
 import { cachePaymentProofFile } from '../utils/receiptCache';
 import { SafePdfViewer } from './SafePdfViewer';
@@ -38,6 +48,7 @@ interface PaymentProcessModalProps {
   /** Registra el pago; devuelve false si no se pudo guardar. */
   onPaymentCompleted: (updatedExpense: Expense) => Promise<boolean | void> | boolean | void;
   onNotify?: (message: string) => void;
+  vendors?: Vendor[];
   currentUser?: UserProfile;
   currentUserAccessToken?: string;
 }
@@ -51,6 +62,7 @@ export function PaymentProcessModal({
   appUsers = [],
   onPaymentCompleted,
   onNotify,
+  vendors = [],
   currentUser,
   currentUserAccessToken,
 }: PaymentProcessModalProps) {
@@ -92,9 +104,13 @@ export function PaymentProcessModal({
 
   const recipientEmail = expense?.submittedByEmail || '';
   const recipientName = expense?.submittedByName || 'Colaborador / Solicitante';
-  const hasBankData = Boolean(
-    expense?.bankDetails?.cbuCvu || expense?.bankDetails?.alias || expense?.bankDetails?.bankName
-  );
+  // Misma regla en toda la app: hay cuenta para transferir si hay CBU/CVU o alias del comprobante
+  const hasBankData = hasPayableBankDetails(expense?.bankDetails);
+  const catalogVendor =
+    expense && expense.paymentType !== 'REINTEGRO'
+      ? findVendorByCuitOrName(vendors, expense.cuit || expense.bankDetails?.cuitCuil, expense.vendor, expense.bankDetails)
+      : null;
+  const catalogMismatch = vendorBankMismatch(expense?.bankDetails, catalogVendor?.bankDetails);
 
   // File loading helper
   const handleProcessFile = (file: File) => {
@@ -223,8 +239,13 @@ export function PaymentProcessModal({
 
     const saved = await onPaymentCompleted(updatedExpense);
     if (saved === false) {
+      // La constancia recién subida no queda huérfana en Drive (va a la papelera)
+      const orphanId = finalPaymentProofUrl ? extractDriveFileId(finalPaymentProofUrl) : null;
+      if (orphanId && finalPaymentProofUrl !== expense.paymentProofDriveUrl) {
+        deleteReceiptFromGoogleDrive({ fileId: orphanId }).catch(() => {});
+      }
       setIsExecuting(false);
-      alert('No se pudo registrar el pago en el sistema (sin permisos o sin conexión). No se envió el correo.');
+      onClose();
       return;
     }
 
@@ -448,6 +469,13 @@ export function PaymentProcessModal({
                     <span> • Titular: <strong>{expense.bankDetails.accountHolder}</strong></span>
                   )}
                 </div>
+                {catalogMismatch && (
+                  <p className="pl-6 text-[11px] text-amber-800 font-semibold">
+                    ⚠️ El catálogo de proveedores tiene otra cuenta para este proveedor
+                    ({[catalogMismatch.alias, catalogMismatch.cbuCvu].filter(Boolean).join(' · ')}). Se va a usar la del
+                    comprobante; si no es la correcta, editá el comprobante antes de pagar.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="p-3.5 bg-amber-50 border border-amber-200/90 rounded-2xl text-xs space-y-1">

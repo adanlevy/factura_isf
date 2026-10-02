@@ -29,7 +29,8 @@ import { WithholdingCertificateModal } from './components/WithholdingCertificate
 import { APP_VERSION, APP_BUILD_DATE } from './version';
 import { getStoredAuth, saveStoredAuth, getStoredUserBankDetails, saveStoredUserBankDetails } from './utils/auth';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { auth } from './lib/firebase';
+import { auth, db } from './lib/firebase';
+import { waitForPendingWrites } from 'firebase/firestore';
 import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName, escapeHtml } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
@@ -58,6 +59,10 @@ import {
   saveCentralCategories,
   upsertCentralExpenses,
   patchCentralExpenses,
+  patchExpensesIfNotPaid,
+  saveExpenseChangesIfNotPaid,
+  fetchExpenseFromServer,
+  repairMisclassifiedPendingExpenses,
   upsertCentralExpensesDetailed,
   pickExpenseFields,
   diffExpenseFields,
@@ -97,6 +102,7 @@ import {
   cacheReceiptFile,
   removeCachedPaymentProofFile,
   removeCachedWithholdingCertificateFile,
+  getCachedReceiptFile,
 } from './utils/receiptCache';
 import { hydrateUserPatternsFromCloud } from './utils/sorting';
 import { authFetch } from './utils/authFetch';
@@ -185,6 +191,8 @@ export default function App() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
   const legacyUsersUnifiedRef = useRef(false);
+  const misclassifiedRepairedRef = useRef(false);
+  const lastBatchAlreadyPaidRef = useRef(0);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
 
@@ -543,6 +551,29 @@ export default function App() {
       })
       .catch((err) => console.warn('No se pudo unificar la tabla de usuarios:', err));
   }, [isFirebaseAuthReady, currentUser?.role, currentUser?.email]);
+
+  // Corrige una vez los "Pago a Proveedor" / "Reintegro" que se guardaron como "No aplica"
+  useEffect(() => {
+    if (!isFirebaseAuthReady || permissionRole !== 'admin' || misclassifiedRepairedRef.current) return;
+    misclassifiedRepairedRef.current = true;
+    repairMisclassifiedPendingExpenses()
+      .then(async (fixedIds) => {
+        if (fixedIds.length === 0) return;
+        await logAuditEvent({
+          userEmail: currentUser?.email,
+          userName: currentUser?.name,
+          action: 'EXPENSE_STATUS_CHANGE',
+          actionLabel: 'Corrección de Estado (Pendientes)',
+          entityType: 'expense',
+          entityId: 'repair-pending-status',
+          entityName: `${fixedIds.length} comprobante(s)`,
+          summary: `Se corrigieron ${fixedIds.length} comprobante(s) de Pago a Proveedor / Reintegro que figuraban como "No aplica": ahora están Pendientes de pago.`,
+          metadata: { ids: fixedIds },
+        }).catch(() => {});
+        showToast(`🔧 Se corrigieron ${fixedIds.length} comprobante(s) de Pago a Proveedor que no figuraban como pendientes.`);
+      })
+      .catch((err) => console.warn('No se pudieron revisar los estados de pago:', err));
+  }, [isFirebaseAuthReady, permissionRole, currentUser?.email]);
 
   const handleSaveDriveSettings = async (next: DriveSettings): Promise<boolean> => {
     const previous = driveSettings;
@@ -944,9 +975,17 @@ export default function App() {
   };
 
   // --- EXPENSE ACTIONS ---
-  const handleUploadExpenseToDrive = async (expenseToUpload: Expense) => {
+  const handleUploadExpenseToDrive = async (expenseArg: Expense) => {
+    // Después de recargar, el archivo no está en memoria: se busca en la caché local del navegador
+    let expenseToUpload = expenseArg;
     if (!expenseToUpload.receiptImage) {
-      showToast('⚠️ Este comprobante no tiene archivo o imagen adjunta.');
+      const cached = await getCachedReceiptFile(expenseToUpload.id).catch(() => null);
+      if (cached) expenseToUpload = { ...expenseToUpload, receiptImage: cached };
+    }
+    if (!expenseToUpload.receiptImage) {
+      showToast(
+        '⚠️ El archivo de este comprobante no está en este navegador. Usá "Reemplazar" en el visor para volver a adjuntarlo.'
+      );
       return;
     }
 
@@ -997,9 +1036,11 @@ export default function App() {
               : e
           )
         );
+        patchCentralExpenses([{ id: expenseToUpload.id, changes: { driveUploadStatus: 'ERROR' } }]).catch(() => {});
         showToast(`⚠️ No se pudo subir a Drive: ${res.error || 'Verifica la conexión'}`);
       }
     } catch (e: any) {
+      patchCentralExpenses([{ id: expenseToUpload.id, changes: { driveUploadStatus: 'ERROR' } }]).catch(() => {});
       setExpenses((prev) =>
         prev.map((item) =>
           item.id === expenseToUpload.id
@@ -1108,6 +1149,8 @@ export default function App() {
                 : item
             )
           );
+          // También en la base: si no, el comprobante quedaba "Subiendo..." para siempre
+          patchCentralExpenses([{ id: newExpense.id, changes: { driveUploadStatus: 'ERROR' } }]).catch(() => {});
         });
     }
 
@@ -1250,6 +1293,7 @@ export default function App() {
                   : item
               )
             );
+            patchCentralExpenses([{ id: exp.id, changes: { driveUploadStatus: 'ERROR' } }]).catch(() => {});
           });
       }
     });
@@ -1705,7 +1749,7 @@ export default function App() {
 
     if (exp.reimbursementStatus === 'PENDING') {
       // Open PaymentProcessModal so the admin can upload the payment receipt, preview email, and confirm
-      setPaymentModalExpense(exp);
+      await openPaymentIfStillPending(exp);
     } else {
       // Revert to PENDING
       const updated: Expense = {
@@ -1828,15 +1872,22 @@ export default function App() {
     const updatedMap = new Map(updatedExpenses.map((e) => [e.id, e]));
     setExpenses((prev) => prev.map((e) => (updatedMap.has(e.id) ? { ...e, ...pickExpenseFields(updatedMap.get(e.id)!, BATCH_PAYMENT_FIELDS) } : e)));
 
-    const res = await patchCentralExpenses(
-      updatedExpenses.map((e) => ({ id: e.id, changes: pickExpenseFields(e, BATCH_PAYMENT_FIELDS) })),
-      { mirror: updatedExpenses }
+    // Transacción: solo se registran los que siguen sin pagar (evita pagos dobles entre Admins)
+    const res = await patchExpensesIfNotPaid(
+      updatedExpenses.map((e) => ({ id: e.id, changes: pickExpenseFields(e, BATCH_PAYMENT_FIELDS) }))
     );
-    if (res.failedIds.length > 0) {
-      const failed = new Set(res.failedIds);
-      setExpenses((prev) => prev.map((e) => (failed.has(e.id) && originals.has(e.id) ? originals.get(e.id)! : e)));
+    lastBatchAlreadyPaidRef.current = res.alreadyPaidIds.length;
+    const notSaved = new Set([...res.failedIds, ...res.alreadyPaidIds]);
+    if (notSaved.size > 0) {
+      setExpenses((prev) => prev.map((e) => (notSaved.has(e.id) && originals.has(e.id) ? originals.get(e.id)! : e)));
+      // Los que ya estaban pagados se refrescan con la versión del servidor
+      for (const id of res.alreadyPaidIds) {
+        fetchExpenseFromServer(id).then((fresh) => {
+          if (fresh) setExpenses((prev) => prev.map((e) => (e.id === fresh.id ? { ...e, ...fresh } : e)));
+        });
+      }
     }
-    return updatedExpenses.map((e) => e.id).filter((id) => !res.failedIds.includes(id));
+    return res.okIds;
   };
 
   const handleBatchPaymentCompleted = async (
@@ -1844,7 +1895,9 @@ export default function App() {
     emailsSentCount: number,
     info?: { failedCount: number; emailsExpected: number }
   ) => {
-    const failedCount = info?.failedCount || 0;
+    const alreadyPaid = lastBatchAlreadyPaidRef.current;
+    lastBatchAlreadyPaidRef.current = 0;
+    const failedCount = Math.max(0, (info?.failedCount || 0) - alreadyPaid);
     const emailsFailed = Math.max(0, (info?.emailsExpected || 0) - emailsSentCount);
 
     await logAuditEvent({
@@ -1862,11 +1915,13 @@ export default function App() {
       }`,
     }).catch((err) => console.warn('Audit log error on batch payment:', err));
 
-    if (failedCount > 0 || emailsFailed > 0) {
+    if (failedCount > 0 || emailsFailed > 0 || alreadyPaid > 0) {
       showToast(
         `⚠️ Se liquidaron ${savedExpenses.length} comprobante(s).${
-          failedCount > 0 ? ` ${failedCount} no se pudieron registrar (${SAVE_ERROR_HINT}).` : ''
-        }${emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''}`
+          alreadyPaid > 0 ? ` ${alreadyPaid} ya habían sido pagados por otra persona (no se repitieron).` : ''
+        }${failedCount > 0 ? ` ${failedCount} no se pudieron registrar (${SAVE_ERROR_HINT}).` : ''}${
+          emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''
+        }`
       );
     } else if (emailsSentCount > 0) {
       showToast(`🎉 Se liquidaron ${savedExpenses.length} comprobantes y se enviaron ${emailsSentCount} avisos por email.`);
@@ -2438,8 +2493,19 @@ export default function App() {
   };
 
   // Payment trigger (Opens PaymentProcessModal with payment receipt upload and confirmation flow)
+  // Antes de abrir "Pagar" se confirma con el servidor que siga pendiente
+  const openPaymentIfStillPending = async (expense: Expense) => {
+    const fresh = await fetchExpenseFromServer(expense.id);
+    if (fresh && fresh.reimbursementStatus === 'REIMBURSED') {
+      setExpenses((prev) => prev.map((e) => (e.id === fresh.id ? { ...e, ...fresh } : e)));
+      showToast(`ℹ️ "${expense.vendor}" ya fue pagado por otra persona.`);
+      return;
+    }
+    setPaymentModalExpense(fresh ? { ...expense, ...fresh, receiptImage: expense.receiptImage } : expense);
+  };
+
   const handleDirectPayExpense = async (expense: Expense) => {
-    setPaymentModalExpense(expense);
+    await openPaymentIfStillPending(expense);
   };
 
   const handleEmailSentSuccess = async (expenseId: string, mode: 'request_bank_details' | 'confirm_payment') => {
@@ -2517,9 +2583,17 @@ export default function App() {
     if (viewingReceiptExpense && viewingReceiptExpense.id === timestamped.id) {
       setViewingReceiptExpense(timestamped);
     }
-    if (!(await saveExpenseChanges(base, timestamped))) {
-      if (original) setExpenses((prev) => prev.map((e) => (e.id === original.id ? original : e)));
-      showToast(`⚠️ No se pudo registrar el pago de "${timestamped.vendor}" (${SAVE_ERROR_HINT}).`);
+    // Solo si sigue sin pagar (otro Admin pudo haberlo pagado mientras tanto)
+    const outcome = await saveExpenseChangesIfNotPaid(base, timestamped);
+    if (outcome !== 'ok') {
+      if (outcome === 'already_paid') {
+        const fresh = await fetchExpenseFromServer(timestamped.id);
+        if (fresh) setExpenses((prev) => prev.map((e) => (e.id === fresh.id ? { ...e, ...fresh } : e)));
+        showToast(`⚠️ "${timestamped.vendor}" ya había sido pagado por otra persona. No se registró de nuevo ni se envió correo.`);
+      } else {
+        if (original) setExpenses((prev) => prev.map((e) => (e.id === original.id ? original : e)));
+        showToast(`⚠️ No se pudo registrar el pago de "${timestamped.vendor}" (${SAVE_ERROR_HINT}).`);
+      }
       return false;
     }
     try {
@@ -2573,6 +2647,25 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    // Los archivos que todavía no llegaron a Drive viven solo en este navegador: al cerrar sesión
+    // se borran. Se avisa antes para que se puedan reintentar.
+    const myEmail = (currentUser?.email || '').toLowerCase();
+    const notInDrive = expenses.filter(
+      (e) =>
+        (e.submittedByEmail || '').toLowerCase() === myEmail &&
+        (e.driveUploadStatus === 'PENDING' || e.driveUploadStatus === 'ERROR')
+    );
+    if (notInDrive.length > 0) {
+      const proceed = window.confirm(
+        `Tenés ${notInDrive.length} comprobante(s) cuyo archivo todavía no se subió a Google Drive ` +
+          `(${notInDrive.slice(0, 3).map((e) => e.vendor || 'Comprobante').join(', ')}${notInDrive.length > 3 ? '…' : ''}).\n\n` +
+          'Si cerrás sesión, esos archivos se borran de este navegador y vas a tener que volver a adjuntarlos.\n\n' +
+          '¿Cerrar sesión igual? (Cancelar para volver y usar "Reintentar")'
+      );
+      if (!proceed) return;
+    }
+    // Cambios guardados sin conexión: se espera unos segundos a que lleguen a la base
+    await Promise.race([waitForPendingWrites(db).catch(() => {}), new Promise((r) => setTimeout(r, 5000))]);
     setIsAuthProfileOpen(false);
     showToast('Cerrando sesión y borrando los datos de este navegador...');
     await signOut(auth).catch(console.warn);
@@ -2655,6 +2748,7 @@ export default function App() {
               onOpenNewModal={() => setIsScannerModalOpen(true)}
               onDeleteExpense={handleDeleteExpense}
               onReplaceReceipt={handleRequestReplaceReceipt}
+              onRetryDriveUpload={handleUploadExpenseToDrive}
               queryPeriod={queryPeriod}
               onPeriodChange={handlePeriodChange}
               queryCostCenter={queryCostCenter}
@@ -2912,6 +3006,7 @@ export default function App() {
         onClose={() => setPaymentModalExpense(null)}
         onPaymentCompleted={handlePaymentCompleted}
         onNotify={showToast}
+        vendors={vendors}
       />
 
       <EditExpenseModal

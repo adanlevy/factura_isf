@@ -85,25 +85,17 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
-export function formatCurrency(amount: number, currency: string = 'ARS'): string {
-  try {
-    const symbolMap: Record<string, string> = {
-      ARS: '$',
-      USD: 'US$',
-      EUR: '€',
-      MXN: 'Mex$',
-      CLP: 'CLP$',
-      COP: 'COL$',
-      BRL: 'R$',
-    };
+/** La app opera solo en pesos argentinos (ARS): toda moneda se muestra como $. */
+export const APP_CURRENCY = 'ARS';
 
-    const symbol = symbolMap[currency] || `${currency} `;
-    return `${symbol} ${Number(amount || 0).toLocaleString('es-AR', {
+export function formatCurrency(amount: number, _currency?: string): string {
+  try {
+    return `$ ${Number(amount || 0).toLocaleString('es-AR', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
   } catch {
-    return `${currency} ${amount}`;
+    return `$ ${amount}`;
   }
 }
 
@@ -177,6 +169,26 @@ export function safeExternalUrl(url?: string | null): string | undefined {
   return /^https:\/\/([a-z0-9-]+\.)*google\.com(\/|$)/i.test(trimmed) ? trimmed : undefined;
 }
 
+/** Hay datos para transferir: CBU/CVU o alias (el banco o el titular solos no alcanzan). */
+export function hasPayableBankDetails(bank?: { cbuCvu?: string; alias?: string } | null): boolean {
+  return Boolean(bank && (bank.cbuCvu?.trim() || bank.alias?.trim()));
+}
+
+/**
+ * Compara la cuenta del comprobante (la que se paga) con la del catálogo de proveedores.
+ * Devuelve la cuenta del catálogo si tiene CBU/alias distintos; si coinciden o no hay, null.
+ */
+export function vendorBankMismatch(
+  expenseBank?: { cbuCvu?: string; alias?: string } | null,
+  vendorBank?: { cbuCvu?: string; alias?: string } | null
+): { cbuCvu?: string; alias?: string } | null {
+  if (!hasPayableBankDetails(vendorBank) || !hasPayableBankDetails(expenseBank)) return null;
+  const norm = (v?: string) => (v || '').replace(/\s+/g, '').toLowerCase();
+  const sameCbu = norm(vendorBank!.cbuCvu) && norm(vendorBank!.cbuCvu) === norm(expenseBank!.cbuCvu);
+  const sameAlias = norm(vendorBank!.alias) && norm(vendorBank!.alias) === norm(expenseBank!.alias);
+  return sameCbu || sameAlias ? null : vendorBank!;
+}
+
 export function csvCell(value: unknown): string {
   let text = value === undefined || value === null ? '' : String(value);
   if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
@@ -213,7 +225,7 @@ export function exportToCSV(expenses: Expense[]): void {
     csvCell(exp.invoiceNumber),
     csvCell(exp.category),
     csvCell(exp.project),
-    csvCell(exp.currency || 'ARS'),
+    csvCell(APP_CURRENCY),
     Number(exp.amount) || 0,
     exp.reimbursable ? 'SÍ' : 'NO',
     exp.reimbursementStatus === 'PENDING'
