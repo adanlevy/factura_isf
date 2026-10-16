@@ -42,6 +42,7 @@ import {
   generateDriveFileName,
   matchesSearch,
   findVendorByCuitOrName,
+  hasPayableBankDetails,
 } from '../utils/helpers';
 import { BatchPaymentModal } from './BatchPaymentModal';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
@@ -278,7 +279,7 @@ export function AdminMovementView({
         if (filterStatus === 'NOT_APPLICABLE' && (isPendingItem || isPaidItem)) return false;
         if (filterStatus === 'MISSING_BANK') {
           if (!isPendingItem) return false;
-          if (e.bankDetails?.cbuCvu || e.bankDetails?.alias) return false;
+          if (hasPayableBankDetails(e.bankDetails)) return false;
         }
       }
 

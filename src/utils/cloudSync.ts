@@ -11,6 +11,7 @@ import {
   deleteDoc,
   deleteField,
   updateDoc,
+  runTransaction,
   writeBatch,
   onSnapshot,
   getDoc,
@@ -681,19 +682,34 @@ export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<S
  * ventana de la query (limit de paginación, filtro de período o de centro de costos). Solo un
  * documento que ya no existe en el servidor es un borrado real; el resto no se toca.
  */
-async function confirmServerDeletedExpenseIds(ids: string[]): Promise<string[]> {
-  const confirmed: string[] = [];
+async function confirmServerDeletedExpenseIds(ids: string[]): Promise<{ deleted: string[]; changed: Expense[] }> {
+  const deleted: string[] = [];
+  const changed: Expense[] = [];
   await Promise.all(
     ids.map(async (id) => {
       try {
         const snap = await getDocFromServer(doc(db, 'expenses', id));
-        if (!snap.exists()) confirmed.push(id);
+        if (!snap.exists()) deleted.push(id);
+        // Sigue existiendo pero salió de la consulta (p. ej. otro Admin lo pagó y dejó de estar
+        // "pendiente"): se actualiza con la versión del servidor. Antes quedaba la copia vieja como
+        // pendiente y se podía pagar dos veces.
+        else changed.push(snap.data() as Expense);
       } catch {
         // Sin conexión o sin permisos: no se asume borrado
       }
     })
   );
-  return confirmed;
+  return { deleted, changed };
+}
+
+/** Versión actual de un comprobante leída del servidor (no de la caché local). */
+export async function fetchExpenseFromServer(id: string): Promise<Expense | null> {
+  try {
+    const snap = await getDocFromServer(doc(db, 'expenses', id));
+    return snap.exists() ? (snap.data() as Expense) : null;
+  } catch {
+    return null;
+  }
 }
 
 type RealtimeUpdate = Partial<SyncPayload> & { hasMore?: boolean };
@@ -718,10 +734,11 @@ function handleExpensesSnapshot(
   onUpdate({ expenses, hasMore: snap.size >= currentLimit });
 
   if (removedCandidates.length > 0) {
-    confirmServerDeletedExpenseIds(removedCandidates).then((confirmed) => {
-      if (confirmed.length === 0) return;
-      confirmed.forEach((id) => trackDeletedExpenseId(id));
-      onUpdate({ removedExpenseIds: confirmed });
+    confirmServerDeletedExpenseIds(removedCandidates).then(({ deleted, changed }) => {
+      if (changed.length > 0) onUpdate({ expenses: changed });
+      if (deleted.length === 0) return;
+      deleted.forEach((id) => trackDeletedExpenseId(id));
+      onUpdate({ removedExpenseIds: deleted });
     });
   }
 }
@@ -1082,6 +1099,81 @@ export async function saveExpenseChanges(before: Expense | null | undefined, aft
   }
   const res = await patchCentralExpenses([{ id: after.id, changes }], { mirror: [after] });
   return res.ok;
+}
+
+export interface GuardedPaymentResult {
+  okIds: string[];
+  /** Ya estaban pagados (p. ej. por otro Admin): no se tocaron */
+  alreadyPaidIds: string[];
+  failedIds: string[];
+}
+
+/**
+ * Registra pagos solo si el comprobante sigue sin pagar, en una transacción: si dos Admins pagan
+ * el mismo comprobante a la vez, el segundo no lo vuelve a registrar (ni se envía otro correo).
+ */
+export async function patchExpensesIfNotPaid(patches: ExpensePatch[]): Promise<GuardedPaymentResult> {
+  const result: GuardedPaymentResult = { okIds: [], alreadyPaidIds: [], failedIds: [] };
+  const valid = (patches || []).filter((p) => p && p.id);
+  for (const chunk of chunkArray(valid, 10)) {
+    try {
+      const outcome = await runTransaction(db, async (tx) => {
+        const snaps = await Promise.all(chunk.map((p) => tx.get(doc(db, 'expenses', p.id))));
+        const local = { okIds: [] as string[], alreadyPaidIds: [] as string[], failedIds: [] as string[] };
+        snaps.forEach((snap, i) => {
+          const patch = chunk[i];
+          if (!snap.exists()) {
+            local.failedIds.push(patch.id);
+          } else if ((snap.data() as Expense).reimbursementStatus === 'REIMBURSED') {
+            local.alreadyPaidIds.push(patch.id);
+          } else {
+            const data = buildPatchData(patch.id, patch.changes || {});
+            if (Object.keys(data).length > 0) tx.update(snap.ref, data);
+            local.okIds.push(patch.id);
+          }
+        });
+        return local;
+      });
+      result.okIds.push(...outcome.okIds);
+      result.alreadyPaidIds.push(...outcome.alreadyPaidIds);
+      result.failedIds.push(...outcome.failedIds);
+    } catch (err) {
+      console.error('[Firestore] No se pudo registrar el pago:', err);
+      result.failedIds.push(...chunk.map((p) => p.id));
+    }
+  }
+  return result;
+}
+
+/** Como saveExpenseChanges, pero solo si el comprobante sigue sin pagar. */
+export async function saveExpenseChangesIfNotPaid(
+  before: Expense | null | undefined,
+  after: Expense
+): Promise<'ok' | 'already_paid' | 'failed'> {
+  const changes = diffExpenseFields(before, after);
+  changes.updatedAt = after.updatedAt || new Date().toISOString();
+  for (const key of EXPENSE_LOCAL_ONLY_KEYS) {
+    if ((after as any)[key] && (after as any)[key] !== (before as any)?.[key]) changes[key] = (after as any)[key];
+  }
+  const res = await patchExpensesIfNotPaid([{ id: after.id, changes }]);
+  if (res.okIds.length > 0) return 'ok';
+  return res.alreadyPaidIds.length > 0 ? 'already_paid' : 'failed';
+}
+
+/**
+ * Corrige comprobantes de "Pago a Proveedor" / "Reintegro" que el escáner guardó como "No aplica"
+ * (estado de las tarjetas): quedaban fuera de pendientes y del pago en lote. Solo Admin.
+ */
+export async function repairMisclassifiedPendingExpenses(): Promise<string[]> {
+  const snap = await getDocs(query(collection(db, 'expenses'), where('reimbursementStatus', '==', 'NOT_APPLICABLE')));
+  const toFix = snap.docs
+    .map((d) => d.data() as Expense)
+    .filter((e) => e && e.id && (e.paymentType === 'PAGO_PROVEEDOR' || e.paymentType === 'REINTEGRO'));
+  if (toFix.length === 0) return [];
+  const res = await patchCentralExpenses(
+    toFix.map((e) => ({ id: e.id, changes: { reimbursementStatus: 'PENDING', reimbursable: true } }))
+  );
+  return toFix.map((e) => e.id).filter((id) => !res.failedIds.includes(id));
 }
 
 /**

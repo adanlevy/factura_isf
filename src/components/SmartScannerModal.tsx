@@ -513,14 +513,14 @@ export function SmartScannerModal({
                 vendor: item.vendor || proposedVendor,
                 cuit: item.cuit || proposedCuit,
                 amount: finalAmount,
-                currency: data.currency || item.currency || 'ARS',
+                currency: 'ARS',
                 date: finalDate,
                 invoiceNumber: data.invoiceNumber || item.invoiceNumber,
                 project: finalProject,
                 paymentType: finalPaymentType,
                 bankDetails: finalBankDetails,
                 reimbursable: isPendingPaymentType,
-                reimbursementStatus: isPendingPaymentType ? (item.reimbursementStatus || 'PENDING') : 'NOT_APPLICABLE',
+                reimbursementStatus: isPendingPaymentType ? 'PENDING' : 'NOT_APPLICABLE',
                 paymentMethod:
                   finalPaymentType === 'REINTEGRO'
                     ? 'Reintegro'
@@ -743,6 +743,10 @@ export function SmartScannerModal({
       alert('La Fecha es obligatoria.');
       return;
     }
+    if (!item.paymentType) {
+      alert('Elegí el Tipo de Pago (Reintegro, Pago a Proveedor, Tarjeta Corporativa o Débito Galicia).');
+      return;
+    }
 
     const isPendingPaymentType = item.paymentType === 'REINTEGRO' || item.paymentType === 'PAGO_PROVEEDOR';
 
@@ -756,7 +760,7 @@ export function SmartScannerModal({
       recipientName: item.recipientName || undefined,
       isIsfRecipient: item.isIsfRecipient,
       amount: Number(item.amount),
-      currency: item.currency || 'ARS',
+      currency: 'ARS',
       invoiceNumber: item.invoiceNumber || undefined,
       category: 'General',
       project: item.project.trim(),
@@ -769,11 +773,10 @@ export function SmartScannerModal({
           ? item.bankDetails
           : undefined,
 
-      paymentType: (item.paymentType || 'TARJETA_CORPORATIVA') as ExpensePaymentType,
+      paymentType: item.paymentType as ExpensePaymentType,
       reimbursable: isPendingPaymentType,
-      reimbursementStatus: isPendingPaymentType
-        ? item.reimbursementStatus || 'PENDING'
-        : 'NOT_APPLICABLE',
+      // Reintegro / Pago a Proveedor: siempre pendiente al cargarlo
+      reimbursementStatus: isPendingPaymentType ? 'PENDING' : 'NOT_APPLICABLE',
       paymentMethod:
         item.paymentType === 'REINTEGRO'
           ? 'Reintegro'
@@ -810,7 +813,8 @@ export function SmartScannerModal({
         typeof q.amount === 'number' &&
         q.amount > 0 &&
         Boolean(q.project && q.project.trim()) &&
-        Boolean(q.date && q.date.trim().length >= 8)
+        Boolean(q.date && q.date.trim().length >= 8) &&
+        Boolean(q.paymentType)
     );
 
     const incompleteItems = queue.filter(
@@ -820,18 +824,19 @@ export function SmartScannerModal({
           typeof q.amount === 'number' &&
           q.amount > 0 &&
           Boolean(q.project && q.project.trim()) &&
-          Boolean(q.date && q.date.trim().length >= 8)
+          Boolean(q.date && q.date.trim().length >= 8) &&
+          Boolean(q.paymentType)
         )
     );
 
     if (validItems.length === 0) {
-      alert('No hay comprobantes completos. Completa Monto (> 0), Centro de Costos y Fecha en cada uno.');
+      alert('No hay comprobantes completos. Completá Monto (> 0), Centro de Costos, Fecha y Tipo de Pago en cada uno.');
       return;
     }
 
     if (incompleteItems.length > 0) {
       const confirmPartial = confirm(
-        `Hay ${validItems.length} comprobante(s) completos listos para guardar y ${incompleteItems.length} comprobante(s) a los que les falta Monto, Centro de Costos o Fecha.\n\n¿Deseas guardar los ${validItems.length} comprobantes completos ahora?`
+        `Hay ${validItems.length} comprobante(s) completos listos para guardar y ${incompleteItems.length} comprobante(s) a los que les falta Monto, Centro de Costos, Fecha o Tipo de Pago.\n\n¿Deseas guardar los ${validItems.length} comprobantes completos ahora?`
       );
       if (!confirmPartial) return;
     }
@@ -850,7 +855,7 @@ export function SmartScannerModal({
         recipientName: item.recipientName || undefined,
         isIsfRecipient: item.isIsfRecipient,
         amount: numAmount,
-        currency: item.currency || 'ARS',
+        currency: 'ARS',
         date: item.date,
         createdAt: new Date().toISOString(),
         invoiceNumber: item.invoiceNumber.trim() || undefined,
@@ -865,11 +870,10 @@ export function SmartScannerModal({
             ? item.bankDetails
             : undefined,
 
-        paymentType: (item.paymentType || 'TARJETA_CORPORATIVA') as ExpensePaymentType,
+        paymentType: item.paymentType as ExpensePaymentType,
         reimbursable: isPendingPaymentType,
-        reimbursementStatus: isPendingPaymentType
-          ? item.reimbursementStatus || 'PENDING'
-          : 'NOT_APPLICABLE',
+        // Reintegro / Pago a Proveedor: siempre pendiente al cargarlo
+        reimbursementStatus: isPendingPaymentType ? 'PENDING' : 'NOT_APPLICABLE',
         paymentMethod:
           item.paymentType === 'REINTEGRO'
             ? 'Reintegro'
@@ -1339,8 +1343,9 @@ export function SmartScannerModal({
 
                                 updateQueueItem(item.id, {
                                   paymentType: val,
-                                  reimbursable: isReimb,
-                                  reimbursementStatus: isReimb ? 'PENDING' : 'NOT_APPLICABLE',
+                                  // Reintegro y Pago a Proveedor quedan pendientes de pago (antes el proveedor quedaba como 'No aplica')
+                                  reimbursable: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR',
+                                  reimbursementStatus: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR' ? 'PENDING' : 'NOT_APPLICABLE',
                                   bankDetails: newBank,
                                   paymentMethod:
                                     val === 'REINTEGRO'
@@ -1692,8 +1697,9 @@ export function SmartScannerModal({
                               }
                               updateQueueItem(item.id, {
                                 paymentType: val,
-                                reimbursable: isReimb,
-                                reimbursementStatus: isReimb ? 'PENDING' : 'NOT_APPLICABLE',
+                                // Reintegro y Pago a Proveedor quedan pendientes de pago (antes el proveedor quedaba como 'No aplica')
+                                reimbursable: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR',
+                                reimbursementStatus: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR' ? 'PENDING' : 'NOT_APPLICABLE',
                                 bankDetails: newBank,
                                 paymentMethod:
                                   val === 'REINTEGRO'

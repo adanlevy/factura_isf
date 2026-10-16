@@ -1,6 +1,6 @@
 import React from 'react';
 import { Expense, Vendor } from '../types';
-import { formatCuit, findVendorByCuitOrName } from '../utils/helpers';
+import { formatCuit, findVendorByCuitOrName, vendorBankMismatch } from '../utils/helpers';
 
 interface AccountDetailsDisplayProps {
   expense: Expense;
@@ -10,8 +10,9 @@ interface AccountDetailsDisplayProps {
 
 /**
  * Componente estándar para la columna "Datos de cuenta" en las tablas de gastos y pagos.
- * Busca y sincroniza dinámicamente con el catálogo central de proveedores (tabla de proveedores)
- * para que cualquier edición (como alias o CBU) impacte de inmediato.
+ * Muestra SIEMPRE la cuenta guardada en el comprobante, que es la que se usa al pagar y en el
+ * correo (antes mostraba la del catálogo y al pagar aparecía otra). Si la cuenta del catálogo de
+ * proveedores es distinta, lo marca para que Administración lo revise.
  *
  * Formato requerido:
  * 1. Nombre
@@ -67,17 +68,14 @@ export function AccountDetailsDisplay({ expense, vendors = [], className = '' }:
     ) || null;
   }
 
-  // Active bank details: use live vendor bank data if valid or the expense's direct bank data
-  const hasMatchedVendorBank = Boolean(
-    matchedVendor?.bankDetails &&
-    (matchedVendor.bankDetails.cbuCvu?.trim() || matchedVendor.bankDetails.alias?.trim())
-  );
-  const effectiveBank = (hasMatchedVendorBank ? matchedVendor?.bankDetails : expense.bankDetails) || expense.bankDetails!;
+  // La cuenta que se paga es la del comprobante
+  const effectiveBank = expense.bankDetails!;
+  const catalogMismatch = vendorBankMismatch(expense.bankDetails, matchedVendor?.bankDetails);
 
   // 1. Nombre / Titular de la cuenta
   const rawName =
-    matchedVendor?.name?.trim() ||
     effectiveBank.accountHolder?.trim() ||
+    matchedVendor?.name?.trim() ||
     expense.vendor?.trim() ||
     '';
   const name =
@@ -91,9 +89,9 @@ export function AccountDetailsDisplay({ expense, vendors = [], className = '' }:
 
   // 2. CUIT bancario / fiscal del titular
   const rawCuit =
-    matchedVendor?.cuit?.trim() ||
     effectiveBank.cuitCuil?.trim() ||
     expense.cuit?.trim() ||
+    matchedVendor?.cuit?.trim() ||
     '';
   const cuit =
     rawCuit &&
@@ -159,6 +157,15 @@ export function AccountDetailsDisplay({ expense, vendors = [], className = '' }:
       {cbu && (
         <div className="truncate font-mono text-[9.5px] text-slate-500" title={`CBU: ${cbu}`}>
           {cbu}
+        </div>
+      )}
+
+      {catalogMismatch && (
+        <div
+          className="text-[9.5px] text-amber-700 font-semibold"
+          title={`El catálogo de proveedores tiene otra cuenta: ${catalogMismatch.alias || ''} ${catalogMismatch.cbuCvu || ''}`.trim()}
+        >
+          ⚠️ Distinta al catálogo
         </div>
       )}
     </div>

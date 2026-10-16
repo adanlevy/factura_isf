@@ -332,7 +332,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               ['No puedo editar (aparece un candado)', 'El comprobante ya fue pagado y queda bloqueado. Administración puede revertir el pago y luego editarlo.', false],
               ['La IA no detectó monto o fecha', 'La fila queda marcada «Falta Monto o Fecha». Completalos a mano y guardá, o usá «Reintentar».', false],
               ['Aviso «no es CUIT ISF»', 'El comprobante no figura a nombre de ISF. Verificá el destinatario; podés continuar con «Aceptar» si corresponde.', false],
-              ['El comprobante dice «Fallo Drive»', 'La subida a Drive falló. Usá «Reintentar» en la fila; el dato contable ya quedó guardado.', false],
+              ['El comprobante dice «Fallo Drive»', 'La subida a Drive falló. Usá «Reintentar» junto al estado en Mis Gastos; el dato contable ya quedó guardado. Si el archivo ya no está en el navegador, «Reemplazar» en el visor.', false],
               ['Necesito reintegrar y no tengo el CBU', 'Usá «Pedir Datos» en Gestión de Pagos para pedirlo por correo.', true],
               ['¿Pagar muchos comprobantes juntos?', 'Seleccioná varias filas en Gestión de Pagos y usá «Pagar» (pago en lote).', true],
               ['Aparece «Hay una versión nueva de la aplicación»', 'Se publicó una actualización. Guardá lo que estés cargando y tocá «Actualizar ahora» para recargar con la última versión. «Más tarde» oculta el aviso por 30 minutos.', false],

@@ -682,7 +682,8 @@ function VendorImportModal({
         phone: phone.trim() || undefined,
         address: address.trim() || undefined,
         bankDetails: bankName || cbuCvu || alias || accountHolder ? {
-          bankName: bankName || 'BBVA',
+          // Sin columna de banco queda vacío (antes se completaba "BBVA" para todos)
+          bankName: bankName || '',
           accountType: 'Indefinido',
           cbuCvu: cbuCvu || '',
           alias: alias || '',

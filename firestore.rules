@@ -102,6 +102,12 @@ service cloud.firestore {
           (data.userEmail is string && data.userEmail.lower() == userEmail()));
     }
 
+    // Gasto con tarjeta corporativa / débito: ya lo pagó la organización (no se reintegra)
+    function isCardExpense(data) {
+      return data.get('reimbursementStatus', '') == 'NOT_APPLICABLE' &&
+        !(data.get('paymentType', '') in ['REINTEGRO', 'PAGO_PROVEEDOR']);
+    }
+
     function isPaidExpense(data) {
       return data.get('reimbursementStatus', '') == 'REIMBURSED';
     }
@@ -118,9 +124,8 @@ service cloud.firestore {
         // el dueño no puede cambiar de dueño (evita adueñarse de comprobantes ajenos)
         !changed.hasAny(['submittedByEmail', 'userEmail']) &&
         // un gasto con tarjeta corporativa / débito (ya pagado por la organización) no puede
-        // convertirse en reintegro: solo Administración cambia su tipo o estado
-        !(resource.data.get('reimbursementStatus', '') == 'NOT_APPLICABLE' &&
-          changed.hasAny(['reimbursementStatus', 'paymentType', 'reimbursable'])) &&
+        // convertirse en reintegro ni en pago a proveedor: eso lo corrige Administración
+        !(isCardExpense(resource.data) && !isCardExpense(request.resource.data)) &&
         hasSafeLinks(request.resource.data) &&
         (
           // pendiente: solo los campos editables (nunca liquidarlo ni tocar datos de pago)
@@ -130,7 +135,7 @@ service cloud.firestore {
           // pagado: el archivo es evidencia contable; el dueño solo puede completar una subida a
           // Drive que había quedado pendiente (nunca reemplazar el archivo ya registrado)
           (isPaidExpense(resource.data) && changed.hasOnly(receiptFields()) &&
-            resource.data.get('driveUploadedUrl', '') == '')
+            resource.data.get('driveUploadedUrl', '') in ['', null])
         );
     }
 
