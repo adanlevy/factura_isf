@@ -41,6 +41,8 @@ interface AccountSelectorProps {
   vendors?: Vendor[];
   currentUser?: UserProfile;
   storedBank?: UserBankDetails;
+  /** Reintegro a otra persona: no se ofrece la cuenta propia */
+  excludePersonal?: boolean;
   paymentType?: ExpensePaymentType;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
   onUpdateVendor?: (vendor: Vendor) => void;
@@ -59,6 +61,7 @@ export function AccountSelector({
   vendors = [],
   currentUser,
   storedBank,
+  excludePersonal = false,
   paymentType = 'PAGO_PROVEEDOR',
   onAddVendor,
   onUpdateVendor,
@@ -124,8 +127,8 @@ export function AccountSelector({
   const allAccounts = useMemo<AccountOption[]>(() => {
     const list: AccountOption[] = [];
 
-    // 1. Personal Account (Mis datos personales)
-    if (myBank || currentUser?.name) {
+    // 1. Personal Account (Mis datos personales) — salvo en reintegro a otra persona
+    if (!excludePersonal && (myBank || currentUser?.name)) {
       const pBank = myBank || {
         accountHolder: currentUser?.name || 'Solicitante',
         bankName: '',
@@ -196,7 +199,7 @@ export function AccountSelector({
     });
 
     return list;
-  }, [currentUser, myBank, vendors]);
+  }, [currentUser, myBank, vendors, excludePersonal]);
 
   // Filter accounts and prioritize by paymentType (Reintegro vs Pago Proveedor)
   const filteredAccounts = useMemo(() => {

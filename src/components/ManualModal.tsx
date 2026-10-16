@@ -103,7 +103,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               ['Centro de Costos', 'El proyecto o rubro al que se imputa el gasto. Tiene una sigla (GPA, SEAP, GADM…) y una carpeta propia en Drive. Es obligatorio.'],
               ['Categoría', 'El tipo de gasto (Transporte, Alimentos y Viáticos, Honorarios…).'],
               ['Tipo de Pago', 'Cómo se pagó o se pagará el gasto. Hay 4, y definen si corresponde reintegro.'],
-              ['Reintegro', 'Devolución de dinero a un colaborador que pagó de su bolsillo.'],
+              ['Reintegro', 'Devolución de dinero a quien pagó de su bolsillo (vos u otra persona).'],
               ['Estado', 'Situación del comprobante: Pendiente, Pagado, Pagado - Pend. Retención o Directo.'],
               ['Datos de cuenta', 'CBU/CVU, Alias, Banco, CUIT y titular necesarios para transferir.'],
             ].map(([t, d]) => (
@@ -199,7 +199,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               o con «Guardar todos los listos». Al guardar, se sube solo a Drive y te llega un correo de confirmación.
             </p>
 
-            <h4 className="font-bold text-slate-900 text-sm mt-4">Los 4 tipos de pago</h4>
+            <h4 className="font-bold text-slate-900 text-sm mt-4">Los tipos de pago</h4>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 text-slate-500">
@@ -210,7 +210,8 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
                   </tr>
                 </thead>
                 <tbody className="text-slate-600">
-                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🔄 Reintegro</td><td className="p-2.5">Pagaste de tu bolsillo y pedís devolución.</td><td className="p-2.5">Sí (tu perfil)</td></tr>
+                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🔄 Reintegro a mí</td><td className="p-2.5">Pagaste de tu bolsillo y pedís devolución.</td><td className="p-2.5">Sí (tu perfil)</td></tr>
+                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">👥 Reintegro a otra persona</td><td className="p-2.5">Pagó otra persona y vos cargás el comprobante.</td><td className="p-2.5">Sí (la cuenta de esa persona)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🏢 Pago a Proveedor</td><td className="p-2.5">Se transfiere directo al proveedor.</td><td className="p-2.5">Sí (catálogo)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">💳 Tarjeta Corporativa</td><td className="p-2.5">Se abonó con la tarjeta corporativa.</td><td className="p-2.5">No</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🏦 Tarjeta Débito Galicia</td><td className="p-2.5">Débito de la cuenta institucional Galicia.</td><td className="p-2.5">No</td></tr>

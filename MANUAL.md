@@ -17,7 +17,7 @@ Ingeniería Sin Fronteras Argentina (CUIT 30‑71254928‑5)
 5. [Mi perfil y datos bancarios](#5-mi-perfil-y-datos-bancarios)
 6. [Guía para el Colaborador / Rendidor](#6-guía-para-el-colaborador--rendidor)
    - 6.1 [Cargar comprobantes con IA](#61-cargar-comprobantes-con-ia)
-   - 6.2 [Los 4 tipos de pago](#62-los-4-tipos-de-pago)
+   - 6.2 [Los tipos de pago](#62-los-tipos-de-pago)
    - 6.3 [Centro de costos y categoría](#63-centro-de-costos-y-categoría)
    - 6.4 [Mis Gastos: ver, buscar, editar](#64-mis-gastos-ver-buscar-editar-y-eliminar)
    - 6.5 [Ver y reemplazar un comprobante](#65-ver-y-reemplazar-un-comprobante)
@@ -165,18 +165,20 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 - Se registra en la nube y **se sube automáticamente a Google Drive**, a la carpeta del centro de costos.
 - Se dispara un **correo de confirmación** al que lo cargó, con el resumen.
 
-### 6.2 Los 4 tipos de pago
+### 6.2 Los tipos de pago
 
 El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de selección **mutuamente excluyente** (uno solo):
 
 | Tipo | Cuándo usarlo | ¿Requiere datos bancarios? | Estado inicial |
 |---|---|---|---|
-| **🔄 Reintegro** | El colaborador pagó con **fondos propios** y pide que se lo devuelvan. | **Sí** — tus datos de cuenta (se autocompletan desde tu perfil). | Pendiente de reintegro |
+| **🔄 Reintegro a mí** | Pagaste con **fondos propios** y pedís que te lo devuelvan. | **Sí** — tu cuenta (se autocompleta desde tu perfil). | Pendiente de reintegro |
+| **👥 Reintegro a otra persona** | Pagó **otra persona** con fondos propios (por ejemplo, un voluntario) y vos cargás el comprobante. | **Sí** — la cuenta de esa persona: se elige del catálogo o se carga con **"Nueva cuenta"**. **No** se completa con la tuya. | Pendiente de reintegro |
 | **🏢 Pago a Proveedor** | Se le va a **transferir directamente al proveedor**. | **Sí** — datos de la cuenta del proveedor (se eligen del catálogo). | Pendiente de pago |
 | **💳 Tarjeta Corporativa** | Se **abonó con la tarjeta corporativa** de la organización. | No | Directo (no requiere reintegro) |
 | **🏦 Tarjeta Débito Galicia** | Se **debitó de la cuenta institucional del Banco Galicia**. | No | Directo (no requiere reintegro) |
 
-- En **Reintegro**, si no tenés datos de cuenta cargados, la aplicación los toma de tu perfil, o podés usar el botón **"Ingresar mi cuenta"**.
+- En **Reintegro a mí**, la cuenta se toma de tu perfil (o con el botón **"Ingresar mi cuenta"** al editar).
+- En **Reintegro a otra persona**, no se ofrece tu cuenta: hay que elegir o cargar la de la persona (CBU/CVU o alias), si no, no deja guardar. Los avisos de pago te llegan a vos, que cargaste el comprobante.
 - En **Pago a Proveedor**, elegís el proveedor del **catálogo oficial** y sus datos (CBU, alias, CUIT, titular) se completan solos y quedan en modo lectura.
 - La IA **no** decide el tipo de pago: lo elegís vos, y es obligatorio. **Reintegro** y **Pago a Proveedor** quedan *Pendientes* de pago; las tarjetas quedan como *Directo*.
 - Un gasto cargado como **tarjeta** no se puede convertir después en Reintegro o Pago a Proveedor desde la edición del colaborador: lo corrige Administración.

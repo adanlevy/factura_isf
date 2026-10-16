@@ -212,7 +212,7 @@ export function PaymentTypeSelector({
     {
       type: 'REINTEGRO',
       title: 'Es Reintegro',
-      description: 'El colaborador pagó con fondos propios y solicita devolución',
+      description: 'Devolución a quien pagó con fondos propios (vos u otra persona: cargá su cuenta)',
       icon: <Receipt className="w-4 h-4" />,
       color: 'border-amber-200 text-amber-900 bg-amber-50/50',
       activeColor: 'border-amber-500 bg-amber-50 ring-2 ring-amber-500/20 text-amber-950 font-bold',
