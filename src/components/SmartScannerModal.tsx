@@ -44,6 +44,7 @@ import {
   findVendorByCuitOrName,
   formatCuit,
   cleanCuit,
+  hasPayableBankDetails,
 } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
@@ -94,6 +95,8 @@ export interface QueueItem {
   category?: string;
   project: string;
   paymentType: ExpensePaymentType | '';
+  /** Reintegro a otra persona (no a quien carga): la cuenta no se completa con la propia */
+  reimburseToOther?: boolean;
   reimbursable: boolean;
   reimbursementStatus: ReimbursementStatus;
   paymentMethod: PaymentMethod | string;
@@ -228,6 +231,7 @@ function AccountDataCell({
       currentUser={currentUser || undefined}
       storedBank={storedBank || undefined}
       paymentType={item.paymentType}
+      excludePersonal={Boolean(item.reimburseToOther)}
       onAddVendor={onAddVendor}
       onUpdateVendor={onUpdateVendor}
       onSelectAccount={(data) => {
@@ -687,6 +691,57 @@ export function SmartScannerModal({
     );
   };
 
+  // Valor del selector "Tipo de Pago": el reintegro a otra persona es un Reintegro con cuenta ajena
+  const paymentSelectValue = (item: QueueItem): string =>
+    item.paymentType === 'REINTEGRO' && item.reimburseToOther ? 'REINTEGRO_OTRO' : item.paymentType || '';
+
+  const isMyBank = (bank?: UserBankDetails) => {
+    if (!bank || !storedBank) return false;
+    const norm = (v?: string) => (v || '').replace(/\s+/g, '').toLowerCase();
+    return Boolean(
+      (norm(bank.cbuCvu) && norm(bank.cbuCvu) === norm(storedBank.cbuCvu)) ||
+        (norm(bank.alias) && norm(bank.alias) === norm(storedBank.alias))
+    );
+  };
+
+  const handleSelectPaymentType = (item: QueueItem, rawValue: string) => {
+    const toOther = rawValue === 'REINTEGRO_OTRO';
+    const val = (toOther ? 'REINTEGRO' : rawValue) as ExpensePaymentType;
+    let newBank = item.bankDetails;
+    if (val === 'REINTEGRO' && !toOther && (!item.bankDetails || item.reimburseToOther || item.paymentType !== 'REINTEGRO')) {
+      // Reintegro a mí: se completa con la cuenta del perfil
+      newBank = storedBank || (currentUser?.name ? {
+        accountHolder: currentUser.name,
+        bankName: '',
+        accountType: 'Indefinido',
+        cbuCvu: '',
+        alias: '',
+        cuitCuil: '',
+      } : undefined);
+    } else if (toOther && (!item.reimburseToOther || isMyBank(item.bankDetails) || !item.bankDetails?.cbuCvu && !item.bankDetails?.alias)) {
+      // Reintegro a otra persona: la cuenta NO se completa con la propia; se elige o se carga
+      newBank = undefined;
+    }
+    updateQueueItem(item.id, {
+      paymentType: val,
+      reimburseToOther: toOther,
+      // Reintegro y Pago a Proveedor quedan pendientes de pago
+      reimbursable: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR',
+      reimbursementStatus: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR' ? 'PENDING' : 'NOT_APPLICABLE',
+      bankDetails: newBank,
+      paymentMethod:
+        val === 'REINTEGRO'
+          ? 'Reintegro'
+          : val === 'PAGO_PROVEEDOR'
+          ? 'Pago a Proveedor'
+          : val === 'TARJETA_CORPORATIVA'
+          ? 'Tarjeta Corporativa'
+          : val === 'TARJETA_DEBITO_GALICIA'
+          ? 'Tarjeta Débito Galicia'
+          : '',
+    });
+  };
+
   const handleVendorChange = (itemId: string, newVendor: string) => {
     setQueue((prev) =>
       prev.map((item) => {
@@ -745,6 +800,10 @@ export function SmartScannerModal({
     }
     if (!item.paymentType) {
       alert('Elegí el Tipo de Pago (Reintegro, Pago a Proveedor, Tarjeta Corporativa o Débito Galicia).');
+      return;
+    }
+    if (item.reimburseToOther && !hasPayableBankDetails(item.bankDetails)) {
+      alert('Reintegro a otra persona: elegí o cargá la cuenta (CBU/CVU o alias) de la persona a quien se le reintegra.');
       return;
     }
 
@@ -814,7 +873,8 @@ export function SmartScannerModal({
         q.amount > 0 &&
         Boolean(q.project && q.project.trim()) &&
         Boolean(q.date && q.date.trim().length >= 8) &&
-        Boolean(q.paymentType)
+        Boolean(q.paymentType) &&
+        (!q.reimburseToOther || hasPayableBankDetails(q.bankDetails))
     );
 
     const incompleteItems = queue.filter(
@@ -825,7 +885,8 @@ export function SmartScannerModal({
           q.amount > 0 &&
           Boolean(q.project && q.project.trim()) &&
           Boolean(q.date && q.date.trim().length >= 8) &&
-          Boolean(q.paymentType)
+          Boolean(q.paymentType) &&
+          (!q.reimburseToOther || hasPayableBankDetails(q.bankDetails))
         )
     );
 
@@ -1321,44 +1382,8 @@ export function SmartScannerModal({
                           {/* 6. COLUMNA TIPO DE PAGO */}
                           <td className="py-2 px-2.5 align-middle">
                             <select
-                              value={item.paymentType || ''}
-                              onChange={(e) => {
-                                const val = e.target.value as ExpensePaymentType;
-                                const isReimb = val === 'REINTEGRO';
-                                
-                                let newBank = item.bankDetails;
-                                if (isReimb && !item.bankDetails) {
-                                  newBank = storedBank || (currentUser?.name ? {
-                                    accountHolder: currentUser.name,
-                                    bankName: '',
-                                    accountType: 'Indefinido',
-                                    cbuCvu: '',
-                                    alias: '',
-                                    cuitCuil: '',
-                                  } : undefined);
-                                } else if (val === 'PAGO_PROVEEDOR') {
-                                  // Do not auto-fill bank details from OCR / auto-matching
-                                  newBank = item.bankDetails;
-                                }
-
-                                updateQueueItem(item.id, {
-                                  paymentType: val,
-                                  // Reintegro y Pago a Proveedor quedan pendientes de pago (antes el proveedor quedaba como 'No aplica')
-                                  reimbursable: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR',
-                                  reimbursementStatus: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR' ? 'PENDING' : 'NOT_APPLICABLE',
-                                  bankDetails: newBank,
-                                  paymentMethod:
-                                    val === 'REINTEGRO'
-                                      ? 'Reintegro'
-                                      : val === 'PAGO_PROVEEDOR'
-                                      ? 'Pago Proveedor'
-                                      : val === 'TARJETA_CORPORATIVA'
-                                      ? 'Tarjeta Corporativa'
-                                      : val === 'TARJETA_DEBITO_GALICIA'
-                                      ? 'Tarjeta Débito Galicia'
-                                      : '',
-                                });
-                              }}
+                              value={paymentSelectValue(item)}
+                              onChange={(e) => handleSelectPaymentType(item, e.target.value)}
                               className={`w-full text-xs px-2 py-1.5 rounded-lg border font-medium focus:ring-1 focus:ring-indigo-500 outline-hidden ${
                                 !item.paymentType
                                   ? 'border-slate-300 bg-white text-slate-500'
@@ -1369,7 +1394,8 @@ export function SmartScannerModal({
                                 — Tipo de Pago —
                               </option>
                               <option value="TARJETA_CORPORATIVA">💳 Tarjeta Corporativa</option>
-                              <option value="REINTEGRO">🔄 Reintegro</option>
+                              <option value="REINTEGRO">🔄 Reintegro a mí</option>
+                              <option value="REINTEGRO_OTRO">👥 Reintegro a otra persona</option>
                               <option value="TARJETA_DEBITO_GALICIA">🏦 Débito Galicia</option>
                               <option value="PAGO_PROVEEDOR">🏢 Pago Proveedor</option>
                             </select>
@@ -1677,42 +1703,8 @@ export function SmartScannerModal({
                             Tipo de Pago
                           </label>
                           <select
-                            value={item.paymentType || ''}
-                            onChange={(e) => {
-                              const val = e.target.value as ExpensePaymentType;
-                              const isReimb = val === 'REINTEGRO';
-                              let newBank = item.bankDetails;
-                              if (isReimb && !item.bankDetails) {
-                                newBank = storedBank || (currentUser?.name ? {
-                                  accountHolder: currentUser.name,
-                                  bankName: '',
-                                  accountType: 'Indefinido',
-                                  cbuCvu: '',
-                                  alias: '',
-                                  cuitCuil: '',
-                                } : undefined);
-                              } else if (val === 'PAGO_PROVEEDOR') {
-                                // Do not auto-fill bank details from OCR / auto-matching
-                                newBank = item.bankDetails;
-                              }
-                              updateQueueItem(item.id, {
-                                paymentType: val,
-                                // Reintegro y Pago a Proveedor quedan pendientes de pago (antes el proveedor quedaba como 'No aplica')
-                                reimbursable: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR',
-                                reimbursementStatus: val === 'REINTEGRO' || val === 'PAGO_PROVEEDOR' ? 'PENDING' : 'NOT_APPLICABLE',
-                                bankDetails: newBank,
-                                paymentMethod:
-                                  val === 'REINTEGRO'
-                                    ? 'Reintegro'
-                                    : val === 'PAGO_PROVEEDOR'
-                                    ? 'Pago a Proveedor'
-                                    : val === 'TARJETA_CORPORATIVA'
-                                    ? 'Tarjeta Corporativa'
-                                    : val === 'TARJETA_DEBITO_GALICIA'
-                                    ? 'Tarjeta Débito Galicia'
-                                    : '',
-                              });
-                            }}
+                            value={paymentSelectValue(item)}
+                            onChange={(e) => handleSelectPaymentType(item, e.target.value)}
                             className={`w-full text-xs px-2 py-2 rounded-lg border font-medium focus:ring-1 focus:ring-indigo-500 outline-hidden ${
                               !item.paymentType
                                 ? 'border-slate-300 bg-white text-slate-500'
@@ -1723,7 +1715,8 @@ export function SmartScannerModal({
                               — Tipo de Pago —
                             </option>
                             <option value="TARJETA_CORPORATIVA">💳 Tarjeta Corporativa</option>
-                            <option value="REINTEGRO">🔄 Reintegro (A mí)</option>
+                            <option value="REINTEGRO">🔄 Reintegro a mí</option>
+                            <option value="REINTEGRO_OTRO">👥 Reintegro a otra persona</option>
                             <option value="TARJETA_DEBITO_GALICIA">🏦 Débito Galicia</option>
                             <option value="PAGO_PROVEEDOR">🏢 Pago Proveedor</option>
                           </select>
