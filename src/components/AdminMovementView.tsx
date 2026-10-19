@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   FileSpreadsheet,
   Mail,
@@ -284,10 +284,8 @@ export function AdminMovementView({
       }
 
       // Period filter (applied locally if not filtered at query level)
-      // Never hide expenses created within the last 24 hours so newly uploaded receipts are immediately visible
-      const isRecentlyCreated = e.createdAt && (Date.now() - new Date(e.createdAt).getTime() < 24 * 60 * 60 * 1000);
 
-      if (!isRecentlyCreated && activePeriod !== 'all') {
+      if (activePeriod !== 'all') {
         if (activePeriod === '30days') {
           const thirtyDaysAgo = new Date();
           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -312,15 +310,37 @@ export function AdminMovementView({
     return sortExpenses(matching, sortConfig);
   }, [expenses, searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
 
-  // Selection calculations
+  // Se muestran de a tramos al bajar (todo está cargado; solo se dibuja a medida que se scrollea)
+  const RENDER_STEP = 100;
+  const [visibleCount, setVisibleCount] = useState(RENDER_STEP);
+  useEffect(() => {
+    setVisibleCount(RENDER_STEP);
+  }, [searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
+  const visibleExpenses = useMemo(() => filteredExpenses.slice(0, visibleCount), [filteredExpenses, visibleCount]);
+  const hasMoreToShow = visibleCount < filteredExpenses.length;
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el || !hasMoreToShow) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setVisibleCount((c) => c + RENDER_STEP);
+      },
+      { rootMargin: '600px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMoreToShow, visibleExpenses.length]);
+
+  // Selection calculations (sobre lo que se ve: no se seleccionan filas que no están en pantalla)
   const allFilteredSelected =
-    filteredExpenses.length > 0 && filteredExpenses.every((e) => selectedIds.includes(e.id));
+    visibleExpenses.length > 0 && visibleExpenses.every((e) => selectedIds.includes(e.id));
 
   const toggleSelectAll = () => {
     if (allFilteredSelected) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(filteredExpenses.map((e) => e.id));
+      setSelectedIds(visibleExpenses.map((e) => e.id));
     }
   };
 
@@ -493,12 +513,12 @@ export function AdminMovementView({
           value={activePeriod}
           onChange={(e) => handlePeriodChange(e.target.value)}
           className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-          title="Filtrar por período contable (consulta optimizada)"
+          title="Filtrar por fecha del comprobante"
         >
-          <option value="currentYear">Año Actual ({new Date().getFullYear()})</option>
+          <option value="all">Todos los períodos</option>
           <option value="30days">Últimos 30 días</option>
+          <option value="currentYear">Año Actual ({new Date().getFullYear()})</option>
           <option value="lastYear">Año Anterior ({new Date().getFullYear() - 1})</option>
-          <option value="all">Histórico Completo</option>
         </select>
 
         {/* Status filter */}
@@ -643,7 +663,7 @@ export function AdminMovementView({
                   </td>
                 </tr>
               ) : (
-                filteredExpenses.map((expense) => {
+                visibleExpenses.map((expense) => {
                   const isSelected = selectedIds.includes(expense.id);
                   const isPendingPaymentType =
                     expense.reimbursable ||
@@ -975,7 +995,7 @@ export function AdminMovementView({
             <p className="text-xs text-slate-400 mt-1">Prueba cambiando los filtros o el término de búsqueda.</p>
           </div>
         ) : (
-          filteredExpenses.map((expense) => {
+          visibleExpenses.map((expense) => {
             const isSelected = selectedIds.includes(expense.id);
             const isPendingPaymentType =
               expense.reimbursable ||
@@ -1220,11 +1240,15 @@ export function AdminMovementView({
         )}
       </div>
 
+      {/* Al llegar acá se dibujan los siguientes comprobantes */}
+      {hasMoreToShow && <div ref={loadMoreSentinelRef} className="h-10" aria-hidden="true" />}
+
       {/* Pagination & Query Limit Toolbar */}
       <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
         <div className="flex items-center space-x-2">
           <span className="font-medium">
-            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> comprobantes cargados
+            <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> comprobantes
+            {hasMoreToShow && <span className="text-slate-400"> · mostrando {visibleExpenses.length}, bajá para ver más</span>}
           </span>
           <span className="text-slate-300 hidden sm:inline">•</span>
           <span className="text-slate-400 text-[11px] hidden sm:inline">
