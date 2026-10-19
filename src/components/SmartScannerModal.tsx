@@ -780,6 +780,31 @@ export function SmartScannerModal({
     handleRemoveItem(itemId);
   };
 
+  // Fecha del comprobante sospechosa: muy vieja (p. ej. la IA leyó mal el año) o en el futuro
+  const unusualDateReason = (dateStr: string): string | null => {
+    const d = new Date(`${dateStr}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    const days = (Date.now() - d.getTime()) / (24 * 60 * 60 * 1000);
+    if (days > 180) return `es de hace más de 6 meses (${d.toLocaleDateString('es-AR')})`;
+    if (days < -2) return `está en el futuro (${d.toLocaleDateString('es-AR')})`;
+    return null;
+  };
+
+  const confirmUnusualDates = (items: QueueItem[]): boolean => {
+    const flagged = items
+      .map((it) => ({ it, reason: unusualDateReason(it.date) }))
+      .filter((x) => x.reason);
+    if (flagged.length === 0) return true;
+    const lines = flagged
+      .slice(0, 5)
+      .map((x) => `• ${x.it.vendor || 'Comprobante'}: la fecha ${x.reason}`)
+      .join('\n');
+    return confirm(
+      `Revisá la fecha del comprobante:\n\n${lines}${flagged.length > 5 ? '\n…' : ''}\n\n` +
+        'Si la IA leyó mal el año, corregila antes de guardar. ¿Guardar igual con esa fecha?'
+    );
+  };
+
   // --- SAVE EXPENSE (SINGLE & BULK) ---
   const handleSaveSingleItem = (item: QueueItem) => {
     const hasAmount = typeof item.amount === 'number' && item.amount > 0;
@@ -806,6 +831,7 @@ export function SmartScannerModal({
       alert('Reintegro a otra persona: elegí o cargá la cuenta (CBU/CVU o alias) de la persona a quien se le reintegra.');
       return;
     }
+    if (!confirmUnusualDates([item])) return;
 
     const isPendingPaymentType = item.paymentType === 'REINTEGRO' || item.paymentType === 'PAGO_PROVEEDOR';
 
@@ -901,6 +927,7 @@ export function SmartScannerModal({
       );
       if (!confirmPartial) return;
     }
+    if (!confirmUnusualDates(validItems)) return;
 
     const createdExpenses: Expense[] = [];
     const validIds = new Set(validItems.map((v) => v.id));

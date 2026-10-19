@@ -763,6 +763,31 @@ export function subscribeToPendingExpenses(onUpdate: (payload: RealtimeUpdate) =
   );
 }
 
+/**
+ * Admin: comprobantes cargados o modificados en los últimos días, siempre cargados.
+ * La página principal se ordena por FECHA DEL DOCUMENTO: un comprobante cargado hoy con una
+ * factura vieja (p. ej. de 2024) y ya pagado quedaba fuera de la página y de los pendientes,
+ * y no aparecía en Gestión de Pagos aunque su dueño sí lo viera.
+ */
+export function subscribeToRecentExpenses(
+  onUpdate: (payload: RealtimeUpdate) => void,
+  days = 45
+): () => void {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const forward = (payload: RealtimeUpdate) => {
+    const { hasMore: _ignored, ...rest } = payload as any;
+    onUpdate(rest);
+  };
+  const unsubs = (['createdAt', 'updatedAt'] as const).map((field) =>
+    onSnapshot(
+      query(collection(db, 'expenses'), where(field, '>=', cutoff)),
+      (snap) => handleExpensesSnapshot(snap, Number.POSITIVE_INFINITY, forward),
+      (err) => console.warn(`[Firestore Live] recent expenses (${field}) listener note:`, err.message)
+    )
+  );
+  return () => unsubs.forEach((u) => u());
+}
+
 export function subscribeToRealtimeFirestore(
   onUpdate: (payload: Partial<SyncPayload> & { hasMore?: boolean }) => void,
   options?: ExpenseQueryOptions

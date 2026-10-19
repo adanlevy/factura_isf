@@ -157,6 +157,7 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 **Qué tenés que completar o revisar vos:**
 - Verificar/corregir **Monto** y **Fecha** (son obligatorios; si la IA no los detecta con certeza, la fila queda marcada como *"Falta Monto o Fecha"* y hay que completarlos a mano).
 - Elegir el **Centro de Costos** (obligatorio).
+- Si la **fecha del comprobante** es de hace más de 6 meses o está en el futuro, la app pide confirmarla (suele ser un año mal leído por la IA).
 - Elegir el **Tipo de pago** (ver §6.2). **Es obligatorio**: sin tipo de pago no se puede guardar.
 - Completar **datos de cuenta** si corresponde (reintegro o pago a proveedor).
 - Notas contables si querés.
@@ -300,7 +301,7 @@ Un comprobante ya pagado puede volver a **Pendiente** (botón **"Revertir"** al 
 
 En *Gestión de Pagos*, **"Exportar CSV"** descarga los comprobantes seleccionados (o todos los filtrados) a una planilla, ideal para conciliaciones y contabilidad. Los textos que empiezan con `=`, `+`, `-` o `@` se exportan con un apóstrofo adelante para que Excel no los ejecute como fórmula.
 
-*Gestión de Pagos* siempre tiene cargados **todos los comprobantes pendientes de pago**, aunque sean anteriores a la página que se está viendo.
+*Gestión de Pagos* siempre tiene cargados **todos los comprobantes pendientes de pago** y **todo lo cargado o modificado en los últimos 45 días**, aunque la fecha de la factura sea vieja (la lista se pagina por fecha del documento). Para comprobantes más antiguos, usá el filtro de período o "Cargar más".
 
 ### 7.8 Proveedores
 

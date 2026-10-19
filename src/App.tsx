@@ -88,6 +88,7 @@ import {
   deduplicateUsers,
   subscribeToRealtimeFirestore,
   subscribeToPendingExpenses,
+  subscribeToRecentExpenses,
   fetchExpensesPage,
   ExpenseQueryOptions,
   testFirestoreConnection,
@@ -435,9 +436,27 @@ export default function App() {
       expenseQueryOptions
     );
 
-    // Admin: los pendientes de pago siempre cargados, más allá de la página actual
+    // Admin: los pendientes de pago y lo cargado/modificado recientemente siempre cargados,
+    // más allá de la página actual (que se ordena por fecha del documento)
     let unsubscribePending = () => {};
+    let unsubscribeRecent = () => {};
     if (permissionRole === 'admin') {
+      unsubscribeRecent = subscribeToRecentExpenses((incoming) => {
+        if (!isMounted) return;
+        const deletedSet = getDeletedExpensesSet();
+        const removedIds = incoming.removedExpenseIds || [];
+        if (removedIds.length > 0) {
+          setExpenses((prev) => prev.filter((e) => !removedIds.includes(e.id)));
+        }
+        if (incoming.expenses) {
+          setExpenses((prev) =>
+            mergeExpensesList(
+              prev.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id)),
+              incoming.expenses!.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id))
+            )
+          );
+        }
+      });
       unsubscribePending = subscribeToPendingExpenses((incoming) => {
         if (!isMounted) return;
         const deletedSet = getDeletedExpensesSet();
@@ -505,6 +524,7 @@ export default function App() {
       isMounted = false;
       unsubscribeRealtime();
       unsubscribePending();
+      unsubscribeRecent();
       unsubscribeUsers();
       unsubscribeAuditLogs();
     };
