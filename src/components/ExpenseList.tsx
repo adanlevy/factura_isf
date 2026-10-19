@@ -182,10 +182,8 @@ export function ExpenseList({
 
     const matching = [...userExpenses].filter((e) => {
       // Local period filter (in case not filtered server-side)
-      // Never hide expenses created within the last 24 hours so newly uploaded receipts are immediately visible
-      const isRecentlyCreated = e.createdAt && (Date.now() - new Date(e.createdAt).getTime() < 24 * 60 * 60 * 1000);
 
-      if (!isRecentlyCreated && activePeriod !== 'all') {
+      if (activePeriod !== 'all') {
         if (activePeriod === '30days') {
           const thirtyDaysAgo = new Date();
           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -295,12 +293,12 @@ export function ExpenseList({
             value={activePeriod}
             onChange={(e) => handlePeriodSelect(e.target.value)}
             className="px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none cursor-pointer"
-            title="Filtrar por período contable (consulta optimizada)"
+            title="Filtrar por fecha del comprobante"
           >
-            <option value="currentYear">Año Actual ({new Date().getFullYear()})</option>
+            <option value="all">Todos los períodos</option>
             <option value="30days">Últimos 30 días</option>
+            <option value="currentYear">Año Actual ({new Date().getFullYear()})</option>
             <option value="lastYear">Año Anterior ({new Date().getFullYear() - 1})</option>
-            <option value="all">Histórico Completo</option>
           </select>
 
           {/* Cost center selector */}

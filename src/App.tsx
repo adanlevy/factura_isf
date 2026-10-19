@@ -87,9 +87,6 @@ import {
   getLocalUsersCache,
   deduplicateUsers,
   subscribeToRealtimeFirestore,
-  subscribeToPendingExpenses,
-  subscribeToRecentExpenses,
-  fetchExpensesPage,
   ExpenseQueryOptions,
   testFirestoreConnection,
   mergeExpensesList,
@@ -228,48 +225,9 @@ export default function App() {
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
 
-  // Query-level filtering and pagination state (scales to large Firestore collections)
-  const [queryPeriod, setQueryPeriod] = useState<string>('all');
-  const [queryCostCenter, setQueryCostCenter] = useState<string>('ALL');
-  const [queryLimit, setQueryLimit] = useState<number>(50);
-  const [hasMoreExpenses, setHasMoreExpenses] = useState<boolean>(false);
-  const [isLoadingMoreExpenses, setIsLoadingMoreExpenses] = useState<boolean>(false);
-
-  // Handlers for server-side query filtering and pagination
-  const handleLoadMoreExpenses = async () => {
-    setIsLoadingMoreExpenses(true);
-    try {
-      const nextLimit = queryLimit + 50;
-      setQueryLimit(nextLimit);
-      const res = await fetchExpensesPage(
-        permissionRole === 'admin'
-          ? { period: queryPeriod, costCenter: queryCostCenter, limitCount: nextLimit }
-          : { submittedByEmail: currentUser?.email }
-      );
-      if (res.expenses && res.expenses.length > 0) {
-        setExpenses((prev) => mergeExpensesList(prev, res.expenses));
-      }
-      setHasMoreExpenses(res.hasMore);
-    } catch (err) {
-      console.warn('Error fetching more expenses:', err);
-    } finally {
-      setIsLoadingMoreExpenses(false);
-    }
-  };
-
-  const handlePeriodChange = (period: string) => {
-    setQueryPeriod(period);
-    setQueryLimit(50);
-  };
-
-  const handleCostCenterFilterChange = (cc: string) => {
-    setQueryCostCenter(cc);
-    setQueryLimit(50);
-  };
-
-  const handleLimitChange = (limitCount: number) => {
-    setQueryLimit(limitCount);
-  };
+  // Sin paginación ni filtros de consulta: Admin carga todos los comprobantes y Colaborador todos
+  // los suyos. Período / centro de costos / búsqueda se aplican en pantalla solo si se eligen.
+  const [, setHasMoreExpenses] = useState<boolean>(false);
 
   // Initial Cloud Hydration & Real-time Sync on App load
   useEffect(() => {
@@ -281,9 +239,7 @@ export default function App() {
     let isMounted = true;
     // Colaborador: todos sus comprobantes (sin paginación). Admin: la página filtrada de toda la organización.
     const expenseQueryOptions: ExpenseQueryOptions =
-      permissionRole === 'admin'
-        ? { period: queryPeriod, costCenter: queryCostCenter, limitCount: queryLimit }
-        : { submittedByEmail: currentUser.email };
+      permissionRole === 'admin' ? { allExpenses: true } : { submittedByEmail: currentUser.email };
 
     // Clean up any old legacy local storage keys to ensure only the central database is used
     try {
@@ -436,45 +392,6 @@ export default function App() {
       expenseQueryOptions
     );
 
-    // Admin: los pendientes de pago y lo cargado/modificado recientemente siempre cargados,
-    // más allá de la página actual (que se ordena por fecha del documento)
-    let unsubscribePending = () => {};
-    let unsubscribeRecent = () => {};
-    if (permissionRole === 'admin') {
-      unsubscribeRecent = subscribeToRecentExpenses((incoming) => {
-        if (!isMounted) return;
-        const deletedSet = getDeletedExpensesSet();
-        const removedIds = incoming.removedExpenseIds || [];
-        if (removedIds.length > 0) {
-          setExpenses((prev) => prev.filter((e) => !removedIds.includes(e.id)));
-        }
-        if (incoming.expenses) {
-          setExpenses((prev) =>
-            mergeExpensesList(
-              prev.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id)),
-              incoming.expenses!.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id))
-            )
-          );
-        }
-      });
-      unsubscribePending = subscribeToPendingExpenses((incoming) => {
-        if (!isMounted) return;
-        const deletedSet = getDeletedExpensesSet();
-        const removedIds = incoming.removedExpenseIds || [];
-        if (removedIds.length > 0) {
-          setExpenses((prev) => prev.filter((e) => !removedIds.includes(e.id)));
-        }
-        if (incoming.expenses) {
-          setExpenses((prev) =>
-            mergeExpensesList(
-              prev.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id)),
-              incoming.expenses!.filter((e) => !deletedSet.has(e.id) && !removedIds.includes(e.id))
-            )
-          );
-        }
-      });
-    }
-
     const unsubscribeUsers = subscribeToUsersFirestore((incomingUsers) => {
       if (!isMounted) return;
       if (incomingUsers && incomingUsers.length > 0) {
@@ -523,12 +440,10 @@ export default function App() {
     return () => {
       isMounted = false;
       unsubscribeRealtime();
-      unsubscribePending();
-      unsubscribeRecent();
       unsubscribeUsers();
       unsubscribeAuditLogs();
     };
-  }, [isFirebaseAuthReady, currentUser?.email, currentUser?.role, permissionRole, queryPeriod, queryCostCenter, queryLimit]);
+  }, [isFirebaseAuthReady, currentUser?.email, currentUser?.role, permissionRole]);
 
   // Sync current user to auth session storage
   useEffect(() => {
@@ -2769,15 +2684,6 @@ export default function App() {
               onDeleteExpense={handleDeleteExpense}
               onReplaceReceipt={handleRequestReplaceReceipt}
               onRetryDriveUpload={handleUploadExpenseToDrive}
-              queryPeriod={queryPeriod}
-              onPeriodChange={handlePeriodChange}
-              queryCostCenter={queryCostCenter}
-              onCostCenterChange={handleCostCenterFilterChange}
-              queryLimit={queryLimit}
-              onLimitChange={handleLimitChange}
-              hasMoreExpenses={hasMoreExpenses}
-              isLoadingMore={isLoadingMoreExpenses}
-              onLoadMore={handleLoadMoreExpenses}
             />
           )}
 
@@ -2808,15 +2714,6 @@ export default function App() {
                 onReplaceReceipt={handleRequestReplaceReceipt}
                 onOpenWithholdingModal={(exp) => setWithholdingModalExpense(exp)}
                 initialFilterVendor={initialFilterVendor}
-                queryPeriod={queryPeriod}
-                onPeriodChange={handlePeriodChange}
-                queryCostCenter={queryCostCenter}
-                onCostCenterChange={handleCostCenterFilterChange}
-                queryLimit={queryLimit}
-                onLimitChange={handleLimitChange}
-                hasMoreExpenses={hasMoreExpenses}
-                isLoadingMore={isLoadingMoreExpenses}
-                onLoadMore={handleLoadMoreExpenses}
               />
             ) : (
               <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center max-w-lg mx-auto shadow-xs space-y-4">

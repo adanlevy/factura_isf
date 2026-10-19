@@ -301,7 +301,7 @@ Un comprobante ya pagado puede volver a **Pendiente** (botón **"Revertir"** al 
 
 En *Gestión de Pagos*, **"Exportar CSV"** descarga los comprobantes seleccionados (o todos los filtrados) a una planilla, ideal para conciliaciones y contabilidad. Los textos que empiezan con `=`, `+`, `-` o `@` se exportan con un apóstrofo adelante para que Excel no los ejecute como fórmula.
 
-*Gestión de Pagos* siempre tiene cargados **todos los comprobantes pendientes de pago** y **todo lo cargado o modificado en los últimos 45 días**, aunque la fecha de la factura sea vieja (la lista se pagina por fecha del documento). Para comprobantes más antiguos, usá el filtro de período o "Cargar más".
+*Gestión de Pagos* muestra **todos los comprobantes**, ordenados por **fecha de carga** (los más nuevos arriba), **sin filtros por defecto**. Se van mostrando a medida que bajás (scroll), así que para llegar a uno de hace meses solo hay que seguir bajando. Período, estado, centro de costos y búsqueda filtran **solo si los elegís**; el período se aplica sobre la fecha del comprobante. *"Seleccionar todos"* selecciona solo los que están a la vista.
 
 ### 7.8 Proveedores
 

@@ -118,6 +118,8 @@ export interface ExpenseQueryOptions {
   limitCount?: number;
   /** Solo los comprobantes de esta persona (vista de Colaborador): todos, sin límite ni paginación */
   submittedByEmail?: string;
+  /** Admin: todos los comprobantes, sin filtros ni límite (se ordenan y filtran en pantalla) */
+  allExpenses?: boolean;
 }
 
 export interface SyncPayload {
@@ -514,6 +516,10 @@ export function buildExpensesFirestoreQuery(options?: ExpenseQueryOptions) {
   if (options?.submittedByEmail) {
     return query(expensesCol, where('submittedByEmail', '==', options.submittedByEmail.toLowerCase().trim()));
   }
+  // Admin: toda la colección, sin orderBy (un orderBy excluiría comprobantes sin ese campo)
+  if (options?.allExpenses) {
+    return query(expensesCol);
+  }
   const constraints: QueryConstraint[] = [];
   const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
 
@@ -563,7 +569,7 @@ export async function fetchExpensesPage(options?: ExpenseQueryOptions): Promise<
     const limitCount = options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
     return {
       expenses,
-      hasMore: options?.submittedByEmail ? false : snap.size >= limitCount,
+      hasMore: options?.submittedByEmail || options?.allExpenses ? false : snap.size >= limitCount,
     };
   } catch (err) {
     console.warn('[Firestore] Query with constraints failed, trying fallback query:', err);
@@ -611,7 +617,7 @@ export async function fetchCentralSync(options?: ExpenseQueryOptions): Promise<S
     const expenses: Expense[] = [];
     expensesSnap.forEach((d) => expenses.push(d.data() as Expense));
     const limitCount = options?.limitCount || 50;
-    const hasMore = options?.submittedByEmail ? false : expensesSnap.size >= limitCount;
+    const hasMore = options?.submittedByEmail || options?.allExpenses ? false : expensesSnap.size >= limitCount;
 
     let vendors: Vendor[] = [];
     vendorsSnap.forEach((d) => vendors.push(normalizeVendorBankDetails(d.data() as Vendor)));
@@ -746,53 +752,11 @@ function handleExpensesSnapshot(
 /**
  * Real-time Firestore Subscriptions with query-level filtering and pagination support.
  */
-/**
- * Admin: todos los comprobantes pendientes de pago, siempre cargados (además de la página actual),
- * para que Gestión de Pagos, los totales y el pago en lote no dependan de la paginación.
- */
-export function subscribeToPendingExpenses(onUpdate: (payload: RealtimeUpdate) => void): () => void {
-  return onSnapshot(
-    query(collection(db, 'expenses'), where('reimbursementStatus', '==', 'PENDING')),
-    (snap) =>
-      handleExpensesSnapshot(snap, Number.POSITIVE_INFINITY, (payload) => {
-        // hasMore es de la página principal: esta suscripción no lo toca
-        const { hasMore: _ignored, ...rest } = payload as any;
-        onUpdate(rest);
-      }),
-    (err) => console.warn('[Firestore Live] pending expenses listener note:', err.message)
-  );
-}
-
-/**
- * Admin: comprobantes cargados o modificados en los últimos días, siempre cargados.
- * La página principal se ordena por FECHA DEL DOCUMENTO: un comprobante cargado hoy con una
- * factura vieja (p. ej. de 2024) y ya pagado quedaba fuera de la página y de los pendientes,
- * y no aparecía en Gestión de Pagos aunque su dueño sí lo viera.
- */
-export function subscribeToRecentExpenses(
-  onUpdate: (payload: RealtimeUpdate) => void,
-  days = 45
-): () => void {
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const forward = (payload: RealtimeUpdate) => {
-    const { hasMore: _ignored, ...rest } = payload as any;
-    onUpdate(rest);
-  };
-  const unsubs = (['createdAt', 'updatedAt'] as const).map((field) =>
-    onSnapshot(
-      query(collection(db, 'expenses'), where(field, '>=', cutoff)),
-      (snap) => handleExpensesSnapshot(snap, Number.POSITIVE_INFINITY, forward),
-      (err) => console.warn(`[Firestore Live] recent expenses (${field}) listener note:`, err.message)
-    )
-  );
-  return () => unsubs.forEach((u) => u());
-}
-
 export function subscribeToRealtimeFirestore(
   onUpdate: (payload: Partial<SyncPayload> & { hasMore?: boolean }) => void,
   options?: ExpenseQueryOptions
 ): () => void {
-  const currentLimit = options?.submittedByEmail
+  const currentLimit = options?.submittedByEmail || options?.allExpenses
     ? Number.POSITIVE_INFINITY
     : options?.limitCount && options.limitCount > 0 ? options.limitCount : 50;
   let expensesQuery;
