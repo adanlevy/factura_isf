@@ -34,6 +34,7 @@ import {
   extractDriveFileId,
 } from '../utils/googleWorkspace';
 import { cacheWithholdingCertificateFile } from '../utils/receiptCache';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 import { SafePdfViewer } from './SafePdfViewer';
 
 interface WithholdingCertificateModalProps {
@@ -134,15 +135,18 @@ export function WithholdingCertificateModal({
 
   if (!isOpen || !expense) return null;
 
-  const handleProcessFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      setFileBase64(result);
-      setFileName(file.name);
-      setFileType(file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png'));
-    };
-    reader.readAsDataURL(file);
+  const handleProcessFile = async (file: File) => {
+    if (!file) return;
+    try {
+      // Las fotos se achican antes de leerlas (una foto de cámara entera puede agotar la memoria del celular)
+      const prepared = await prepareFileForUpload(file, { maxDimension: 2400, alwaysReencode: false });
+      setFileBase64(prepared.dataUrl);
+      setFileName(prepared.fileName);
+      setFileType(prepared.mimeType);
+    } catch (err: any) {
+      console.error('No se pudo leer el archivo:', err);
+      alert(err?.message || 'No se pudo leer el archivo. Intentá nuevamente.');
+    }
   };
 
   const handleConfirmSave = async () => {

@@ -7,6 +7,7 @@ import {
 } from './data/initialData';
 import { Navbar, NavigationTab } from './components/Navbar';
 import { SmartScannerModal } from './components/SmartScannerModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ExpenseList } from './components/ExpenseList';
 import { CostCentersView } from './components/CostCentersView';
 import { ReceiptViewerModal } from './components/ReceiptViewerModal';
@@ -559,6 +560,20 @@ export default function App() {
       setToastMessage(null);
     }, 4000);
   };
+
+  // Android puede cerrar la pestaña por falta de memoria mientras el usuario elige una foto
+  // (la cámara/galería queda adelante); al volver, Chrome la recarga desde cero. Se avisa qué pasó.
+  const discardNoticeShownRef = useRef(false);
+  useEffect(() => {
+    if (discardNoticeShownRef.current || !currentUser?.email) return;
+    if ((document as Document & { wasDiscarded?: boolean }).wasDiscarded) {
+      discardNoticeShownRef.current = true;
+      showToast(
+        'El celular cerró la app por falta de memoria mientras elegías el archivo. Cerrá otras apps y volvé a intentar.'
+      );
+    }
+  }, [currentUser?.email]);
+
   const SAVE_ERROR_HINT = 'sin permisos o sin conexión';
   // Campos de pago: al revertir se borran; al pagar se escriben (sin tocar el resto del comprobante)
   const PAYMENT_REVERT_FIELDS = [
@@ -2862,21 +2877,23 @@ export default function App() {
       </button>
 
       {/* Modals */}
-      <SmartScannerModal
-        isOpen={isScannerModalOpen}
-        onClose={() => setIsScannerModalOpen(false)}
-        onSaveExpense={handleSaveNewExpense}
-        onSaveBatchExpenses={handleSaveBatchExpenses}
-        availableProjects={availableCostCenters}
-        availableCategories={availableCategories}
-        onAddNewProject={handleQuickAddCostCenterName}
-        currentUser={currentUser}
-        existingExpenses={expenses}
-        vendors={vendors}
-        costCenters={costCenters}
-        onAddVendor={handleAddVendor}
-        onUpdateVendor={handleUpdateVendor}
-      />
+      <ErrorBoundary onReset={() => setIsScannerModalOpen(false)} resetLabel="Cerrar y volver a intentar">
+        <SmartScannerModal
+          isOpen={isScannerModalOpen}
+          onClose={() => setIsScannerModalOpen(false)}
+          onSaveExpense={handleSaveNewExpense}
+          onSaveBatchExpenses={handleSaveBatchExpenses}
+          availableProjects={availableCostCenters}
+          availableCategories={availableCategories}
+          onAddNewProject={handleQuickAddCostCenterName}
+          currentUser={currentUser}
+          existingExpenses={expenses}
+          vendors={vendors}
+          costCenters={costCenters}
+          onAddVendor={handleAddVendor}
+          onUpdateVendor={handleUpdateVendor}
+        />
+      </ErrorBoundary>
 
       <ReceiptViewerModal
         expense={viewingReceiptExpense}

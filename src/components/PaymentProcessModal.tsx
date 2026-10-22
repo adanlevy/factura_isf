@@ -35,6 +35,7 @@ import {
   deleteReceiptFromGoogleDrive,
 } from '../utils/googleWorkspace';
 import { cachePaymentProofFile } from '../utils/receiptCache';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 import { SafePdfViewer } from './SafePdfViewer';
 
 interface PaymentProcessModalProps {
@@ -113,16 +114,18 @@ export function PaymentProcessModal({
   const catalogMismatch = vendorBankMismatch(expense?.bankDetails, catalogVendor?.bankDetails);
 
   // File loading helper
-  const handleProcessFile = (file: File) => {
+  const handleProcessFile = async (file: File) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      setPaymentProofBase64(result);
-      setPaymentProofFileName(file.name);
-      setPaymentProofFileType(file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'));
-    };
-    reader.readAsDataURL(file);
+    try {
+      // Las fotos se achican antes de leerlas (una foto de cámara entera puede agotar la memoria del celular)
+      const prepared = await prepareFileForUpload(file, { maxDimension: 2400, alwaysReencode: false });
+      setPaymentProofBase64(prepared.dataUrl);
+      setPaymentProofFileName(prepared.fileName);
+      setPaymentProofFileType(prepared.mimeType);
+    } catch (err: any) {
+      console.error('No se pudo leer el archivo:', err);
+      alert(err?.message || 'No se pudo leer el archivo. Intentá nuevamente.');
+    }
   };
 
   // Clipboard paste listener for fast screenshot pasting (Ctrl+V)

@@ -48,6 +48,7 @@ import {
 } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
@@ -113,53 +114,6 @@ export interface QueueItem {
   isIsfRecipient?: boolean;
   isfRecipientMismatchReason?: string;
   cuitWarningAcknowledged?: boolean;
-}
-
-/**
- * Optimiza la imagen preservando fidelidad total de color RGB y resolución adecuada
- */
-function prepareImageForGemini(
-  sourceCanvasOrImage: HTMLCanvasElement | HTMLImageElement,
-  maxDimension: number = 1800
-): string {
-  const srcWidth =
-    ('naturalWidth' in sourceCanvasOrImage
-      ? sourceCanvasOrImage.naturalWidth
-      : sourceCanvasOrImage.width) || 1280;
-  const srcHeight =
-    ('naturalHeight' in sourceCanvasOrImage
-      ? sourceCanvasOrImage.naturalHeight
-      : sourceCanvasOrImage.height) || 720;
-
-  let targetWidth = srcWidth;
-  let targetHeight = srcHeight;
-
-  if (targetWidth > maxDimension || targetHeight > maxDimension) {
-    if (targetWidth > targetHeight) {
-      targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
-      targetWidth = maxDimension;
-    } else {
-      targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
-      targetHeight = maxDimension;
-    }
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    if ('toDataURL' in sourceCanvasOrImage) {
-      return (sourceCanvasOrImage as HTMLCanvasElement).toDataURL('image/jpeg', 0.85);
-    }
-    return '';
-  }
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(sourceCanvasOrImage, 0, 0, targetWidth, targetHeight);
-
-  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 /**
@@ -298,54 +252,29 @@ export function SmartScannerModal({
   }, [isOpen, queue.length]);
 
   // --- FILE HANDLING & QUEUE INGESTION ---
+  // Los archivos se procesan de a uno: decodificar varias fotos de cámara a la vez
+  // agota la memoria de algunos celulares y Chrome cierra la pestaña (pantalla en blanco).
+  const fileProcessingChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    Array.from(files).forEach((file, index) => {
-      // Stagger processing slightly to prevent hitting burst rate limits
-      if (index === 0) {
-        processAndEnqueueFile(file);
-      } else {
-        setTimeout(() => {
-          processAndEnqueueFile(file);
-        }, index * 250);
-      }
-    });
+    const selected = Array.from(files);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    selected.forEach((file) => {
+      fileProcessingChainRef.current = fileProcessingChainRef.current.then(() => processAndEnqueueFile(file));
+    });
   };
 
-  const processAndEnqueueFile = (file: File) => {
-    const isImage = file.type.startsWith('image/') && !file.type.includes('svg');
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-
-      if (!isImage) {
-        // PDF or SVG
-        addFileToQueue(file, file.name, file.type || 'application/pdf', dataUrl, file.size);
-        return;
-      }
-
-      // Optimize image
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const optimizedDataUrl = prepareImageForGemini(img, 1800);
-          addFileToQueue(file, file.name, 'image/jpeg', optimizedDataUrl, file.size);
-        } catch (err) {
-          console.warn('Image optimization fallback:', err);
-          addFileToQueue(file, file.name, file.type || 'image/jpeg', dataUrl, file.size);
-        }
-      };
-      img.onerror = () => {
-        addFileToQueue(file, file.name, file.type || 'image/jpeg', dataUrl, file.size);
-      };
-      img.src = dataUrl;
-    };
-
-    reader.readAsDataURL(file);
+  const processAndEnqueueFile = async (file: File) => {
+    try {
+      const prepared = await prepareFileForUpload(file, { maxDimension: 1800, quality: 0.85 });
+      addFileToQueue(file, file.name, prepared.mimeType, prepared.dataUrl, file.size);
+    } catch (err: any) {
+      console.warn('No se pudo procesar el archivo:', err);
+      alert(`No se pudo cargar "${file.name}". ${err?.message || 'Intentá nuevamente.'}`);
+    }
   };
 
   const addFileToQueue = (
@@ -493,7 +422,7 @@ export function SmartScannerModal({
               const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
 
               const extractedCuit = data.cuit ? String(data.cuit).trim() : undefined;
-              const proposedVendor = data.vendor || 'Comercio';
+              const proposedVendor = typeof data.vendor === 'string' && data.vendor.trim() ? data.vendor.trim() : 'Comercio';
               const proposedCuit = extractedCuit;
 
               const smartCostCenters = getSmartSortedCostCenters(
@@ -519,7 +448,7 @@ export function SmartScannerModal({
                 amount: finalAmount,
                 currency: 'ARS',
                 date: finalDate,
-                invoiceNumber: data.invoiceNumber || item.invoiceNumber,
+                invoiceNumber: data.invoiceNumber ? String(data.invoiceNumber) : item.invoiceNumber,
                 project: finalProject,
                 paymentType: finalPaymentType,
                 bankDetails: finalBankDetails,
@@ -535,11 +464,11 @@ export function SmartScannerModal({
                     : finalPaymentType === 'TARJETA_DEBITO_GALICIA'
                     ? 'Tarjeta Débito Galicia'
                     : '',
-                items: data.items && data.items.length > 0 ? data.items : item.items,
-                recipientCuit: data.recipientCuit || undefined,
-                recipientName: data.recipientName || undefined,
+                items: Array.isArray(data.items) && data.items.length > 0 ? data.items : item.items,
+                recipientCuit: data.recipientCuit ? String(data.recipientCuit) : undefined,
+                recipientName: data.recipientName ? String(data.recipientName) : undefined,
                 isIsfRecipient: typeof data.isIsfRecipient === 'boolean' ? data.isIsfRecipient : undefined,
-                isfRecipientMismatchReason: data.isfRecipientMismatchReason || undefined,
+                isfRecipientMismatchReason: data.isfRecipientMismatchReason ? String(data.isfRecipientMismatchReason) : undefined,
                 cuitWarningAcknowledged: data.isIsfRecipient === true ? true : item.cuitWarningAcknowledged,
                 aiConfidenceSummary: isSuccessfulOcr
                   ? data.confidenceSummary ||

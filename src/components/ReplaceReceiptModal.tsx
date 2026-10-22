@@ -16,6 +16,7 @@ import {
 import { Expense, CostCenter } from '../types';
 import { formatCurrency, formatDate, generateDriveFileName } from '../utils/helpers';
 import { SafePdfViewer } from './SafePdfViewer';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 
 interface ReplaceReceiptModalProps {
   expense: Expense | null;
@@ -92,23 +93,21 @@ export function ReplaceReceiptModal({
       return;
     }
 
-    if (file.size > 20 * 1024 * 1024) {
+    // Las imágenes se achican antes de usarlas; el límite aplica a los PDF
+    if (!file.type.startsWith('image/') && file.size > 20 * 1024 * 1024) {
       setErrorMessage('El archivo seleccionado supera el límite de 20MB.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      if (result) {
-        setNewFileBase64(result);
-        setNewFileName(file.name);
-      }
-    };
-    reader.onerror = () => {
-      setErrorMessage('Error al leer el archivo. Inténtalo nuevamente.');
-    };
-    reader.readAsDataURL(file);
+    // Las fotos se achican antes de leerlas (una foto de cámara entera puede agotar la memoria del celular)
+    prepareFileForUpload(file, { maxDimension: 2400, alwaysReencode: false })
+      .then((prepared) => {
+        setNewFileBase64(prepared.dataUrl);
+        setNewFileName(prepared.fileName);
+      })
+      .catch((err: any) => {
+        setErrorMessage(err?.message || 'Error al leer el archivo. Inténtalo nuevamente.');
+      });
   };
 
   const handleDragOver = (e: React.DragEvent) => {
