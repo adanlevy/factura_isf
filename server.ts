@@ -290,6 +290,8 @@ export function formatGoogleErrorMessage(error: any, statusCode?: number): { mes
   };
 }
 
+const GEMINI_MODEL_TIMEOUT_MS = 30_000;
+
 async function generateContentWithRetry(
   ai: GoogleGenAI,
   params: {
@@ -315,7 +317,14 @@ async function generateContentWithRetry(
       const response = await ai.models.generateContent({
         model: modelName,
         contents: params.contents,
-        config: params.config,
+        // Tiempo máximo por modelo: si uno se cuelga se pasa al siguiente en vez de dejar al usuario esperando
+        config: {
+          ...(params.config || {}),
+          httpOptions: {
+            ...(params.config?.httpOptions || {}),
+            timeout: params.config?.httpOptions?.timeout ?? GEMINI_MODEL_TIMEOUT_MS,
+          },
+        },
       });
       return response;
     } catch (err: any) {
