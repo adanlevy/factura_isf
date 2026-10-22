@@ -18,6 +18,7 @@ import {
 import { Vendor, UserBankDetails } from '../types';
 import { formatCuit } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 
 interface VendorFormModalProps {
   isOpen: boolean;
@@ -196,86 +197,89 @@ export function VendorFormModal({
     setIsProcessingDoc(true);
     setDocFeedback(null);
 
+    // Las fotos se achican antes de leerlas (una foto de cámara entera puede agotar la memoria del celular)
+    let base64: string;
+    let mimeType: string;
     try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64 = e.target?.result as string;
-        try {
-          const res = await authFetch('/api/process-vendor-doc', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              imageBase64: base64,
-              mimeType: file.type || 'image/jpeg',
-            }),
-          });
-          const result = await res.json();
-          if (result.success && result.data) {
-            const data = result.data;
-            // Save prev values to allow revert
-            setPrevValuesBeforeOcr({
-              name,
-              cuit,
-              notes,
-              bankDetails: { ...bankDetails },
-            });
-
-            const bankName = data.bankName || data.bankDetails?.bankName || '';
-            const accountType = data.accountType || data.bankDetails?.accountType || '';
-            const cbuCvu = data.cbuCvu || data.bankDetails?.cbuCvu || '';
-            const alias = data.alias || data.bankDetails?.alias || '';
-            const cuitVal = data.cuit || data.bankDetails?.cuitCuil || '';
-            const accountHolder = data.accountHolder || data.name || data.bankDetails?.accountHolder || '';
-
-            if (data.name && (!name || name === 'Nuevo Proveedor' || name.trim() === '')) {
-              setName(data.name);
-            }
-            if (cuitVal) {
-              setCuit(cuitVal);
-            }
-            if (data.notes) {
-              setNotes((prev) => (prev ? `${prev} | ${data.notes}` : data.notes));
-            }
-
-            setBankDetails((prev) => ({
-              ...prev,
-              bankName: bankName || prev.bankName,
-              accountType: accountType || prev.accountType,
-              cbuCvu: cbuCvu || prev.cbuCvu,
-              alias: alias || prev.alias,
-              cuitCuil: cuitVal || prev.cuitCuil,
-              accountHolder: accountHolder || name || prev.accountHolder,
-            }));
-
-            setDocFeedback({
-              type: 'success',
-              message: `✅ Datos leídos con éxito: ${data.name || 'Constancia/Comprobante'}`,
-              details: data.confidenceSummary || 'Información extraída con IA y aplicada al formulario.',
-            });
-          } else {
-            setDocFeedback({
-              type: 'warning',
-              message: result.error || '⚠️ La IA no pudo extraer datos claros del documento adjunto.',
-            });
-          }
-        } catch (err: any) {
-          console.error('Error processing vendor document:', err);
-          setDocFeedback({
-            type: 'error',
-            message: err?.message || '❌ Error al comunicarse con el servicio de lectura IA.',
-          });
-        } finally {
-          setIsProcessingDoc(false);
-        }
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
+      const prepared = await prepareFileForUpload(file, { maxDimension: 2400, alwaysReencode: false });
+      base64 = prepared.dataUrl;
+      mimeType = prepared.mimeType;
+    } catch (err: any) {
       console.error('FileReader error:', err);
       setIsProcessingDoc(false);
       setDocFeedback({
         type: 'error',
-        message: '❌ No se pudo leer el archivo seleccionado.',
+        message: err?.message ? `❌ ${err.message}` : '❌ No se pudo leer el archivo seleccionado.',
       });
+      return;
+    }
+
+    try {
+      const res = await authFetch('/api/process-vendor-doc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64,
+          mimeType,
+        }),
+      });
+      const result = await res.json();
+      if (result.success && result.data) {
+        const data = result.data;
+        // Save prev values to allow revert
+        setPrevValuesBeforeOcr({
+          name,
+          cuit,
+          notes,
+          bankDetails: { ...bankDetails },
+        });
+
+        const bankName = data.bankName || data.bankDetails?.bankName || '';
+        const accountType = data.accountType || data.bankDetails?.accountType || '';
+        const cbuCvu = data.cbuCvu || data.bankDetails?.cbuCvu || '';
+        const alias = data.alias || data.bankDetails?.alias || '';
+        const cuitVal = data.cuit || data.bankDetails?.cuitCuil || '';
+        const accountHolder = data.accountHolder || data.name || data.bankDetails?.accountHolder || '';
+
+        if (data.name && (!name || name === 'Nuevo Proveedor' || name.trim() === '')) {
+          setName(data.name);
+        }
+        if (cuitVal) {
+          setCuit(cuitVal);
+        }
+        if (data.notes) {
+          setNotes((prev) => (prev ? `${prev} | ${data.notes}` : data.notes));
+        }
+
+        setBankDetails((prev) => ({
+          ...prev,
+          bankName: bankName || prev.bankName,
+          accountType: accountType || prev.accountType,
+          cbuCvu: cbuCvu || prev.cbuCvu,
+          alias: alias || prev.alias,
+          cuitCuil: cuitVal || prev.cuitCuil,
+          accountHolder: accountHolder || name || prev.accountHolder,
+        }));
+
+        setDocFeedback({
+          type: 'success',
+          message: `✅ Datos leídos con éxito: ${data.name || 'Constancia/Comprobante'}`,
+          details: data.confidenceSummary || 'Información extraída con IA y aplicada al formulario.',
+        });
+      } else {
+        setDocFeedback({
+          type: 'warning',
+          message: result.error || '⚠️ La IA no pudo extraer datos claros del documento adjunto.',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error processing vendor document:', err);
+      setDocFeedback({
+        type: 'error',
+        message: err?.message || '❌ Error al comunicarse con el servicio de lectura IA.',
+      });
+    } finally {
+      setIsProcessingDoc(false);
     }
   };
 

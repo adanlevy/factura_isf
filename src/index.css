@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+/*
+ * Celulares: sin desenfoque de fondo (backdrop-filter). En algunos Android, varias capas
+ * con desenfoque superpuestas (p. ej. una alerta sobre la ventana de carga) hacen que Chrome
+ * dibuje toda la pantalla en blanco. Los fondos oscuros semitransparentes se mantienen.
+ */
+@media (pointer: coarse), (max-width: 767px) {
+  [class*='backdrop-blur'] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}

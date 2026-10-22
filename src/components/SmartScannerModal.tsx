@@ -48,11 +48,15 @@ import {
 } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
+import { prepareFileForUpload } from '../utils/imageProcessing';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import { VendorFormModal } from './VendorFormModal';
 import { AccountSelector } from './AccountSelector';
+
+// Espera máxima de la lectura con IA (incluye el reintento)
+const AI_EXTRACTION_TIMEOUT_MS = 90_000;
 
 export interface SmartScannerModalProps {
   isOpen: boolean;
@@ -113,53 +117,6 @@ export interface QueueItem {
   isIsfRecipient?: boolean;
   isfRecipientMismatchReason?: string;
   cuitWarningAcknowledged?: boolean;
-}
-
-/**
- * Optimiza la imagen preservando fidelidad total de color RGB y resolución adecuada
- */
-function prepareImageForGemini(
-  sourceCanvasOrImage: HTMLCanvasElement | HTMLImageElement,
-  maxDimension: number = 1800
-): string {
-  const srcWidth =
-    ('naturalWidth' in sourceCanvasOrImage
-      ? sourceCanvasOrImage.naturalWidth
-      : sourceCanvasOrImage.width) || 1280;
-  const srcHeight =
-    ('naturalHeight' in sourceCanvasOrImage
-      ? sourceCanvasOrImage.naturalHeight
-      : sourceCanvasOrImage.height) || 720;
-
-  let targetWidth = srcWidth;
-  let targetHeight = srcHeight;
-
-  if (targetWidth > maxDimension || targetHeight > maxDimension) {
-    if (targetWidth > targetHeight) {
-      targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
-      targetWidth = maxDimension;
-    } else {
-      targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
-      targetHeight = maxDimension;
-    }
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    if ('toDataURL' in sourceCanvasOrImage) {
-      return (sourceCanvasOrImage as HTMLCanvasElement).toDataURL('image/jpeg', 0.85);
-    }
-    return '';
-  }
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(sourceCanvasOrImage, 0, 0, targetWidth, targetHeight);
-
-  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 /**
@@ -298,54 +255,29 @@ export function SmartScannerModal({
   }, [isOpen, queue.length]);
 
   // --- FILE HANDLING & QUEUE INGESTION ---
+  // Los archivos se procesan de a uno: decodificar varias fotos de cámara a la vez
+  // agota la memoria de algunos celulares y Chrome cierra la pestaña (pantalla en blanco).
+  const fileProcessingChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    Array.from(files).forEach((file, index) => {
-      // Stagger processing slightly to prevent hitting burst rate limits
-      if (index === 0) {
-        processAndEnqueueFile(file);
-      } else {
-        setTimeout(() => {
-          processAndEnqueueFile(file);
-        }, index * 250);
-      }
-    });
+    const selected = Array.from(files);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    selected.forEach((file) => {
+      fileProcessingChainRef.current = fileProcessingChainRef.current.then(() => processAndEnqueueFile(file));
+    });
   };
 
-  const processAndEnqueueFile = (file: File) => {
-    const isImage = file.type.startsWith('image/') && !file.type.includes('svg');
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-
-      if (!isImage) {
-        // PDF or SVG
-        addFileToQueue(file, file.name, file.type || 'application/pdf', dataUrl, file.size);
-        return;
-      }
-
-      // Optimize image
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const optimizedDataUrl = prepareImageForGemini(img, 1800);
-          addFileToQueue(file, file.name, 'image/jpeg', optimizedDataUrl, file.size);
-        } catch (err) {
-          console.warn('Image optimization fallback:', err);
-          addFileToQueue(file, file.name, file.type || 'image/jpeg', dataUrl, file.size);
-        }
-      };
-      img.onerror = () => {
-        addFileToQueue(file, file.name, file.type || 'image/jpeg', dataUrl, file.size);
-      };
-      img.src = dataUrl;
-    };
-
-    reader.readAsDataURL(file);
+  const processAndEnqueueFile = async (file: File) => {
+    try {
+      const prepared = await prepareFileForUpload(file, { maxDimension: 1800, quality: 0.85 });
+      addFileToQueue(file, file.name, prepared.mimeType, prepared.dataUrl, file.size);
+    } catch (err: any) {
+      console.warn('No se pudo procesar el archivo:', err);
+      alert(`No se pudo cargar "${file.name}". ${err?.message || 'Intentá nuevamente.'}`);
+    }
   };
 
   const addFileToQueue = (
@@ -422,161 +354,178 @@ export function SmartScannerModal({
 
     const maxAttempts = 2;
     let lastError: any = null;
+    // Tope total de espera: si la IA no responde, el comprobante pasa a "Reintentar IA" en vez de quedar pensando
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, AI_EXTRACTION_TIMEOUT_MS);
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        if (abortController.signal.aborted) return;
-
-        const response = await authFetch('/api/extract-invoice', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: previewUrl,
-            mimeType,
-            availableCategories,
-          }),
-          signal: abortController.signal,
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          let parsedErr = '';
-          try {
-            const errObj = JSON.parse(errText);
-            parsedErr = errObj.error || errObj.message || response.statusText;
-          } catch {
-            parsedErr = errText || response.statusText;
+    try {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          if (abortController.signal.aborted) {
+            if (timedOut) break;
+            return;
           }
-          throw new Error(parsedErr || `HTTP ${response.status}`);
-        }
 
-        const result = await response.json();
+          const response = await authFetch('/api/extract-invoice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64: previewUrl,
+              mimeType,
+              availableCategories,
+            }),
+            signal: abortController.signal,
+          });
 
-        if (result.apiLog) {
-          syncApiLogToCloud(result.apiLog);
-        }
+          if (!response.ok) {
+            const errText = await response.text();
+            let parsedErr = '';
+            try {
+              const errObj = JSON.parse(errText);
+              parsedErr = errObj.error || errObj.message || response.statusText;
+            } catch {
+              parsedErr = errText || response.statusText;
+            }
+            throw new Error(parsedErr || `HTTP ${response.status}`);
+          }
 
-        if (result.success && result.data) {
-          const data = result.data;
-          const amountNum = typeof data.amount === 'number' && data.amount > 0 ? data.amount : null;
-          const extractedDate =
-            typeof data.date === 'string' && data.date.trim().length >= 8 ? data.date.trim() : null;
+          const result = await response.json();
 
-          // Strict validation: BOTH Amount and Date must be present to be considered successful (ready)
-          const isSuccessfulOcr = amountNum !== null && extractedDate !== null;
+          if (result.apiLog) {
+            syncApiLogToCloud(result.apiLog);
+          }
 
-          setQueue((prev) =>
-            prev.map((item) => {
-              if (item.id !== itemId) return item;
+          if (result.success && result.data) {
+            const data = result.data;
+            const amountNum = typeof data.amount === 'number' && data.amount > 0 ? data.amount : null;
+            const extractedDate =
+              typeof data.date === 'string' && data.date.trim().length >= 8 ? data.date.trim() : null;
 
-              // If user manually entered both amount and date while IA was running, don't overwrite user values
-              const userAlreadyCompleted = item.manuallyEditedAmount && item.manuallyEditedDate;
-              if (userAlreadyCompleted) {
+            // Strict validation: BOTH Amount and Date must be present to be considered successful (ready)
+            const isSuccessfulOcr = amountNum !== null && extractedDate !== null;
+
+            setQueue((prev) =>
+              prev.map((item) => {
+                if (item.id !== itemId) return item;
+
+                // If user manually entered both amount and date while IA was running, don't overwrite user values
+                const userAlreadyCompleted = item.manuallyEditedAmount && item.manuallyEditedDate;
+                if (userAlreadyCompleted) {
+                  return {
+                    ...item,
+                    status: 'ready',
+                    statusMessage: 'Completado manualmente',
+                  };
+                }
+
+                const finalAmount = item.manuallyEditedAmount
+                  ? item.amount
+                  : amountNum !== null
+                  ? amountNum
+                  : item.amount;
+                const finalDate = item.manuallyEditedDate
+                  ? item.date
+                  : extractedDate || item.date;
+
+                const hasValidAmount = typeof finalAmount === 'number' && finalAmount > 0;
+                const hasValidDate = Boolean(finalDate && finalDate.trim().length >= 8);
+                const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
+
+                const extractedCuit = data.cuit ? String(data.cuit).trim() : undefined;
+                const proposedVendor = typeof data.vendor === 'string' && data.vendor.trim() ? data.vendor.trim() : 'Comercio';
+                const proposedCuit = extractedCuit;
+
+                const smartCostCenters = getSmartSortedCostCenters(
+                  availableProjects,
+                  existingExpenses,
+                  currentUser?.email
+                );
+                const finalProject = item.project || smartCostCenters.topSuggested || suggestedProject || availableProjects[0] || 'General';
+
+                // Payment type is NOT deduced by AI (kept empty so user selects it)
+                const finalPaymentType = item.paymentType || '';
+                const finalBankDetails = item.bankDetails;
+                const isPendingPaymentType = finalPaymentType === 'REINTEGRO' || finalPaymentType === 'PAGO_PROVEEDOR';
+
+                const vendorDisplayNote = `${proposedVendor}${proposedCuit ? ` (CUIT ${formatCuit(proposedCuit)})` : ''}`;
+
                 return {
                   ...item,
-                  status: 'ready',
-                  statusMessage: 'Completado manualmente',
+                  status: finalStatus,
+                  statusMessage: finalStatus === 'ready' ? 'Análisis completado' : 'Falta Monto o Fecha',
+                  vendor: item.vendor || proposedVendor,
+                  cuit: item.cuit || proposedCuit,
+                  amount: finalAmount,
+                  currency: 'ARS',
+                  date: finalDate,
+                  invoiceNumber: data.invoiceNumber ? String(data.invoiceNumber) : item.invoiceNumber,
+                  project: finalProject,
+                  paymentType: finalPaymentType,
+                  bankDetails: finalBankDetails,
+                  reimbursable: isPendingPaymentType,
+                  reimbursementStatus: isPendingPaymentType ? 'PENDING' : 'NOT_APPLICABLE',
+                  paymentMethod:
+                    finalPaymentType === 'REINTEGRO'
+                      ? 'Reintegro'
+                      : finalPaymentType === 'PAGO_PROVEEDOR'
+                      ? 'Pago a Proveedor'
+                      : finalPaymentType === 'TARJETA_CORPORATIVA'
+                      ? 'Tarjeta Corporativa'
+                      : finalPaymentType === 'TARJETA_DEBITO_GALICIA'
+                      ? 'Tarjeta Débito Galicia'
+                      : '',
+                  items: Array.isArray(data.items) && data.items.length > 0 ? data.items : item.items,
+                  recipientCuit: data.recipientCuit ? String(data.recipientCuit) : undefined,
+                  recipientName: data.recipientName ? String(data.recipientName) : undefined,
+                  isIsfRecipient: typeof data.isIsfRecipient === 'boolean' ? data.isIsfRecipient : undefined,
+                  isfRecipientMismatchReason: data.isfRecipientMismatchReason ? String(data.isfRecipientMismatchReason) : undefined,
+                  cuitWarningAcknowledged: data.isIsfRecipient === true ? true : item.cuitWarningAcknowledged,
+                  aiConfidenceSummary: isSuccessfulOcr
+                    ? data.confidenceSummary ||
+                      `Detectado: ${vendorDisplayNote} • $${amountNum?.toLocaleString()} • ${extractedDate}`
+                    : 'IA no pudo detectar Monto y/o Fecha con certeza. Por favor complétalos en la tabla.',
                 };
-              }
-
-              const finalAmount = item.manuallyEditedAmount
-                ? item.amount
-                : amountNum !== null
-                ? amountNum
-                : item.amount;
-              const finalDate = item.manuallyEditedDate
-                ? item.date
-                : extractedDate || item.date;
-
-              const hasValidAmount = typeof finalAmount === 'number' && finalAmount > 0;
-              const hasValidDate = Boolean(finalDate && finalDate.trim().length >= 8);
-              const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
-
-              const extractedCuit = data.cuit ? String(data.cuit).trim() : undefined;
-              const proposedVendor = data.vendor || 'Comercio';
-              const proposedCuit = extractedCuit;
-
-              const smartCostCenters = getSmartSortedCostCenters(
-                availableProjects,
-                existingExpenses,
-                currentUser?.email
-              );
-              const finalProject = item.project || smartCostCenters.topSuggested || suggestedProject || availableProjects[0] || 'General';
-
-              // Payment type is NOT deduced by AI (kept empty so user selects it)
-              const finalPaymentType = item.paymentType || '';
-              const finalBankDetails = item.bankDetails;
-              const isPendingPaymentType = finalPaymentType === 'REINTEGRO' || finalPaymentType === 'PAGO_PROVEEDOR';
-
-              const vendorDisplayNote = `${proposedVendor}${proposedCuit ? ` (CUIT ${formatCuit(proposedCuit)})` : ''}`;
-
-              return {
-                ...item,
-                status: finalStatus,
-                statusMessage: finalStatus === 'ready' ? 'Análisis completado' : 'Falta Monto o Fecha',
-                vendor: item.vendor || proposedVendor,
-                cuit: item.cuit || proposedCuit,
-                amount: finalAmount,
-                currency: 'ARS',
-                date: finalDate,
-                invoiceNumber: data.invoiceNumber || item.invoiceNumber,
-                project: finalProject,
-                paymentType: finalPaymentType,
-                bankDetails: finalBankDetails,
-                reimbursable: isPendingPaymentType,
-                reimbursementStatus: isPendingPaymentType ? 'PENDING' : 'NOT_APPLICABLE',
-                paymentMethod:
-                  finalPaymentType === 'REINTEGRO'
-                    ? 'Reintegro'
-                    : finalPaymentType === 'PAGO_PROVEEDOR'
-                    ? 'Pago a Proveedor'
-                    : finalPaymentType === 'TARJETA_CORPORATIVA'
-                    ? 'Tarjeta Corporativa'
-                    : finalPaymentType === 'TARJETA_DEBITO_GALICIA'
-                    ? 'Tarjeta Débito Galicia'
-                    : '',
-                items: data.items && data.items.length > 0 ? data.items : item.items,
-                recipientCuit: data.recipientCuit || undefined,
-                recipientName: data.recipientName || undefined,
-                isIsfRecipient: typeof data.isIsfRecipient === 'boolean' ? data.isIsfRecipient : undefined,
-                isfRecipientMismatchReason: data.isfRecipientMismatchReason || undefined,
-                cuitWarningAcknowledged: data.isIsfRecipient === true ? true : item.cuitWarningAcknowledged,
-                aiConfidenceSummary: isSuccessfulOcr
-                  ? data.confidenceSummary ||
-                    `Detectado: ${vendorDisplayNote} • $${amountNum?.toLocaleString()} • ${extractedDate}`
-                  : 'IA no pudo detectar Monto y/o Fecha con certeza. Por favor complétalos en la tabla.',
-              };
-            })
-          );
-          return; // Succeeded!
-        } else {
-          setQueue((prev) =>
-            prev.map((item) => {
-              if (item.id !== itemId) return item;
-              const hasValidAmount = typeof item.amount === 'number' && item.amount > 0;
-              const hasValidDate = Boolean(item.date && item.date.trim().length >= 8);
-              const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
-              return {
-                ...item,
-                status: finalStatus,
-                statusMessage: 'No se detectó Monto/Fecha',
-                aiConfidenceSummary:
-                  'No se detectó Monto y Fecha en el comprobante. Complétalos en la tabla.',
-              };
-            })
-          );
-          return;
-        }
-      } catch (err: any) {
-        if (err?.name === 'AbortError') {
-          return;
-        }
-        lastError = err;
-        if (attempt < maxAttempts) {
-          // Wait before retry
-          await new Promise((res) => setTimeout(res, 1200));
+              })
+            );
+            return; // Succeeded!
+          } else {
+            setQueue((prev) =>
+              prev.map((item) => {
+                if (item.id !== itemId) return item;
+                const hasValidAmount = typeof item.amount === 'number' && item.amount > 0;
+                const hasValidDate = Boolean(item.date && item.date.trim().length >= 8);
+                const finalStatus = hasValidAmount && hasValidDate ? 'ready' : 'incomplete';
+                return {
+                  ...item,
+                  status: finalStatus,
+                  statusMessage: 'No se detectó Monto/Fecha',
+                  aiConfidenceSummary:
+                    'No se detectó Monto y Fecha en el comprobante. Complétalos en la tabla.',
+                };
+              })
+            );
+            return;
+          }
+        } catch (err: any) {
+          if (err?.name === 'AbortError') {
+            if (timedOut) {
+              lastError = new Error('La IA tardó demasiado en responder.');
+              break;
+            }
+            return;
+          }
+          lastError = err;
+          if (attempt < maxAttempts) {
+            // Wait before retry
+            await new Promise((res) => setTimeout(res, 1200));
+          }
         }
       }
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     // If all attempts failed
@@ -587,7 +536,9 @@ export function SmartScannerModal({
         return {
           ...item,
           status: 'error',
-          statusMessage: 'Error al contactar IA. Puedes reintentar o completar a mano.',
+          statusMessage: timedOut
+            ? 'La IA tardó demasiado. Puedes reintentar o completar a mano.'
+            : 'Error al contactar IA. Puedes reintentar o completar a mano.',
         };
       })
     );
@@ -1871,83 +1822,86 @@ export function SmartScannerModal({
       </div>
 
       {/* ALERTA CUIT INGENIERÍA SIN FRONTERAS (30-71254928-5) */}
-      {pendingCuitWarningItem && (
-        <div className="fixed inset-0 z-[80] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-amber-300 overflow-hidden animate-in zoom-in-95 duration-150">
-            <div className="p-6 space-y-4">
-              <div className="flex items-start gap-3.5">
-                <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0 shadow-xs">
-                  <AlertTriangle className="w-6 h-6" />
+      {/* Se dibuja fuera de la ventana de carga (capa propia, sin anidar fondos con desenfoque) */}
+      {pendingCuitWarningItem &&
+        createPortal(
+          <div className="fixed inset-0 z-[80] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-amber-300 overflow-hidden animate-in zoom-in-95 duration-150">
+              <div className="p-6 space-y-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0 shadow-xs">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-black text-slate-900 leading-snug">
+                      Atención: Titular del Comprobante
+                    </h3>
+                    <p className="text-xs font-semibold text-amber-800 mt-0.5">
+                      La factura no parece estar a nombre de Ingeniería Sin Fronteras
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-black text-slate-900 leading-snug">
-                    Atención: Titular del Comprobante
-                  </h3>
-                  <p className="text-xs font-semibold text-amber-800 mt-0.5">
-                    La factura no parece estar a nombre de Ingeniería Sin Fronteras
+
+                <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200/80 text-xs space-y-3 text-slate-700">
+                  <p className="text-slate-800 leading-relaxed font-medium">
+                    El sistema verificó el comprobante y no detectó el CUIT institucional de <strong>Ingeniería Sin Fronteras (30-71254928-5)</strong> como receptor o cliente.
+                  </p>
+
+                  <div className="bg-white/90 rounded-xl p-3 border border-amber-200 space-y-1.5 text-[11.5px]">
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-slate-500 font-medium">Archivo:</span>
+                      <span className="font-bold text-slate-800 truncate max-w-[210px]" title={pendingCuitWarningItem.fileName}>
+                        {pendingCuitWarningItem.fileName}
+                      </span>
+                    </div>
+                    {pendingCuitWarningItem.vendor && (
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-slate-500 font-medium">Emisor / Proveedor:</span>
+                        <span className="font-bold text-slate-800 truncate max-w-[210px]">{pendingCuitWarningItem.vendor}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-slate-500 font-medium shrink-0">Receptor detectado:</span>
+                      <span className="font-bold text-amber-900 text-right">
+                        {pendingCuitWarningItem.recipientCuit
+                          ? `${pendingCuitWarningItem.recipientCuit}${pendingCuitWarningItem.recipientName ? ` (${pendingCuitWarningItem.recipientName})` : ''}`
+                          : pendingCuitWarningItem.recipientName || 'Sin CUIT de ISF / Consumidor Final'}
+                      </span>
+                    </div>
+                    {pendingCuitWarningItem.isfRecipientMismatchReason && (
+                      <div className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-100 italic">
+                        {pendingCuitWarningItem.isfRecipientMismatchReason}
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[11.5px] text-amber-950 font-bold">
+                    ¿Deseas continuar igual con la carga?
                   </p>
                 </div>
-              </div>
 
-              <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200/80 text-xs space-y-3 text-slate-700">
-                <p className="text-slate-800 leading-relaxed font-medium">
-                  El sistema verificó el comprobante y no detectó el CUIT institucional de <strong>Ingeniería Sin Fronteras (30-71254928-5)</strong> como receptor o cliente.
-                </p>
-
-                <div className="bg-white/90 rounded-xl p-3 border border-amber-200 space-y-1.5 text-[11.5px]">
-                  <div className="flex justify-between items-center gap-2">
-                    <span className="text-slate-500 font-medium">Archivo:</span>
-                    <span className="font-bold text-slate-800 truncate max-w-[210px]" title={pendingCuitWarningItem.fileName}>
-                      {pendingCuitWarningItem.fileName}
-                    </span>
-                  </div>
-                  {pendingCuitWarningItem.vendor && (
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-slate-500 font-medium">Emisor / Proveedor:</span>
-                      <span className="font-bold text-slate-800 truncate max-w-[210px]">{pendingCuitWarningItem.vendor}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between items-start gap-2">
-                    <span className="text-slate-500 font-medium shrink-0">Receptor detectado:</span>
-                    <span className="font-bold text-amber-900 text-right">
-                      {pendingCuitWarningItem.recipientCuit
-                        ? `${pendingCuitWarningItem.recipientCuit}${pendingCuitWarningItem.recipientName ? ` (${pendingCuitWarningItem.recipientName})` : ''}`
-                        : pendingCuitWarningItem.recipientName || 'Sin CUIT de ISF / Consumidor Final'}
-                    </span>
-                  </div>
-                  {pendingCuitWarningItem.isfRecipientMismatchReason && (
-                    <div className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-100 italic">
-                      {pendingCuitWarningItem.isfRecipientMismatchReason}
-                    </div>
-                  )}
+                <div className="flex items-center justify-end gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleCancelCuitMismatchUpload(pendingCuitWarningItem.id)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    Cancelar carga
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAcknowledgeCuitWarning(pendingCuitWarningItem.id)}
+                    className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Aceptar</span>
+                  </button>
                 </div>
-
-                <p className="text-[11.5px] text-amber-950 font-bold">
-                  ¿Deseas continuar igual con la carga?
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => handleCancelCuitMismatchUpload(pendingCuitWarningItem.id)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 active:bg-slate-200 text-slate-700 font-bold text-xs transition cursor-pointer"
-                >
-                  Cancelar carga
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAcknowledgeCuitWarning(pendingCuitWarningItem.id)}
-                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Aceptar</span>
-                </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* FULL PREVIEW ZOOM MODAL (HANDLES BOTH IMAGES & PDF EMBEDS) */}
       {previewZoomFile && (
