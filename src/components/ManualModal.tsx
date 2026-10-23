@@ -197,6 +197,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <strong>Vos revisás y completás:</strong> Monto y Fecha (obligatorios), <strong>Centro de Costos</strong>
               {' '}(obligatorio), <strong>Tipo de pago</strong> y, si corresponde, los datos de cuenta. Guardás por fila
               o con «Guardar todos los listos». Al guardar, se sube solo a Drive y te llega un correo de confirmación.
+              {' '}Cuando guardás el último de la cola, la ventana se cierra sola.
             </p>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Los tipos de pago</h4>

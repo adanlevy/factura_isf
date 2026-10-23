@@ -166,6 +166,8 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 - Se registra en la nube y **se sube automáticamente a Google Drive**, a la carpeta del centro de costos.
 - Se dispara un **correo de confirmación** al que lo cargó, con el resumen.
 
+Cuando se guarda el último comprobante de la cola, **la ventana de carga se cierra sola** y aparece el aviso de que quedó registrado. Si quedan comprobantes incompletos sin guardar, la ventana sigue abierta para completarlos.
+
 ### 6.2 Los tipos de pago
 
 El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de selección **mutuamente excluyente** (uno solo):
