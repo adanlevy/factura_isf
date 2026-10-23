@@ -25,7 +25,7 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { db, auth, testFirestoreConnection } from '../lib/firebase';
-import { Expense, Vendor, CostCenter, AppUserRecord, DriveSettings } from '../types';
+import { Expense, Vendor, CostCenter, AppUserRecord, DriveSettings, VendorChangeRequest } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_COST_CENTERS_DATA, DEFAULT_VENDORS } from '../data/initialData';
 import { cacheReceiptFile, cachePaymentProofFile, cacheWithholdingCertificateFile } from './receiptCache';
 import { sanitizeCostCenter } from './helpers';
@@ -1373,6 +1373,57 @@ export async function saveCentralVendors(vendors: Vendor[]): Promise<boolean> {
     return true;
   } catch (e) {
     console.warn('[Firestore] Error saving vendors:', e);
+    return false;
+  }
+}
+
+// --- PEDIDOS DE CAMBIO DE PROVEEDORES (Colaboradores proponen, Administración aprueba) ---
+
+/**
+ * Escucha los pedidos pendientes: un Admin ve todos; un Colaborador solo los suyos
+ * (las reglas de Firestore no le permiten leer los de otras personas).
+ */
+export function subscribeVendorChangeRequests(
+  options: { isAdmin: boolean; email: string },
+  onChange: (requests: VendorChangeRequest[]) => void
+): () => void {
+  const col = collection(db, 'vendor_change_requests');
+  const q = options.isAdmin
+    ? query(col, where('status', '==', 'PENDING'))
+    : query(col, where('requestedByEmail', '==', options.email.toLowerCase()), where('status', '==', 'PENDING'));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: VendorChangeRequest[] = [];
+      snap.forEach((d) => list.push(d.data() as VendorChangeRequest));
+      list.sort((a, b) => String(b.updatedAt || b.requestedAt).localeCompare(String(a.updatedAt || a.requestedAt)));
+      onChange(list);
+    },
+    (err) => console.warn('[Firestore Live] vendor_change_requests listener note:', err.message)
+  );
+}
+
+/** Crea o actualiza (si ya existía el pendiente) un pedido de cambio */
+export async function saveVendorChangeRequest(request: VendorChangeRequest): Promise<boolean> {
+  try {
+    await setDoc(doc(db, 'vendor_change_requests', request.id), sanitizeForFirestore(request));
+    return true;
+  } catch (e) {
+    console.warn('[Firestore] Error saving vendor change request:', e);
+    return false;
+  }
+}
+
+/** Admin: marca un pedido como aprobado o rechazado */
+export async function resolveVendorChangeRequest(
+  id: string,
+  resolution: Pick<VendorChangeRequest, 'status' | 'resolvedByEmail' | 'resolvedByName' | 'resolvedAt' | 'resolutionNote'>
+): Promise<boolean> {
+  try {
+    await updateDoc(doc(db, 'vendor_change_requests', id), sanitizeForFirestore(resolution) as Record<string, unknown>);
+    return true;
+  } catch (e) {
+    console.warn('[Firestore] Error resolving vendor change request:', e);
     return false;
   }
 }

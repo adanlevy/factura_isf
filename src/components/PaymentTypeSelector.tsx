@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   FileText,
 } from 'lucide-react';
-import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus } from '../types';
+import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus, VendorUpdateHandler } from '../types';
 import { getStoredUserBankDetails } from '../utils/auth';
 import { matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { AccountSelector } from './AccountSelector';
@@ -37,7 +37,7 @@ interface PaymentTypeSelectorProps {
   vendorName?: string;
   cuit?: string;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
 }
 
 export function PaymentTypeSelector({

@@ -197,6 +197,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <strong>Vos revisás y completás:</strong> Monto y Fecha (obligatorios), <strong>Centro de Costos</strong>
               {' '}(obligatorio), <strong>Tipo de pago</strong> y, si corresponde, los datos de cuenta. Guardás por fila
               o con «Guardar todos los listos». Al guardar, se sube solo a Drive y te llega un correo de confirmación.
+              {' '}Cuando guardás el último de la cola, la ventana se cierra sola.
             </p>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Los tipos de pago</h4>
@@ -267,7 +268,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y manda a la papelera de Drive la constancia y el certificado (se pueden recuperar durante 30 días).</li>
               <li><strong>Pedir datos bancarios:</strong> «Pedir Datos» envía un correo prearmado solicitando CBU/Alias.</li>
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
-              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron.</li>
+              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron. Los colaboradores dan de alta proveedores al instante y sus ediciones llegan como <strong>pedidos de cambio</strong> a «Pendientes de revisión», donde Administración aprueba, corrige o rechaza (la cuenta elegida queda igual en el comprobante del colaborador).</li>
               <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
               <li><strong>Usuarios / Roles:</strong> la única fuente de acceso. Habilitar personas, asignar rol y CC global; alta con correo de bienvenida. No se puede quitar al último administrador.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>

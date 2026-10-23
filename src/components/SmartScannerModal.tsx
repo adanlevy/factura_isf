@@ -34,6 +34,7 @@ import {
   Vendor,
   ExpensePaymentType,
   CostCenter,
+  VendorUpdateHandler,
 } from '../types';
 import { getStoredUserBankDetails, getSuggestedProject } from '../utils/auth';
 import {
@@ -71,7 +72,7 @@ export interface SmartScannerModalProps {
   vendors?: Vendor[];
   costCenters?: CostCenter[];
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
 }
 
 export interface QueueItem {
@@ -167,7 +168,7 @@ function AccountDataCell({
   vendors: Vendor[];
   onUpdateBankDetails: (details: UserBankDetails | undefined) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
   onSelectAccount?: (data: {
     bankDetails: UserBankDetails;
     vendorName?: string;
@@ -237,6 +238,19 @@ export function SmartScannerModal({
   const storedBank = useMemo(() => {
     return currentUser?.email ? getStoredUserBankDetails(currentUser.email) : null;
   }, [currentUser]);
+
+  // Al guardar el último comprobante de la cola se cierra la ventana (si quedan pendientes, sigue abierta)
+  const queueRef = useRef<QueueItem[]>(queue);
+  queueRef.current = queue;
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+  const removeSavedAndMaybeClose = (savedIds: Set<string>) => {
+    const remaining = queueRef.current.filter((q) => !savedIds.has(q.id));
+    setQueue((prev) => prev.filter((q) => !savedIds.has(q.id)));
+    if (remaining.length === 0 && isOpenRef.current) {
+      onClose();
+    }
+  };
 
   // Fast 1-click experience: auto-open file picker when modal opens if queue is empty
   const autoTriggeredRef = useRef(false);
@@ -837,9 +851,7 @@ export function SmartScannerModal({
       prev.map((q) => (q.id === item.id ? { ...q, savedSuccessfully: true } : q))
     );
 
-    setTimeout(() => {
-      setQueue((prev) => prev.filter((q) => q.id !== item.id));
-    }, 500);
+    setTimeout(() => removeSavedAndMaybeClose(new Set([item.id])), 500);
   };
 
   const handleSaveAllReady = () => {
@@ -881,7 +893,7 @@ export function SmartScannerModal({
     if (!confirmUnusualDates(validItems)) return;
 
     const createdExpenses: Expense[] = [];
-    const validIds = new Set(validItems.map((v) => v.id));
+    const validIds = new Set<string>(validItems.map((v) => v.id));
 
     validItems.forEach((item) => {
       const numAmount = typeof item.amount === 'number' ? item.amount : 0;
@@ -944,9 +956,7 @@ export function SmartScannerModal({
       prev.map((q) => (validIds.has(q.id) ? { ...q, savedSuccessfully: true } : q))
     );
 
-    setTimeout(() => {
-      setQueue((prev) => prev.filter((q) => !validIds.has(q.id)));
-    }, 500);
+    setTimeout(() => removeSavedAndMaybeClose(validIds), 500);
   };
 
   if (!isOpen) return null;

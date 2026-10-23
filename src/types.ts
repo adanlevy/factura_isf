@@ -56,6 +56,50 @@ export interface Vendor {
   bankDetails?: UserBankDetails;
   notes?: string;
   createdAt: string;
+  /** Quién lo dio de alta (un Colaborador puede corregir los proveedores que cargó) */
+  createdByEmail?: string;
+  updatedAt?: string;
+  updatedByEmail?: string;
+}
+
+/**
+ * Guardar cambios de un proveedor: un Admin los aplica; un Colaborador los envía como pedido
+ * (con un comentario opcional para Administración).
+ */
+export type VendorUpdateHandler = (vendor: Vendor, options?: { comment?: string }) => Promise<unknown> | void;
+
+/** Datos de un proveedor que se pueden pedir cambiar */
+export interface VendorEditableData {
+  name?: string;
+  cuit?: string;
+  notes?: string;
+  bankDetails?: UserBankDetails;
+}
+
+/**
+ * Pedido de cambio de un proveedor: los Colaboradores proponen y Administración aprueba.
+ * - UPDATE: cambio sobre un proveedor existente (no se aplica hasta que un Admin lo aprueba).
+ * - NEW_VENDOR: alta hecha por un Colaborador (ya se puede usar) que Administración revisa.
+ */
+export interface VendorChangeRequest {
+  id: string;
+  type: 'UPDATE' | 'NEW_VENDOR';
+  vendorId: string;
+  vendorName: string;
+  before?: VendorEditableData;
+  proposed: VendorEditableData;
+  changedFields: string[];
+  bankChanged: boolean;
+  comment?: string;
+  requestedByEmail: string;
+  requestedByName?: string;
+  requestedAt: string;
+  updatedAt?: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  resolvedByEmail?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
 }
 
 export interface UserProfile {
@@ -325,6 +369,9 @@ export type AuditLogAction =
   | 'VENDOR_CREATE'
   | 'VENDOR_UPDATE'
   | 'VENDOR_DELETE'
+  | 'VENDOR_CHANGE_REQUEST'
+  | 'VENDOR_CHANGE_APPROVED'
+  | 'VENDOR_CHANGE_REJECTED'
   | 'EXPENSE_CREATE'
   | 'EXPENSE_UPDATE'
   | 'EXPENSE_DELETE'

@@ -14,8 +14,10 @@ import {
   Loader2,
   AlertCircle,
   FileSpreadsheet,
+  Send,
+  Clock,
 } from 'lucide-react';
-import { Vendor, UserBankDetails } from '../types';
+import { Vendor, UserBankDetails, VendorChangeRequest } from '../types';
 import { formatCuit } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { prepareFileForUpload } from '../utils/imageProcessing';
@@ -23,13 +25,17 @@ import { prepareFileForUpload } from '../utils/imageProcessing';
 interface VendorFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (vendorData: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onSave: (vendorData: Omit<Vendor, 'id' | 'createdAt'>, extra?: { comment?: string }) => Promise<unknown> | void;
   initialData?: Partial<Vendor> | null;
   existingVendors?: Vendor[];
   title?: string;
   subtitle?: string;
   suggestedName?: string;
   suggestedCuit?: string;
+  /** Colaborador editando un proveedor existente: el cambio se envía a Administración para aprobar */
+  approvalMode?: boolean;
+  /** Pedido pendiente de la misma persona para este proveedor (al enviar se actualiza) */
+  pendingRequest?: VendorChangeRequest | null;
 }
 
 export function VendorFormModal({
@@ -42,7 +48,10 @@ export function VendorFormModal({
   subtitle,
   suggestedName,
   suggestedCuit,
+  approvalMode = false,
+  pendingRequest = null,
 }: VendorFormModalProps) {
+  const [approvalComment, setApprovalComment] = useState('');
   const [name, setName] = useState('');
   const [cuit, setCuit] = useState('');
   const [notes, setNotes] = useState('');
@@ -126,6 +135,7 @@ export function VendorFormModal({
       setIsProcessingDoc(false);
       setIsCuitApproved(Boolean(initialData?.id));
       setShowCuitConfirmDialog(false);
+      setApprovalComment(pendingRequest?.comment || '');
     }
     prevIsOpenRef.current = isOpen;
   }, [isOpen]);
@@ -337,7 +347,7 @@ export function VendorFormModal({
 
     setIsSaving(true);
     try {
-      await onSave(payload);
+      await onSave(payload, approvalMode ? { comment: approvalComment.trim() || undefined } : undefined);
       onClose();
     } catch (err: any) {
       alert('Error al guardar proveedor en Firestore: ' + (err.message || err));
@@ -493,6 +503,26 @@ export function VendorFormModal({
 
         {/* Scrollable Form Body */}
         <div className="overflow-y-auto flex-1 p-6 space-y-4">
+          {approvalMode && (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-900 space-y-1">
+              <p className="font-bold flex items-center gap-1.5">
+                <Send className="w-3.5 h-3.5" /> Los cambios en proveedores los revisa Administración
+              </p>
+              <p className="text-indigo-800">
+                Mientras tanto, esta cuenta ya queda cargada en tu comprobante. Te avisamos por correo cuando se apruebe.
+              </p>
+              {pendingRequest && (
+                <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-1.5 mt-1.5 flex items-start gap-1.5">
+                  <Clock className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    Ya tenés un cambio pendiente para este proveedor (enviado el{' '}
+                    {new Date(pendingRequest.requestedAt).toLocaleDateString('es-AR')}). Si enviás de nuevo, se actualiza ese mismo pedido.
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
           {/* ENLARGED DRAG & DROP ZONE */}
           <div
             onDragEnter={(e) => {
@@ -839,6 +869,21 @@ export function VendorFormModal({
                 className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
               />
             </div>
+
+            {approvalMode && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Comentario para Administración <span className="font-normal text-slate-400">(opcional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={approvalComment}
+                  onChange={(e) => setApprovalComment(e.target.value)}
+                  placeholder="Ej: el proveedor me pasó el CBU nuevo por correo"
+                  className="w-full px-3.5 py-2 rounded-2xl border border-indigo-200 text-xs focus:ring-2 focus:ring-indigo-500 outline-hidden bg-indigo-50/30 focus:bg-white transition"
+                />
+              </div>
+            )}
           </form>
         </div>
 
@@ -868,7 +913,12 @@ export function VendorFormModal({
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Guardando en Firestore...</span>
+                <span>{approvalMode ? 'Enviando...' : 'Guardando en Firestore...'}</span>
+              </>
+            ) : approvalMode ? (
+              <>
+                <Send className="w-4 h-4" />
+                <span>Enviar cambio para aprobación</span>
               </>
             ) : (
               <>

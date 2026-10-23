@@ -32,6 +32,8 @@ interface NavbarProps {
   expensesCount: number;
   vendorsCount?: number;
   pendingReimbursementAmount?: number;
+  /** Pedidos de cambio/altas de proveedores para revisar (Administración) */
+  pendingVendorRequestsCount?: number;
   isCloudSyncing?: boolean;
 }
 
@@ -46,6 +48,7 @@ export function Navbar({
   expensesCount,
   vendorsCount = 0,
   pendingReimbursementAmount = 0,
+  pendingVendorRequestsCount = 0,
   isCloudSyncing = false,
 }: NavbarProps) {
   const isAccountingProfile = currentUser.role === 'admin';
@@ -203,6 +206,14 @@ export function Navbar({
             >
               <Building2 className="w-4 h-4" />
               <span>Proveedores</span>
+              {pendingVendorRequestsCount > 0 && (
+                <span
+                  className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-400 text-amber-950 text-[10px] font-bold flex items-center justify-center"
+                  title={`${pendingVendorRequestsCount} pedido(s) de proveedores para revisar`}
+                >
+                  {pendingVendorRequestsCount}
+                </span>
+              )}
             </button>
           )}
 

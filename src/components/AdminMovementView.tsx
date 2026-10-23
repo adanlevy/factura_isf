@@ -33,7 +33,7 @@ import {
   RefreshCw,
   FileCheck,
 } from 'lucide-react';
-import { Expense, CostCenter, Vendor, AppUserRecord, UserProfile, DriveSettings } from '../types';
+import { Expense, CostCenter, Vendor, AppUserRecord, UserProfile, DriveSettings, VendorUpdateHandler } from '../types';
 import {
   formatCurrency,
   formatDate,
@@ -73,7 +73,7 @@ interface AdminMovementViewProps {
   driveSettings?: DriveSettings | null;
   onRetryDriveUpload?: (expense: Expense) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
   onReplaceReceipt?: (expense: Expense) => void;
   onOpenWithholdingModal?: (expense: Expense) => void;
   initialFilterVendor?: string;

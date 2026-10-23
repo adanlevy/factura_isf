@@ -166,6 +166,8 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 - Se registra en la nube y **se sube automáticamente a Google Drive**, a la carpeta del centro de costos.
 - Se dispara un **correo de confirmación** al que lo cargó, con el resumen.
 
+Cuando se guarda el último comprobante de la cola, **la ventana de carga se cierra sola** y aparece el aviso de que quedó registrado. Si quedan comprobantes incompletos sin guardar, la ventana sigue abierta para completarlos.
+
 ### 6.2 Los tipos de pago
 
 El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de selección **mutuamente excluyente** (uno solo):
@@ -315,6 +317,12 @@ La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas banc
 - **Importar CSV:** pegá filas desde Google Sheets/Excel o subí un archivo `.csv/.tsv`. Detecta columnas y duplicados y muestra una previsualización antes de importar.
 - **Ver gastos de un proveedor:** botón **"Gastos"** lleva a *Gestión de Pagos* filtrado por ese proveedor.
 - **Editar:** los cambios de nombre, CUIT o cuenta se copian a los comprobantes **pendientes** de ese proveedor. Los comprobantes **ya pagados** conservan los datos con los que se pagaron.
+- **Pedidos de cambio (colaboradores proponen, Administración aprueba):**
+  - Un colaborador puede **dar de alta** un proveedor al instante (también desde la carga de un comprobante, con *"Nueva cuenta"*). El alta ya se puede usar y aparece en **Pendientes de revisión** como *"Alta nueva para revisar"*.
+  - Si un colaborador **edita** un proveedor existente (por ejemplo, otra cuenta bancaria), el cambio **no se aplica al catálogo**: se envía como **pedido** con un comentario opcional. La cuenta elegida **queda igual en su comprobante**, así que nunca se frena la carga. Si vuelve a editar el mismo proveedor, se actualiza su mismo pedido. En la lista de cuentas el proveedor muestra *"⏳ Cambio pendiente"*.
+  - **Administración** ve un número en la pestaña **Proveedores** y la sección **"Pendientes de revisión"**: cada pedido muestra quién lo hizo, cuándo, el comentario y solo lo que cambia (*antes → pedido*; los cambios de CBU/alias en rojo). Botones: **Aprobar** (aplica solo lo pedido y actualiza los comprobantes pendientes de ese proveedor), **Editar y aprobar** (corregir antes de aplicar) y **Rechazar** (con motivo; en un alta nueva se puede eliminar también el proveedor). Si el proveedor cambió después del pedido, la tarjeta lo avisa.
+  - **Correos:** cuando un pedido cambia **CBU o alias**, les llega un aviso a los administradores. Quien hizo el pedido recibe un correo cuando se aprueba o se rechaza (con el motivo).
+  - Todo queda en el **Log de Cambios** (pedido, aprobado, rechazado).
 - **Eliminar:** si el proveedor tiene comprobantes pendientes vinculados, la aplicación **desvincula los datos de cuenta** de esos comprobantes pero **conserva el nombre/factura** (los pagados no se modifican).
 
 ### 7.9 Centros de Costos
