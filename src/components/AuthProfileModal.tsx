@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { User, Shield, Check, CreditCard, Mail, CheckCircle2, Server, Lock, LogOut } from 'lucide-react';
-import { UserProfile, UserBankDetails } from '../types';
-import { getStoredUserBankDetails, saveStoredUserBankDetails } from '../utils/auth';
-import { checkCentralizedDriveStatus, notifyBankDetailsChange } from '../utils/googleWorkspace';
-import { saveUserCloudPreferences } from '../utils/cloudSync';
+import { User, Shield, CreditCard, Mail, CheckCircle2, Server, Lock, LogOut, Search, Clock } from 'lucide-react';
+import { UserProfile } from '../types';
+import { checkCentralizedDriveStatus } from '../utils/googleWorkspace';
+import { formatCuit } from '../utils/helpers';
+import { useReimbursementAccount } from '../utils/reimbursementAccountContext';
+import { usePendingVendorRequests } from '../utils/vendorRequestsContext';
 
 interface AuthProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile;
-  onUpdateUser: (user: UserProfile) => void;
   onSwitchUser: (preset: 'admin' | 'user') => void;
   onLogout?: () => void;
   canSwitchRole?: boolean;
@@ -19,35 +19,17 @@ export function AuthProfileModal({
   isOpen,
   onClose,
   currentUser,
-  onUpdateUser,
   onSwitchUser,
   onLogout,
   canSwitchRole = false,
 }: AuthProfileModalProps) {
-  const storedBank = getStoredUserBankDetails(currentUser.email);
-  const [bankDetails, setBankDetails] = useState<UserBankDetails>({
-    bankName: storedBank?.bankName || currentUser.bankDetails?.bankName || '',
-    accountType: storedBank?.accountType || currentUser.bankDetails?.accountType || 'Caja de Ahorro',
-    cbuCvu: storedBank?.cbuCvu || currentUser.bankDetails?.cbuCvu || '',
-    alias: storedBank?.alias || currentUser.bankDetails?.alias || '',
-    cuitCuil: storedBank?.cuitCuil || currentUser.bankDetails?.cuitCuil || '',
-    accountHolder: storedBank?.accountHolder || currentUser.bankDetails?.accountHolder || currentUser.name || '',
-  });
-
-  const [savedFeedback, setSavedFeedback] = useState(false);
+  // Cuenta para "Reintegro a mí": un registro del listado de proveedores (no datos sueltos)
+  const { vendor: reimbursementVendor, chooseAccount, unlink } = useReimbursementAccount();
+  const pendingRequests = usePendingVendorRequests();
+  const hasPendingChange = Boolean(
+    reimbursementVendor && pendingRequests.some((r) => r.type === 'UPDATE' && r.vendorId === reimbursementVendor.id)
+  );
   const [centralDriveStatus, setCentralDriveStatus] = useState<{ configured: boolean; source: string | null } | null>(null);
-
-  useEffect(() => {
-    const bank = getStoredUserBankDetails(currentUser.email);
-    setBankDetails({
-      bankName: bank?.bankName || currentUser.bankDetails?.bankName || '',
-      accountType: bank?.accountType || currentUser.bankDetails?.accountType || 'Caja de Ahorro',
-      cbuCvu: bank?.cbuCvu || currentUser.bankDetails?.cbuCvu || '',
-      alias: bank?.alias || currentUser.bankDetails?.alias || '',
-      cuitCuil: bank?.cuitCuil || currentUser.bankDetails?.cuitCuil || '',
-      accountHolder: bank?.accountHolder || currentUser.bankDetails?.accountHolder || currentUser.name || '',
-    });
-  }, [currentUser, isOpen]);
 
   useEffect(() => {
     checkCentralizedDriveStatus().then((status) => {
@@ -56,25 +38,6 @@ export function AuthProfileModal({
   }, []);
 
   if (!isOpen) return null;
-
-  const handleSaveBank = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveStoredUserBankDetails(currentUser.email, bankDetails);
-    // También en las preferencias privadas de la nube: al cerrar sesión se borra este navegador
-    saveUserCloudPreferences(currentUser.email, { bankDetails: { ...bankDetails } }).catch(() => {});
-    onUpdateUser({
-      ...currentUser,
-      bankDetails,
-    });
-    notifyBankDetailsChange({
-      updatedBy: { email: currentUser.email, name: currentUser.name },
-      targetType: 'user',
-      targetName: `Usuario ${currentUser.name} (${currentUser.email})`,
-      bankDetails,
-    }).catch((err) => console.warn('Bank details notification warning:', err));
-    setSavedFeedback(true);
-    setTimeout(() => setSavedFeedback(false), 2500);
-  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
@@ -244,100 +207,85 @@ export function AuthProfileModal({
             </div>
           </div>
 
-          {/* Persistent Bank Details (Used for autocomplete in reimbursements) */}
-          <form onSubmit={handleSaveBank} className="space-y-3">
+          {/* Cuenta para reintegros: registro del listado de proveedores asociado al perfil */}
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center">
                 <CreditCard className="w-4 h-4 mr-1.5 text-indigo-600" />
-                Mis Datos Bancarios para Reintegros
+                Mi cuenta para reintegros
               </div>
-              <span className="text-[11px] text-slate-500 font-medium">Auto-completado en facturas</span>
+              <span className="text-[11px] text-slate-500 font-medium">Se usa en «Reintegro a mí»</span>
             </div>
 
-            {savedFeedback && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-900 flex items-center space-x-2">
-                <Check className="w-4 h-4 text-emerald-600" />
-                <span>Datos bancarios guardados en tu perfil con éxito.</span>
+            {reimbursementVendor ? (
+              <div className="p-3.5 rounded-2xl border border-indigo-200 bg-indigo-50/50 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-extrabold text-slate-900 truncate">{reimbursementVendor.name}</div>
+                    {reimbursementVendor.cuit && (
+                      <div className="text-[11px] text-slate-500 font-mono">CUIT {formatCuit(reimbursementVendor.cuit)}</div>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-[10px] font-bold text-indigo-800 bg-white border border-indigo-200 rounded-md px-1.5 py-0.5">
+                    Registro de proveedores
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11.5px]">
+                  {reimbursementVendor.bankDetails?.bankName && (
+                    <div><span className="text-slate-500">Banco:</span> <strong>{reimbursementVendor.bankDetails.bankName}</strong></div>
+                  )}
+                  {reimbursementVendor.bankDetails?.alias && (
+                    <div><span className="text-slate-500">Alias:</span> <strong className="font-mono">{reimbursementVendor.bankDetails.alias}</strong></div>
+                  )}
+                  {reimbursementVendor.bankDetails?.cbuCvu && (
+                    <div className="sm:col-span-2"><span className="text-slate-500">CBU:</span> <strong className="font-mono">{reimbursementVendor.bankDetails.cbuCvu}</strong></div>
+                  )}
+                </div>
+                {hasPendingChange && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3 shrink-0" /> Hay un cambio de esta cuenta esperando la aprobación de Administración.
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-500">
+                  ¿Cambió tu CBU o alias? Editá la cuenta al cargar un comprobante y el cambio le llega a Administración para aprobar, o elegí otro registro.
+                </p>
+                <div className="flex justify-end gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`¿Quitar "${reimbursementVendor.name}" como tu cuenta para reintegros? La próxima vez te vamos a pedir que elijas una.`)) {
+                        unlink();
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-white cursor-pointer"
+                  >
+                    Quitar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => chooseAccount('profile')}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer flex items-center gap-1"
+                  >
+                    <Search className="w-3.5 h-3.5" /> Cambiar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 space-y-2">
+                <p className="text-xs text-slate-600">
+                  Todavía no elegiste tu cuenta. Los reintegros a vos se transfieren a un registro del <strong>listado de proveedores</strong>:
+                  buscá el tuyo o crealo. Si no la elegís ahora, te la pedimos la primera vez que cargues un «Reintegro a mí».
+                </p>
+                <button
+                  type="button"
+                  onClick={() => chooseAccount('profile')}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <Search className="w-3.5 h-3.5" /> Elegir mi cuenta para reintegros
+                </button>
               </div>
             )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Banco / Billetera</label>
-                <input
-                  type="text"
-                  value={bankDetails.bankName}
-                  onChange={(e) => setBankDetails({ ...bankDetails, bankName: e.target.value })}
-                  placeholder="Ej: Galicia / Mercado Pago"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Tipo de Cuenta</label>
-                <select
-                  value={bankDetails.accountType}
-                  onChange={(e: any) => setBankDetails({ ...bankDetails, accountType: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden cursor-pointer"
-                >
-                  <option value="Caja de Ahorro">Caja de Ahorro</option>
-                  <option value="Cuenta Corriente">Cuenta Corriente</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Alias</label>
-                <input
-                  type="text"
-                  value={bankDetails.alias}
-                  onChange={(e) => setBankDetails({ ...bankDetails, alias: e.target.value })}
-                  placeholder="Ej: nombre.isf.mp"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden font-bold text-indigo-900"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">CUIT / CUIL</label>
-                <input
-                  type="text"
-                  value={bankDetails.cuitCuil}
-                  onChange={(e) => setBankDetails({ ...bankDetails, cuitCuil: e.target.value })}
-                  placeholder="Ej: 20-33445566-7"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-semibold text-slate-700 block mb-1">CBU / CVU (22 dígitos)</label>
-              <input
-                type="text"
-                value={bankDetails.cbuCvu}
-                onChange={(e) => setBankDetails({ ...bankDetails, cbuCvu: e.target.value })}
-                placeholder="0070123430004567890123"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="text-[11px] font-semibold text-slate-700 block mb-1">Titular de la Cuenta</label>
-              <input
-                type="text"
-                value={bankDetails.accountHolder}
-                onChange={(e) => setBankDetails({ ...bankDetails, accountHolder: e.target.value })}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-hidden"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl transition cursor-pointer shadow-xs"
-            >
-              Guardar Datos de Destinatario
-            </button>
-          </form>
+          </div>
         </div>
 
         {/* Footer */}

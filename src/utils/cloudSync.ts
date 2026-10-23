@@ -136,8 +136,14 @@ export interface UserPreferencesPayload {
   categoryCostCenterPatterns?: Record<string, Record<string, number>>;
   lastSelectedCostCenter?: string;
   theme?: string;
-  /** Datos bancarios del perfil (privados: las reglas solo dejan leerlos a su dueño) */
+  /**
+   * Datos bancarios sueltos de versiones anteriores del perfil. Ya no se cargan ni se usan para pagar:
+   * solo sirven para sugerir el registro de proveedor correspondiente y se borran al asociarlo.
+   */
   bankDetails?: Record<string, any>;
+  /** Registro del listado de proveedores con la cuenta para los "Reintegro a mí" */
+  reimbursementVendorId?: string;
+  reimbursementVendorLinkedAt?: string;
 }
 
 // Persistent tombstone tracking of deleted expenses across sessions and browser tabs
@@ -1613,6 +1619,28 @@ export async function saveUserCloudPreferences(userEmail: string, preferences: U
     return true;
   } catch (e) {
     console.warn('[Firestore] Error saving user preferences:', e);
+    return false;
+  }
+}
+
+/**
+ * Asocia (o quita, con null) el registro de proveedor que se usa para los "Reintegro a mí".
+ * Al asociarlo se borran los datos bancarios sueltos que pudiera tener el perfil de versiones anteriores.
+ */
+export async function saveReimbursementVendorLink(userEmail: string, vendorId: string | null): Promise<boolean> {
+  if (!userEmail) return false;
+  try {
+    const safeKey = userEmail.toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    await setDoc(
+      doc(db, 'user_preferences', safeKey),
+      vendorId
+        ? { email: userEmail, reimbursementVendorId: vendorId, reimbursementVendorLinkedAt: new Date().toISOString(), bankDetails: deleteField() }
+        : { email: userEmail, reimbursementVendorId: deleteField(), reimbursementVendorLinkedAt: deleteField() },
+      { merge: true }
+    );
+    return true;
+  } catch (e) {
+    console.warn('[Firestore] Error saving reimbursement account link:', e);
     return false;
   }
 }

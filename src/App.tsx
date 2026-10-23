@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings, VendorChangeRequest } from './types';
+import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings, VendorChangeRequest, UserBankDetails } from './types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_COST_CENTERS_DATA,
@@ -9,6 +9,8 @@ import { Navbar, NavigationTab } from './components/Navbar';
 import { SmartScannerModal } from './components/SmartScannerModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { VendorRequestsContext } from './utils/vendorRequestsContext';
+import { ReimbursementAccountContext, ReimbursementAccountContextValue } from './utils/reimbursementAccountContext';
+import { ReimbursementAccountPicker } from './components/ReimbursementAccountPicker';
 import { ExpenseList } from './components/ExpenseList';
 import { CostCentersView } from './components/CostCentersView';
 import { ReceiptViewerModal } from './components/ReceiptViewerModal';
@@ -29,7 +31,7 @@ import { clearLocalSessionData } from './utils/sessionCleanup';
 import { ReplaceReceiptModal } from './components/ReplaceReceiptModal';
 import { WithholdingCertificateModal } from './components/WithholdingCertificateModal';
 import { APP_VERSION, APP_BUILD_DATE } from './version';
-import { getStoredAuth, saveStoredAuth, getStoredUserBankDetails, saveStoredUserBankDetails } from './utils/auth';
+import { getStoredAuth, saveStoredAuth, getLegacyStoredBankDetails, clearLegacyStoredBankDetails } from './utils/auth';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './lib/firebase';
 import { waitForPendingWrites } from 'firebase/firestore';
@@ -109,6 +111,7 @@ import {
   subscribeVendorChangeRequests,
   saveVendorChangeRequest,
   resolveVendorChangeRequest,
+  saveReimbursementVendorLink,
 } from './utils/cloudSync';
 import {
   removeCachedReceiptFile,
@@ -204,6 +207,12 @@ export default function App() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   // Pedidos de cambio de proveedores pendientes (Admin: todos; Colaborador: los suyos)
   const [vendorChangeRequests, setVendorChangeRequests] = useState<VendorChangeRequest[]>([]);
+  // Cuenta para "Reintegro a mí": un registro del listado de proveedores asociado al perfil
+  const [reimbursementVendorId, setReimbursementVendorId] = useState<string | null>(null);
+  // Datos bancarios sueltos de versiones anteriores del perfil (solo para sugerir el registro equivalente)
+  const [legacyProfileBank, setLegacyProfileBank] = useState<UserBankDetails | null>(null);
+  const [accountPickerReason, setAccountPickerReason] = useState<'first-use' | 'profile' | null>(null);
+  const accountPickerResolveRef = useRef<((vendor: Vendor | null) => void) | null>(null);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
   const legacyUsersUnifiedRef = useRef(false);
   const misclassifiedRepairedRef = useRef(false);
@@ -359,16 +368,13 @@ export default function App() {
           if (userPrefs && userPrefs.categoryCostCenterPatterns) {
             hydrateUserPatternsFromCloud(currentUser.email, userPrefs.categoryCostCenterPatterns);
           }
-          // Datos bancarios del perfil: la copia de la nube restaura este navegador (se borra al
-          // cerrar sesión); si solo existían en este navegador (versiones anteriores), se suben.
-          if (userPrefs?.bankDetails) {
-            saveStoredUserBankDetails(currentUser.email, userPrefs.bankDetails);
-          } else {
-            const localBank = getStoredUserBankDetails(currentUser.email);
-            if (localBank && (localBank.cbuCvu || localBank.alias)) {
-              saveUserCloudPreferences(currentUser.email, { bankDetails: localBank }).catch(() => {});
-            }
-          }
+          // Cuenta para reintegros: registro de proveedor asociado al perfil. Los datos sueltos de
+          // versiones anteriores solo se guardan en memoria para sugerir el registro equivalente.
+          setReimbursementVendorId(userPrefs?.reimbursementVendorId || null);
+          const legacyBank = (userPrefs?.bankDetails as UserBankDetails | undefined) || getLegacyStoredBankDetails(currentUser.email);
+          setLegacyProfileBank(
+            !userPrefs?.reimbursementVendorId && legacyBank && (legacyBank.cbuCvu || legacyBank.alias) ? legacyBank : null
+          );
         }
       } catch (err) {
         console.warn('Initial cloud hydration note:', err);
@@ -626,6 +632,66 @@ export default function App() {
     'driveFileId',
   ] as const;
 
+  // --- CUENTA PARA "REINTEGRO A MÍ" (registro del listado de proveedores asociado al perfil) ---
+  const reimbursementVendor = useMemo(
+    () => (reimbursementVendorId ? vendors.find((v) => v.id === reimbursementVendorId) || null : null),
+    [vendors, reimbursementVendorId]
+  );
+
+  const closeAccountPicker = (vendor: Vendor | null) => {
+    accountPickerResolveRef.current?.(vendor);
+    accountPickerResolveRef.current = null;
+    setAccountPickerReason(null);
+  };
+
+  const chooseReimbursementAccount = (reason: 'first-use' | 'profile' = 'profile'): Promise<Vendor | null> =>
+    new Promise((resolve) => {
+      // Un pedido anterior sin responder se da por cancelado
+      accountPickerResolveRef.current?.(null);
+      accountPickerResolveRef.current = resolve;
+      setAccountPickerReason(reason);
+    });
+
+  const linkReimbursementVendor = async (vendor: Vendor): Promise<boolean> => {
+    if (!currentUser?.email) return false;
+    if (!(await saveReimbursementVendorLink(currentUser.email, vendor.id))) {
+      showToast(`⚠️ No se pudo asociar la cuenta a tu perfil (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
+    clearLegacyStoredBankDetails(currentUser.email);
+    setLegacyProfileBank(null);
+    setReimbursementVendorId(vendor.id);
+    await logAuditEvent({
+      userEmail: currentUser.email,
+      userName: currentUser.name,
+      action: 'UPDATE',
+      actionLabel: 'Cuenta para reintegros',
+      entityType: 'vendor',
+      entityId: vendor.id,
+      entityName: vendor.name,
+      summary: `${currentUser.name || currentUser.email} asoció "${vendor.name}" como su cuenta para reintegros.`,
+    });
+    showToast(`✅ "${vendor.name}" quedó asociada a tu perfil para tus reintegros.`);
+    return true;
+  };
+
+  const unlinkReimbursementVendor = async (): Promise<boolean> => {
+    if (!currentUser?.email) return false;
+    if (!(await saveReimbursementVendorLink(currentUser.email, null))) {
+      showToast(`⚠️ No se pudo quitar la cuenta de tu perfil (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
+    setReimbursementVendorId(null);
+    showToast('Se quitó la cuenta para reintegros de tu perfil.');
+    return true;
+  };
+
+  const reimbursementAccountValue: ReimbursementAccountContextValue = {
+    vendor: reimbursementVendor,
+    chooseAccount: chooseReimbursementAccount,
+    unlink: unlinkReimbursementVendor,
+  };
+
   // --- VENDOR MANAGEMENT ACTIONS ---
   // Administración aplica los cambios en proveedores; un Colaborador (o un Admin en vista de colaborador) los pide
   const isVendorAdminView = permissionRole === 'admin' && currentUser?.role === 'admin';
@@ -703,7 +769,7 @@ export default function App() {
     return true;
   };
 
-  const handleAddVendor = async (newVendorData: Omit<Vendor, 'id' | 'createdAt'>) => {
+  const handleAddVendor = async (newVendorData: Omit<Vendor, 'id' | 'createdAt'>): Promise<Vendor | null> => {
     const newVendor: Vendor = {
       ...newVendorData,
       id: `v-${Date.now()}`,
@@ -716,7 +782,7 @@ export default function App() {
     if (!(await saveCentralVendors([newVendor]))) {
       setVendors((prev) => prev.filter((v) => v.id !== newVendor.id));
       showToast(`⚠️ No se pudo agregar el proveedor "${newVendor.name}" (${SAVE_ERROR_HINT}).`);
-      return;
+      return null;
     }
 
     await logAuditEvent({
@@ -749,10 +815,11 @@ export default function App() {
       };
       await saveVendorChangeRequest(review);
       showToast(`✅ Proveedor "${newVendor.name}" agregado. Ya lo podés usar; Administración lo va a revisar.`);
-      return;
+      return newVendor;
     }
 
     showToast(`✅ Proveedor "${newVendor.name}" añadido al catálogo.`);
+    return newVendor;
   };
 
   const handleBatchAddVendors = async (newVendorsList: Omit<Vendor, 'id' | 'createdAt'>[]) => {
@@ -2856,6 +2923,7 @@ export default function App() {
 
   return (
     <VendorRequestsContext.Provider value={vendorChangeRequests}>
+    <ReimbursementAccountContext.Provider value={reimbursementAccountValue}>
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Aviso de versión nueva publicada */}
       <UpdateAvailableBanner />
@@ -3173,7 +3241,6 @@ export default function App() {
         isOpen={isAuthProfileOpen}
         onClose={() => setIsAuthProfileOpen(false)}
         currentUser={currentUser}
-        onUpdateUser={setCurrentUser}
         onSwitchUser={handleSwitchUserRole}
         onLogout={handleLogout}
         canSwitchRole={canSwitchRole}
@@ -3196,7 +3263,24 @@ export default function App() {
           <span>{toastMessage}</span>
         </div>
       )}
+
+      <ReimbursementAccountPicker
+        isOpen={Boolean(accountPickerReason)}
+        reason={accountPickerReason || 'profile'}
+        currentUser={currentUser}
+        vendors={vendors}
+        currentVendorId={reimbursementVendorId}
+        legacyBank={legacyProfileBank}
+        onCreateVendor={handleAddVendor}
+        onConfirm={async (vendor) => {
+          const ok = await linkReimbursementVendor(vendor);
+          if (ok) closeAccountPicker(vendor);
+          return ok;
+        }}
+        onCancel={() => closeAccountPicker(null)}
+      />
     </div>
+    </ReimbursementAccountContext.Provider>
     </VendorRequestsContext.Provider>
   );
 }

@@ -35,7 +35,7 @@ interface VendorsViewProps {
   vendors: Vendor[];
   expenses: Expense[];
   availableCategories?: string[];
-  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<unknown> | void;
   onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
   onUpdateVendor: VendorUpdateHandler;
   onDeleteVendor: (id: string) => Promise<void> | void;

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { UserBankDetails, UserProfile, Vendor, ExpensePaymentType, VendorUpdateHandler } from '../types';
 import { usePendingVendorRequests } from '../utils/vendorRequestsContext';
+import { useReimbursementAccount } from '../utils/reimbursementAccountContext';
 import { formatCuit, matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { VendorFormModal } from './VendorFormModal';
 
@@ -43,7 +44,6 @@ interface AccountSelectorProps {
   onClearAccount?: () => void;
   vendors?: Vendor[];
   currentUser?: UserProfile;
-  storedBank?: UserBankDetails;
   /** Reintegro a otra persona: no se ofrece la cuenta propia */
   excludePersonal?: boolean;
   paymentType?: ExpensePaymentType;
@@ -63,7 +63,6 @@ export function AccountSelector({
   onClearAccount,
   vendors = [],
   currentUser,
-  storedBank,
   excludePersonal = false,
   paymentType = 'PAGO_PROVEEDOR',
   onAddVendor,
@@ -87,7 +86,8 @@ export function AccountSelector({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const myBank = storedBank || currentUser?.bankDetails;
+  // Cuenta para "Reintegro a mí": registro del listado de proveedores asociado al perfil
+  const { vendor: myReimbursementVendor } = useReimbursementAccount();
 
   const calculateCoords = () => {
     if (triggerRef.current) {
@@ -135,43 +135,11 @@ export function AccountSelector({
   const allAccounts = useMemo<AccountOption[]>(() => {
     const list: AccountOption[] = [];
 
-    // 1. Personal Account (Mis datos personales) — salvo en reintegro a otra persona
-    if (!excludePersonal && (myBank || currentUser?.name)) {
-      const pBank = myBank || {
-        accountHolder: currentUser?.name || 'Solicitante',
-        bankName: '',
-        accountType: 'Indefinido',
-        cbuCvu: '',
-        alias: '',
-        cuitCuil: '',
-      };
-
-      const name = currentUser?.name || 'Mis datos personales';
-      const c = pBank.cuitCuil || '';
-      const line1 = c ? `${name} (${formatCuit(c)})` : name;
-
-      let line2 = 'Sin CBU ni Alias';
-      if (pBank.cbuCvu && pBank.cbuCvu.trim()) {
-        line2 = `CBU: ${pBank.cbuCvu.trim()}`;
-      } else if (pBank.alias && pBank.alias.trim()) {
-        line2 = `Alias: ${pBank.alias.trim()}`;
-      }
-
-      list.push({
-        id: 'personal-my-bank',
-        name,
-        cuit: c,
-        bankDetails: pBank,
-        vendorName: currentUser?.name || 'Solicitante',
-        category: 'Reintegros',
-        isPersonal: true,
-        line1,
-        line2,
-      });
-    }
-
-    // 2. Catalog Vendors
+    // Catálogo de proveedores. La cuenta para reintegros asociada al perfil es un registro más:
+    // se marca como propia (y no se ofrece en "Reintegro a otra persona").
     vendors.forEach((v) => {
+      const isMine = Boolean(myReimbursementVendor && v.id === myReimbursementVendor.id);
+      if (isMine && excludePersonal) return;
       const vBank = v.bankDetails || {
         accountHolder: v.name,
         cuitCuil: v.cuit || '',
@@ -200,7 +168,7 @@ export function AccountSelector({
         bankDetails: vBank,
         vendorName: v.name,
         category: v.category,
-        isPersonal: false,
+        isPersonal: isMine,
         notes: v.notes,
         line1,
         line2,
@@ -208,13 +176,14 @@ export function AccountSelector({
     });
 
     return list;
-  }, [currentUser, myBank, vendors, excludePersonal]);
+  }, [vendors, excludePersonal, myReimbursementVendor]);
 
   // Filter accounts and prioritize by paymentType (Reintegro vs Pago Proveedor)
   const filteredAccounts = useMemo(() => {
     if (!search.trim()) {
       if (paymentType === 'REINTEGRO') {
-        return allAccounts;
+        // En un reintegro, la cuenta propia (asociada al perfil) va primero
+        return [...allAccounts].sort((a, b) => Number(b.isPersonal) - Number(a.isPersonal));
       }
       return [...allAccounts].sort((a, b) => {
         if (a.isPersonal && !b.isPersonal) return 1;
@@ -440,6 +409,11 @@ export function AccountSelector({
                       {/* Línea 1: Nombre (y CUIT entre paréntesis si tiene) */}
                       <div className="text-xs font-bold text-slate-900 truncate leading-tight group-hover:text-purple-700 transition-colors flex items-center gap-1">
                         <span className="truncate">{highlightMatch(acc.line1, search)}</span>
+                        {acc.isPersonal && (
+                          <span className="shrink-0 text-[9px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-1 py-px">
+                            Tu cuenta
+                          </span>
+                        )}
                         {acc.vendorId && pendingVendorIds.has(acc.vendorId) && (
                           <span
                             className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded px-1 py-px"

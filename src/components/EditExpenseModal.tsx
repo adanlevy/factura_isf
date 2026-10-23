@@ -25,7 +25,6 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Expense, ReimbursementStatus, PaymentMethod, UserBankDetails, UserProfile, Vendor, ExpensePaymentType, CostCenter, VendorUpdateHandler } from '../types';
-import { getStoredUserBankDetails } from '../utils/auth';
 import {
   getSmartSortedCostCenters,
   recordCategoryCostCenterUsage,
@@ -51,7 +50,7 @@ interface EditExpenseModalProps {
   existingExpenses?: Expense[];
   vendors?: Vendor[];
   costCenters?: CostCenter[];
-  onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<unknown> | void;
   onUpdateVendor?: VendorUpdateHandler;
 }
 
