@@ -221,28 +221,44 @@ await seed();
   await expectDenied('Cuenta Google cualquiera lee la configuración', () => as('cualquiera@gmail.com').doc('app_settings/drive').get());
 }
 
-// ------------------------------------------------------------------ proveedores cargados por Colaboradores
+// ------------------------------------------------------------------ proveedores y pedidos de cambio
 {
   await seed();
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
-    await db.doc('vendors/v-mio').set({ id: 'v-mio', name: 'Fletes Juan', createdByEmail: 'colab@gmail.com', bankDetails: { cbuCvu: '2222222222222222222222', alias: 'juan.fletes' } });
-    await db.doc('vendors/v-sin-cuenta').set({ id: 'v-sin-cuenta', name: 'Kiosco', cuit: '20111111112', createdByEmail: 'otro@gmail.com' });
-    await db.doc('vendors/v-ajeno').set({ id: 'v-ajeno', name: 'Imprenta', createdByEmail: 'otro@gmail.com', bankDetails: { cbuCvu: '4444444444444444444444' } });
+    await db.doc('vendors/v-mio').set({ id: 'v-mio', name: 'Fletes Juan', createdByEmail: 'colab@gmail.com', bankDetails: { cbuCvu: '2222222222222222222222' } });
+    await db.doc('vendors/v-sin-cuenta').set({ id: 'v-sin-cuenta', name: 'Kiosco', createdByEmail: 'otro@gmail.com' });
+    await db.doc('vendor_change_requests/r-otro').set({ id: 'r-otro', type: 'UPDATE', vendorId: 'v1', requestedByEmail: 'otro@gmail.com', status: 'PENDING' });
+    await db.doc('vendor_change_requests/r-resuelto').set({ id: 'r-resuelto', type: 'UPDATE', vendorId: 'v1', requestedByEmail: 'colab@gmail.com', status: 'APPROVED' });
   });
   const colabDb = as('colab@gmail.com');
+  const jefeDb = as('jefe@isf-argentina.org');
+  const pedido = (id, extra = {}) => ({ id, type: 'UPDATE', vendorId: 'v1', vendorName: 'Proveedor', proposed: { bankDetails: { cbuCvu: '9999999999999999999999' } }, changedFields: ['bankDetails.cbuCvu'], bankChanged: true, requestedByEmail: 'colab@gmail.com', requestedAt: 'now', status: 'PENDING', ...extra });
+
+  // Proveedores: alta libre (a su nombre), cambios solo de Administración
   await expectAllowed('Colaborador crea un proveedor a su nombre', () => colabDb.doc('vendors/v-nuevo').set({ id: 'v-nuevo', name: 'Nuevo', createdByEmail: 'colab@gmail.com' }));
   await expectDenied('Colaborador crea un proveedor a nombre de otra persona', () => colabDb.doc('vendors/v-falso').set({ id: 'v-falso', name: 'Falso', createdByEmail: 'otro@gmail.com' }));
-  await expectAllowed('Colaborador corrige el CBU de un proveedor que cargó', () => colabDb.doc('vendors/v-mio').set({ bankDetails: { cbuCvu: '2222222222222222222223', alias: 'juan.fletes' }, updatedAt: 'now', updatedByEmail: 'colab@gmail.com' }, { merge: true }));
-  await expectAllowed('Colaborador completa la cuenta de un proveedor que no tenía', () => colabDb.doc('vendors/v-sin-cuenta').set({ bankDetails: { cbuCvu: '5555555555555555555555' }, updatedAt: 'now', updatedByEmail: 'colab@gmail.com' }, { merge: true }));
-  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('vendors/v-sin-cuit').set({ id: 'v-sin-cuit', name: 'Feria', createdByEmail: 'otro@gmail.com' }));
-  await expectAllowed('Colaborador completa la cuenta y el CUIT vacío de un proveedor sin cuenta', () => colabDb.doc('vendors/v-sin-cuit').set({ cuit: '20333333334', bankDetails: { alias: 'feria.x', cuitCuil: '20333333334' } }, { merge: true }));
-  await expectDenied('...pero no le cambia el nombre ni el CUIT a ese proveedor ajeno', () => colabDb.doc('vendors/v-sin-cuenta').set({ name: 'Otro nombre', cuit: '20999999999' }, { merge: true }));
-  await expectDenied('Colaborador cambia la cuenta registrada de un proveedor ajeno', () => colabDb.doc('vendors/v-ajeno').set({ bankDetails: { cbuCvu: '6666666666666666666666' } }, { merge: true }));
-  await expectDenied('Colaborador se adjudica un proveedor ajeno para poder editarlo', () => colabDb.doc('vendors/v-ajeno').set({ createdByEmail: 'colab@gmail.com', bankDetails: { cbuCvu: '6666666666666666666666' } }, { merge: true }));
-  await expectDenied('Colaborador cambia la cuenta de un proveedor viejo (sin creador registrado)', () => colabDb.doc('vendors/v1').set({ bankDetails: { cbuCvu: '7777777777777777777777' } }, { merge: true }));
-  await expectDenied('Colaborador borra un proveedor que cargó', () => colabDb.doc('vendors/v-mio').delete());
-  await expectAllowed('Admin cambia la cuenta de cualquier proveedor', () => as('jefe@isf-argentina.org').doc('vendors/v-ajeno').set({ bankDetails: { cbuCvu: '8888888888888888888888' } }, { merge: true }));
+  await expectDenied('Colaborador modifica directo un proveedor que cargó (va por pedido)', () => colabDb.doc('vendors/v-mio').set({ bankDetails: { cbuCvu: '2222222222222222222223' } }, { merge: true }));
+  await expectDenied('Colaborador completa directo la cuenta de un proveedor sin cuenta (va por pedido)', () => colabDb.doc('vendors/v-sin-cuenta').set({ bankDetails: { cbuCvu: '5555555555555555555555' } }, { merge: true }));
+  await expectDenied('Colaborador borra un proveedor', () => colabDb.doc('vendors/v-mio').delete());
+  await expectAllowed('Admin cambia la cuenta de cualquier proveedor', () => jefeDb.doc('vendors/v-mio').set({ bankDetails: { cbuCvu: '8888888888888888888888' } }, { merge: true }));
+
+  // Pedidos de cambio
+  await expectAllowed('Colaborador envía un pedido de cambio a su nombre', () => colabDb.doc('vendor_change_requests/r1').set(pedido('r1')));
+  await expectAllowed('Colaborador actualiza su pedido pendiente', () => colabDb.doc('vendor_change_requests/r1').set(pedido('r1', { comment: 'CBU nuevo por correo' })));
+  await expectDenied('Colaborador aprueba su propio pedido', () => colabDb.doc('vendor_change_requests/r1').update({ status: 'APPROVED' }));
+  await expectDenied('Colaborador envía un pedido a nombre de otra persona', () => colabDb.doc('vendor_change_requests/r2').set(pedido('r2', { requestedByEmail: 'otro@gmail.com' })));
+  await expectDenied('Colaborador crea un pedido ya aprobado', () => colabDb.doc('vendor_change_requests/r3').set(pedido('r3', { status: 'APPROVED' })));
+  await expectDenied('Colaborador crea un pedido con id que no coincide', () => colabDb.doc('vendor_change_requests/r4').set(pedido('otro-id')));
+  await expectDenied('Colaborador reabre un pedido ya resuelto', () => colabDb.doc('vendor_change_requests/r-resuelto').set(pedido('r-resuelto')));
+  await expectDenied('Colaborador modifica el pedido de otra persona', () => colabDb.doc('vendor_change_requests/r-otro').update({ comment: 'x' }));
+  await expectAllowed('Colaborador lee sus pedidos pendientes (consulta de la app)', () => colabDb.collection('vendor_change_requests').where('requestedByEmail', '==', 'colab@gmail.com').where('status', '==', 'PENDING').get());
+  await expectDenied('Colaborador lee el pedido de otra persona', () => colabDb.doc('vendor_change_requests/r-otro').get());
+  await expectDenied('Colaborador lista todos los pedidos', () => colabDb.collection('vendor_change_requests').where('status', '==', 'PENDING').get());
+  await expectDenied('Cuenta Google cualquiera envía un pedido', () => as('cualquiera@gmail.com').doc('vendor_change_requests/r5').set(pedido('r5', { requestedByEmail: 'cualquiera@gmail.com' })));
+  await expectAllowed('Admin lista los pedidos pendientes', () => jefeDb.collection('vendor_change_requests').where('status', '==', 'PENDING').get());
+  await expectAllowed('Admin aprueba un pedido', () => jefeDb.doc('vendor_change_requests/r1').update({ status: 'APPROVED', resolvedByEmail: 'jefe@isf-argentina.org', resolvedAt: 'now' }));
+  await expectAllowed('Admin rechaza un pedido', () => jefeDb.doc('vendor_change_requests/r-otro').update({ status: 'REJECTED', resolutionNote: 'No coincide' }));
 }
 
 // ------------------------------------------------------------------ reporte

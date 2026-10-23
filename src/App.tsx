@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings } from './types';
+import { Expense, UserProfile, Vendor, CostCenter, AppUserRecord, AuditLogEntry, DriveSettings, VendorChangeRequest } from './types';
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_COST_CENTERS_DATA,
@@ -8,6 +8,7 @@ import {
 import { Navbar, NavigationTab } from './components/Navbar';
 import { SmartScannerModal } from './components/SmartScannerModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { VendorRequestsContext } from './utils/vendorRequestsContext';
 import { ExpenseList } from './components/ExpenseList';
 import { CostCentersView } from './components/CostCentersView';
 import { ReceiptViewerModal } from './components/ReceiptViewerModal';
@@ -44,7 +45,17 @@ import {
   sendPaymentReversalEmail,
   sendNewUserWelcomeEmail,
   sendGmailMessage,
+  notifyVendorChangeRequest,
+  sendVendorChangeResolutionEmail,
 } from './utils/googleWorkspace';
+import {
+  vendorEditableSnapshot,
+  diffVendorData,
+  touchesBankAccount,
+  applyVendorChangeRequest,
+  getVendorFieldValue,
+  VENDOR_FIELD_LABELS,
+} from './utils/vendorChanges';
 import { resolveEmailCcRecipients } from './utils/emailCc';
 import {
   subscribeToAuditLogs,
@@ -95,6 +106,9 @@ import {
   normalizeVendorBankDetails,
   sessionDeletedVendorIds,
   resolveUserRoleFromEmail,
+  subscribeVendorChangeRequests,
+  saveVendorChangeRequest,
+  resolveVendorChangeRequest,
 } from './utils/cloudSync';
 import {
   removeCachedReceiptFile,
@@ -188,6 +202,8 @@ export default function App() {
   const [availableCategories, setAvailableCategories] = useState<string[]>(DEFAULT_CATEGORIES);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  // Pedidos de cambio de proveedores pendientes (Admin: todos; Colaborador: los suyos)
+  const [vendorChangeRequests, setVendorChangeRequests] = useState<VendorChangeRequest[]>([]);
   const [appUsers, setAppUsers] = useState<AppUserRecord[]>(() => deduplicateUsers(getLocalUsersCache()));
   const legacyUsersUnifiedRef = useRef(false);
   const misclassifiedRepairedRef = useRef(false);
@@ -611,6 +627,82 @@ export default function App() {
   ] as const;
 
   // --- VENDOR MANAGEMENT ACTIONS ---
+  // Administración aplica los cambios en proveedores; un Colaborador (o un Admin en vista de colaborador) los pide
+  const isVendorAdminView = permissionRole === 'admin' && currentUser?.role === 'admin';
+
+  useEffect(() => {
+    if (!isFirebaseAuthReady || !currentUser?.email || !permissionRole) {
+      setVendorChangeRequests([]);
+      return;
+    }
+    const unsubscribe = subscribeVendorChangeRequests(
+      { isAdmin: isVendorAdminView, email: currentUser.email },
+      setVendorChangeRequests
+    );
+    return () => unsubscribe();
+  }, [isFirebaseAuthReady, currentUser?.email, permissionRole, isVendorAdminView]);
+
+  // Admin: cierra el pedido (aprobado/rechazado), lo registra y le avisa por correo a quien lo pidió
+  const finishVendorChangeRequest = async (request: VendorChangeRequest, approved: boolean, note?: string): Promise<boolean> => {
+    const resolvedBy = { email: (currentUser?.email || '').toLowerCase(), name: currentUser?.name };
+    const ok = await resolveVendorChangeRequest(request.id, {
+      status: approved ? 'APPROVED' : 'REJECTED',
+      resolvedByEmail: resolvedBy.email,
+      resolvedByName: resolvedBy.name || undefined,
+      resolvedAt: new Date().toISOString(),
+      resolutionNote: note?.trim() || undefined,
+    });
+    if (!ok) {
+      showToast(`⚠️ No se pudo actualizar el pedido de "${request.vendorName}" (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
+    setVendorChangeRequests((prev) => prev.filter((r) => r.id !== request.id));
+    const isNew = request.type === 'NEW_VENDOR';
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: approved ? 'VENDOR_CHANGE_APPROVED' : 'VENDOR_CHANGE_REJECTED',
+      actionLabel: approved ? 'Pedido de Proveedor aprobado' : 'Pedido de Proveedor rechazado',
+      entityType: 'vendor',
+      entityId: request.vendorId,
+      entityName: request.vendorName,
+      summary: `${approved ? 'Se aprobó' : 'Se rechazó'} ${isNew ? 'el alta' : 'el pedido de cambio'} del proveedor "${request.vendorName}" hecho por ${request.requestedByName || request.requestedByEmail}${note?.trim() ? ` (motivo: ${note.trim()})` : ''}.`,
+    });
+    sendVendorChangeResolutionEmail({ request, approved, note, resolvedBy }).catch((err) =>
+      console.warn('[Vendor request] Respuesta por correo no enviada:', err)
+    );
+    return true;
+  };
+
+  const handleApproveVendorChangeRequest = async (request: VendorChangeRequest, editedVendor?: Vendor): Promise<boolean> => {
+    const current = vendors.find((v) => v.id === request.vendorId);
+    if (!current) {
+      showToast(`⚠️ El proveedor "${request.vendorName}" ya no está en el catálogo: rechazá el pedido.`);
+      return false;
+    }
+    // Se aplica SOLO lo pedido sobre la versión actual (o lo que el Admin corrigió antes de aprobar)
+    if (request.type === 'UPDATE' || editedVendor) {
+      const target = editedVendor || applyVendorChangeRequest(current, request);
+      if (!(await handleUpdateVendor(target))) return false;
+    }
+    if (!(await finishVendorChangeRequest(request, true))) return false;
+    showToast(
+      request.type === 'NEW_VENDOR'
+        ? `✅ Alta de "${request.vendorName}" revisada. Se avisó a ${request.requestedByName || request.requestedByEmail}.`
+        : `✅ Cambio en "${request.vendorName}" aprobado y aplicado. Se avisó a ${request.requestedByName || request.requestedByEmail}.`
+    );
+    return true;
+  };
+
+  const handleRejectVendorChangeRequest = async (request: VendorChangeRequest, reason: string, deleteVendor = false): Promise<boolean> => {
+    if (deleteVendor && vendors.some((v) => v.id === request.vendorId)) {
+      await handleDeleteVendor(request.vendorId);
+    }
+    if (!(await finishVendorChangeRequest(request, false, reason))) return false;
+    showToast(`✖️ Pedido de "${request.vendorName}" rechazado. Se avisó a ${request.requestedByName || request.requestedByEmail}.`);
+    return true;
+  };
+
   const handleAddVendor = async (newVendorData: Omit<Vendor, 'id' | 'createdAt'>) => {
     const newVendor: Vendor = {
       ...newVendorData,
@@ -637,6 +729,28 @@ export default function App() {
       entityName: newVendor.name,
       summary: `Se agregó el proveedor "${newVendor.name}" (${newVendor.cuit || 'Sin CUIT'}) al catálogo.`,
     });
+
+    if (!isVendorAdminView) {
+      // El alta ya se puede usar; queda en "Pendientes de revisión" para que Administración la verifique
+      const now = new Date().toISOString();
+      const review: VendorChangeRequest = {
+        id: `vcr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: 'NEW_VENDOR',
+        vendorId: newVendor.id,
+        vendorName: newVendor.name,
+        proposed: vendorEditableSnapshot(newVendor),
+        changedFields: [],
+        bankChanged: hasPayableBankDetails(newVendor.bankDetails),
+        requestedByEmail: (currentUser?.email || '').toLowerCase(),
+        requestedByName: currentUser?.name || undefined,
+        requestedAt: now,
+        updatedAt: now,
+        status: 'PENDING',
+      };
+      await saveVendorChangeRequest(review);
+      showToast(`✅ Proveedor "${newVendor.name}" agregado. Ya lo podés usar; Administración lo va a revisar.`);
+      return;
+    }
 
     showToast(`✅ Proveedor "${newVendor.name}" añadido al catálogo.`);
   };
@@ -671,37 +785,85 @@ export default function App() {
     showToast(`✅ Se importaron ${initialized.length} proveedores exitosamente.`);
   };
 
-  const handleUpdateVendor = async (incomingVendor: Vendor) => {
+  // Colaborador: el cambio no se aplica, se envía como pedido a Administración (o actualiza su pedido pendiente)
+  const submitVendorChangeRequest = async (prevVendor: Vendor, incomingVendor: Vendor, comment?: string): Promise<boolean> => {
+    const before = vendorEditableSnapshot(prevVendor);
+    const proposed = vendorEditableSnapshot(incomingVendor);
+    const changedFields = diffVendorData(before, proposed);
+    if (changedFields.length === 0) {
+      showToast(`ℹ️ No hay cambios para enviar en "${prevVendor.name}".`);
+      return true;
+    }
+    const myEmail = (currentUser?.email || '').toLowerCase();
+    const existing = vendorChangeRequests.find(
+      (r) => r.status === 'PENDING' && r.type === 'UPDATE' && r.vendorId === prevVendor.id && r.requestedByEmail === myEmail
+    );
+    const now = new Date().toISOString();
+    const request: VendorChangeRequest = {
+      id: existing?.id || `vcr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      type: 'UPDATE',
+      vendorId: prevVendor.id,
+      vendorName: prevVendor.name,
+      before,
+      proposed,
+      changedFields,
+      bankChanged: touchesBankAccount(changedFields),
+      comment: comment?.trim() || undefined,
+      requestedByEmail: myEmail,
+      requestedByName: currentUser?.name || undefined,
+      requestedAt: existing?.requestedAt || now,
+      updatedAt: now,
+      status: 'PENDING',
+    };
+    if (!(await saveVendorChangeRequest(request))) {
+      showToast(`⚠️ No se pudo enviar el pedido de cambio de "${prevVendor.name}" (${SAVE_ERROR_HINT}).`);
+      return false;
+    }
+    await logAuditEvent({
+      userEmail: currentUser?.email,
+      userName: currentUser?.name,
+      action: 'VENDOR_CHANGE_REQUEST',
+      actionLabel: 'Pedido de cambio de Proveedor',
+      entityType: 'vendor',
+      entityId: prevVendor.id,
+      entityName: prevVendor.name,
+      summary: `Se pidió cambiar ${changedFields.map((f) => VENDOR_FIELD_LABELS[f] || f).join(', ')} del proveedor "${prevVendor.name}" (pendiente de aprobación).`,
+      changes: changedFields.map((f) => ({
+        field: f,
+        fieldLabel: VENDOR_FIELD_LABELS[f] || f,
+        oldValue: getVendorFieldValue(before, f),
+        newValue: getVendorFieldValue(proposed, f),
+      })),
+    });
+    // Solo los cambios de CBU/alias (lo delicado) avisan por correo; el resto queda en la app
+    if (request.bankChanged) {
+      notifyVendorChangeRequest(request).catch((err) => console.warn('[Vendor request] Aviso por correo no enviado:', err));
+    }
+    showToast(
+      existing
+        ? `📨 Se actualizó tu pedido de cambio de "${prevVendor.name}". La cuenta ya quedó en tu comprobante.`
+        : `📨 Cambio enviado a Administración para aprobar. La cuenta ya quedó en tu comprobante.`
+    );
+    return true;
+  };
+
+  const handleUpdateVendor = async (incomingVendor: Vendor, options?: { comment?: string }): Promise<boolean> => {
     const prevVendor = vendors.find((v) => v.id === incomingVendor.id);
-    const isAdminUser = permissionRole === 'admin';
+    if (!isVendorAdminView) {
+      if (!prevVendor) {
+        showToast('⚠️ No se encontró el proveedor en el catálogo. Volvé a intentarlo.');
+        return false;
+      }
+      return submitVendorChangeRequest(prevVendor, incomingVendor, options?.comment);
+    }
     const myEmail = (currentUser?.email || '').toLowerCase();
     // Quién lo creó no cambia al editarlo
-    let updatedVendor: Vendor = {
+    const updatedVendor: Vendor = {
       ...incomingVendor,
       createdByEmail: prevVendor?.createdByEmail ?? incomingVendor.createdByEmail,
       updatedAt: new Date().toISOString(),
       updatedByEmail: myEmail || undefined,
     };
-
-    if (!isAdminUser && prevVendor) {
-      const isMine = Boolean(myEmail && prevVendor.createdByEmail?.toLowerCase() === myEmail);
-      if (!isMine) {
-        if (hasPayableBankDetails(prevVendor.bankDetails)) {
-          // La cuenta registrada de un proveedor ajeno solo la cambia un Admin: el comprobante igual se queda con la cuenta elegida
-          showToast(
-            `ℹ️ La cuenta quedó cargada en tu comprobante. Para cambiar la cuenta de "${prevVendor.name}" en el catálogo de proveedores, pedíselo a un administrador.`
-          );
-          return;
-        }
-        // Proveedor sin cuenta bancaria: el Colaborador solo puede completarle la cuenta
-        updatedVendor = {
-          ...prevVendor,
-          bankDetails: incomingVendor.bankDetails,
-          updatedAt: updatedVendor.updatedAt,
-          updatedByEmail: updatedVendor.updatedByEmail,
-        };
-      }
-    }
     const prevName = (prevVendor?.name || '').trim().toLowerCase();
     const prevCuitDigits = (prevVendor?.cuit || prevVendor?.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
     const prevCbu = (prevVendor?.bankDetails?.cbuCvu || '').trim();
@@ -716,7 +878,7 @@ export default function App() {
     if (!(await saveCentralVendors([updatedVendor]))) {
       if (prevVendor) setVendors((prev) => prev.map((v) => (v.id === prevVendor.id ? prevVendor : v)));
       showToast(`⚠️ No se pudo actualizar el proveedor "${updatedVendor.name}" (${SAVE_ERROR_HINT}).`);
-      return;
+      return false;
     }
 
     // Compute diff and audit log
@@ -753,11 +915,7 @@ export default function App() {
       changes: diffs.length > 0 ? diffs : undefined,
     });
 
-    // 2. Cascade update matching expenses (solo Admins: un Colaborador ya tiene la cuenta en el comprobante que está cargando)
-    if (!isAdminUser) {
-      showToast(`✅ Proveedor "${updatedVendor.name}" actualizado.`);
-      return;
-    }
+    // 2. Cascade update matching expenses
     const otherVendorsWithSameCuit = vendors.filter(
       (v) => v.id !== updatedVendor.id && cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === (newCuitDigits || prevCuitDigits)
     );
@@ -845,7 +1003,7 @@ export default function App() {
       );
       if (!cascade.ok) {
         showToast(`⚠️ Proveedor actualizado, pero ${cascade.failedIds.length} comprobante(s) no se pudieron sincronizar.`);
-        return;
+        return true;
       }
     }
 
@@ -854,6 +1012,7 @@ export default function App() {
         ? `✅ Proveedor "${updatedVendor.name}" actualizado y sincronizado en ${updatedExpensesList.length} comprobante(s).`
         : `✅ Proveedor "${updatedVendor.name}" actualizado.`
     );
+    return true;
   };
 
   const handleDeleteVendor = async (id: string) => {
@@ -2696,6 +2855,7 @@ export default function App() {
   }
 
   return (
+    <VendorRequestsContext.Provider value={vendorChangeRequests}>
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Aviso de versión nueva publicada */}
       <UpdateAvailableBanner />
@@ -2712,6 +2872,7 @@ export default function App() {
         expensesCount={expenses.length}
         vendorsCount={vendors.length}
         pendingReimbursementAmount={pendingReimbursementAmount}
+        pendingVendorRequestsCount={isVendorAdminView ? vendorChangeRequests.length : 0}
         isCloudSyncing={isCloudSyncing}
       />
 
@@ -2795,6 +2956,9 @@ export default function App() {
               onUpdateVendor={handleUpdateVendor}
               onDeleteVendor={handleDeleteVendor}
               onViewVendorExpenses={handleViewVendorExpenses}
+              changeRequests={vendorChangeRequests}
+              onApproveChangeRequest={handleApproveVendorChangeRequest}
+              onRejectChangeRequest={handleRejectVendorChangeRequest}
             />
           )}
 
@@ -3033,5 +3197,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </VendorRequestsContext.Provider>
   );
 }

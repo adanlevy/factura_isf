@@ -277,6 +277,9 @@ export function AuditLogsView({
       case 'BATCH_UPDATE':
       case 'EXPENSE_UPDATE':
       case 'VENDOR_UPDATE':
+      case 'VENDOR_CHANGE_REQUEST':
+      case 'VENDOR_CHANGE_APPROVED':
+      case 'VENDOR_CHANGE_REJECTED':
       case 'COST_CENTER_UPDATE':
       case 'CATEGORY_UPDATE':
       case 'USER_ROLE_CHANGE':
@@ -511,6 +514,9 @@ export function AuditLogsView({
                 <option value="EXPENSE_DELETE">🗑️ Eliminación de Gastos</option>
                 <option value="VENDOR_CREATE">🏢 Creación de Proveedores</option>
                 <option value="VENDOR_UPDATE">📝 Edición de Proveedores</option>
+                <option value="VENDOR_CHANGE_REQUEST">📨 Pedidos de cambio de Proveedores</option>
+                <option value="VENDOR_CHANGE_APPROVED">✅ Pedidos de Proveedores aprobados</option>
+                <option value="VENDOR_CHANGE_REJECTED">✖️ Pedidos de Proveedores rechazados</option>
                 <option value="COST_CENTER_CREATE">📁 Creación Centro de Costos</option>
                 <option value="COST_CENTER_UPDATE">📑 Edición Centro de Costos</option>
               </select>

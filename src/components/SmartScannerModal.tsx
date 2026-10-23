@@ -34,6 +34,7 @@ import {
   Vendor,
   ExpensePaymentType,
   CostCenter,
+  VendorUpdateHandler,
 } from '../types';
 import { getStoredUserBankDetails, getSuggestedProject } from '../utils/auth';
 import {
@@ -71,7 +72,7 @@ export interface SmartScannerModalProps {
   vendors?: Vendor[];
   costCenters?: CostCenter[];
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
 }
 
 export interface QueueItem {
@@ -167,7 +168,7 @@ function AccountDataCell({
   vendors: Vendor[];
   onUpdateBankDetails: (details: UserBankDetails | undefined) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
   onSelectAccount?: (data: {
     bankDetails: UserBankDetails;
     vendorName?: string;

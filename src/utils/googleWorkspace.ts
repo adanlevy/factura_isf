@@ -1,6 +1,7 @@
 // Google Workspace integration for Gmail API and Google Drive API
-import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord, DriveSettings } from '../types';
+import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord, DriveSettings, VendorChangeRequest } from '../types';
 import { generateDriveFileName, formatCurrency, formatDate, escapeHtml } from './helpers';
+import { VENDOR_FIELD_LABELS, SENSITIVE_VENDOR_FIELDS, getVendorFieldValue } from './vendorChanges';
 import { syncApiLogToCloud } from './apiUsageLogger';
 import { authFetch } from './authFetch';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -876,6 +877,111 @@ export async function sendReceiptUploadConfirmationEmail(params: {
 /**
  * Sends a notification email to administrators whenever bank details are added or modified
  */
+/** Emails de los administradores de la tabla de usuarios (opcionalmente sin incluir a alguien) */
+async function getAdminEmails(excludeEmail?: string): Promise<string[]> {
+  try {
+    const admins = await getDocs(query(collection(db, 'app_users'), where('role', '==', 'admin')));
+    const exclude = (excludeEmail || '').toLowerCase().trim();
+    return Array.from(
+      new Set(
+        admins.docs
+          .map((d) => String(d.data().email || '').toLowerCase().trim())
+          .filter((e) => e && e !== exclude)
+      )
+    );
+  } catch (err) {
+    console.warn('[Admins] No se pudo leer la lista de administradores:', err);
+    return [];
+  }
+}
+
+function vendorChangesTableHtml(request: VendorChangeRequest): string {
+  const rows = request.changedFields
+    .map((field) => {
+      const before = getVendorFieldValue(request.before, field) || '—';
+      const after = getVendorFieldValue(request.proposed, field) || '—';
+      const sensitive = SENSITIVE_VENDOR_FIELDS.includes(field);
+      return `<tr>
+        <td style="padding:8px 12px;font-size:12px;font-weight:600;color:#64748b;background:#f8fafc;border-bottom:1px solid #f1f5f9;">${escapeHtml(VENDOR_FIELD_LABELS[field] || field)}</td>
+        <td style="padding:8px 12px;font-size:12px;color:#64748b;text-decoration:line-through;border-bottom:1px solid #f1f5f9;">${escapeHtml(before)}</td>
+        <td style="padding:8px 12px;font-size:12px;font-weight:700;color:${sensitive ? '#b91c1c' : '#0f172a'};border-bottom:1px solid #f1f5f9;">${escapeHtml(after)}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;margin-top:12px;">
+    <tr><th style="text-align:left;padding:8px 12px;font-size:11px;color:#475569;background:#f1f5f9;">Dato</th><th style="text-align:left;padding:8px 12px;font-size:11px;color:#475569;background:#f1f5f9;">Antes</th><th style="text-align:left;padding:8px 12px;font-size:11px;color:#475569;background:#f1f5f9;">Pedido</th></tr>
+    ${rows}
+  </table>`;
+}
+
+function simpleEmailHtml(title: string, badge: string, inner: string): string {
+  const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+  <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f1f5f9;margin:0;padding:20px;color:#1e293b;">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+      <div style="background:#1e1b4b;padding:20px 24px;color:#ffffff;">
+        <div style="display:inline-block;background:rgba(99,102,241,0.2);color:#a5b4fc;font-size:11px;font-weight:700;padding:3px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:8px;">${escapeHtml(badge)}</div>
+        <h1 style="margin:0;font-size:18px;font-weight:700;color:#ffffff;">${escapeHtml(title)}</h1>
+        <p style="margin:4px 0 0 0;font-size:12px;color:#cbd5e1;">Ingeniería Sin Fronteras Argentina</p>
+      </div>
+      <div style="padding:24px;font-size:14px;color:#334155;">${inner}
+        ${appUrl ? `<p style="margin-top:20px;"><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 18px;border-radius:10px;">Abrir la aplicación</a></p>` : ''}
+      </div>
+      <div style="background:#f8fafc;padding:16px 24px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;text-align:center;">Ingeniería Sin Fronteras Argentina · Sistema de Comprobantes</div>
+    </div>
+  </body></html>`;
+}
+
+/** Aviso a Administración: un Colaborador pidió cambiar la cuenta bancaria (CBU/alias) de un proveedor */
+export async function notifyVendorChangeRequest(
+  request: VendorChangeRequest
+): Promise<{ success: boolean; error?: string }> {
+  const recipients = await getAdminEmails(request.requestedByEmail);
+  if (recipients.length === 0) return { success: false, error: 'No hay administradores a quienes avisar.' };
+  const who = request.requestedByName ? `${request.requestedByName} (${request.requestedByEmail})` : request.requestedByEmail;
+  const inner = `
+    <p style="margin-top:0;"><strong>${escapeHtml(who)}</strong> pidió cambiar la <strong>cuenta bancaria</strong> del proveedor <strong>${escapeHtml(request.vendorName)}</strong>.</p>
+    ${request.comment ? `<p style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:10px 14px;font-size:13px;color:#3730a3;">💬 ${escapeHtml(request.comment)}</p>` : ''}
+    ${vendorChangesTableHtml(request)}
+    <p style="font-size:13px;margin-top:16px;">El cambio <strong>no se aplicó</strong> al catálogo: revisalo en <strong>Proveedores → Pendientes de revisión</strong> para aprobarlo o rechazarlo. Antes de aprobar un CBU/alias nuevo, conviene confirmarlo con el proveedor.</p>`;
+  return sendGmailMessage({
+    to: recipients.join(', '),
+    subject: `[ISF Finanzas] Pedido de cambio de cuenta bancaria: ${request.vendorName}`,
+    bodyHtml: simpleEmailHtml('Pedido de cambio de cuenta bancaria', 'Pendiente de aprobación', inner),
+    fromName: 'ISF Finanzas Alertas',
+  });
+}
+
+/** Respuesta a quien pidió el cambio: aprobado o rechazado */
+export async function sendVendorChangeResolutionEmail(params: {
+  request: VendorChangeRequest;
+  approved: boolean;
+  note?: string;
+  resolvedBy: { email: string; name?: string };
+}): Promise<{ success: boolean; error?: string }> {
+  const { request, approved, note, resolvedBy } = params;
+  if (!request.requestedByEmail) return { success: false, error: 'Sin destinatario.' };
+  const isNew = request.type === 'NEW_VENDOR';
+  const what = isNew
+    ? `El alta del proveedor <strong>${escapeHtml(request.vendorName)}</strong>`
+    : `Tu pedido de cambio en el proveedor <strong>${escapeHtml(request.vendorName)}</strong>`;
+  const inner = `
+    <p style="margin-top:0;">${what} fue <strong style="color:${approved ? '#047857' : '#b91c1c'};">${approved ? 'aprobado' : 'rechazado'}</strong> por ${escapeHtml(resolvedBy.name || resolvedBy.email)}.</p>
+    ${note ? `<p style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-size:13px;">💬 ${escapeHtml(note)}</p>` : ''}
+    ${!isNew && request.changedFields.length > 0 ? vendorChangesTableHtml(request) : ''}
+    ${approved ? '' : '<p style="font-size:13px;margin-top:16px;">Tus comprobantes no se modificaron. Si hace falta, consultá con Administración.</p>'}`;
+  return sendGmailMessage({
+    to: request.requestedByEmail,
+    subject: `[ISF Finanzas] ${approved ? 'Aprobado' : 'Rechazado'}: ${isNew ? 'alta' : 'cambio'} del proveedor ${request.vendorName}`,
+    bodyHtml: simpleEmailHtml(
+      approved ? 'Cambio de proveedor aprobado' : 'Cambio de proveedor rechazado',
+      isNew ? 'Alta de proveedor' : 'Pedido de cambio',
+      inner
+    ),
+    fromName: 'ISF Finanzas',
+  });
+}
+
 export async function notifyBankDetailsChange(params: {
   updatedBy: { email: string; name?: string };
   targetType: 'user' | 'vendor' | 'expense';
@@ -890,19 +996,7 @@ export async function notifyBankDetailsChange(params: {
   }
 
   // Destinatarios: los administradores de la tabla de usuarios (sin emails fijos en el código)
-  let recipients: string[] = [];
-  try {
-    const admins = await getDocs(query(collection(db, 'app_users'), where('role', '==', 'admin')));
-    recipients = Array.from(
-      new Set(
-        admins.docs
-          .map((d) => String(d.data().email || '').toLowerCase().trim())
-          .filter((e) => e && e !== (updatedBy.email || '').toLowerCase().trim())
-      )
-    );
-  } catch (err) {
-    console.warn('[Bank alert] No se pudo leer la lista de administradores:', err);
-  }
+  const recipients = await getAdminEmails(updatedBy.email);
   if (recipients.length === 0) {
     return { success: false, error: 'No hay administradores a quienes avisar.' };
   }

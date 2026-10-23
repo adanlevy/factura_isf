@@ -17,7 +17,8 @@ import {
   Receipt,
   Loader2,
 } from 'lucide-react';
-import { Vendor, Expense } from '../types';
+import { Vendor, Expense, VendorUpdateHandler, VendorChangeRequest } from '../types';
+import { VendorChangeRequestsPanel } from './VendorChangeRequestsPanel';
 import { formatCurrency, formatDate, formatTransferDetails, matchesSearch, cleanCuit } from '../utils/helpers';
 import { normalizeVendorBankDetails } from '../utils/cloudSync';
 import { VendorFormModal } from './VendorFormModal';
@@ -36,9 +37,13 @@ interface VendorsViewProps {
   availableCategories?: string[];
   onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
   onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
-  onUpdateVendor: (vendor: Vendor) => Promise<void> | void;
+  onUpdateVendor: VendorUpdateHandler;
   onDeleteVendor: (id: string) => Promise<void> | void;
   onViewVendorExpenses: (vendorName: string) => void;
+  /** Pedidos de cambio y altas de colaboradores pendientes de revisión */
+  changeRequests?: VendorChangeRequest[];
+  onApproveChangeRequest?: (request: VendorChangeRequest, editedVendor?: Vendor) => Promise<boolean>;
+  onRejectChangeRequest?: (request: VendorChangeRequest, reason: string, deleteVendor?: boolean) => Promise<boolean>;
 }
 
 export function VendorsView({
@@ -49,6 +54,9 @@ export function VendorsView({
   onUpdateVendor,
   onDeleteVendor,
   onViewVendorExpenses,
+  changeRequests = [],
+  onApproveChangeRequest,
+  onRejectChangeRequest,
 }: VendorsViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortOption, setSortOption] = useState<VendorSortOption>('createdAt-desc');
@@ -201,6 +209,16 @@ export function VendorsView({
         </div>
       </div>
 
+      {/* Pedidos de cambio de colaboradores y altas nuevas para revisar */}
+      {onApproveChangeRequest && onRejectChangeRequest && (
+        <VendorChangeRequestsPanel
+          requests={changeRequests}
+          vendors={vendors}
+          onApprove={onApproveChangeRequest}
+          onReject={onRejectChangeRequest}
+        />
+      )}
+
       {/* Control Bar: Search, Sorting and Actions */}
       <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs">
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
@@ -291,6 +309,14 @@ export function VendorsView({
                   <div className="flex items-start justify-between gap-2">
                     <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug truncate" title={vendor.name}>
                       {vendor.name}
+                      {changeRequests.some((r) => r.vendorId === vendor.id) && (
+                        <span
+                          className="ml-1.5 align-middle inline-flex items-center gap-0.5 text-[9.5px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded px-1 py-px"
+                          title="Hay un pedido de este proveedor en Pendientes de revisión"
+                        >
+                          <Clock className="w-2.5 h-2.5" /> Pendiente
+                        </span>
+                      )}
                     </h3>
                     {vendor.createdAt && (
                       <span

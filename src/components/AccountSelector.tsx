@@ -8,12 +8,15 @@ import {
   ChevronDown,
   X,
   Edit3,
+  Clock,
 } from 'lucide-react';
-import { UserBankDetails, UserProfile, Vendor, ExpensePaymentType } from '../types';
+import { UserBankDetails, UserProfile, Vendor, ExpensePaymentType, VendorUpdateHandler } from '../types';
+import { usePendingVendorRequests } from '../utils/vendorRequestsContext';
 import { formatCuit, matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { VendorFormModal } from './VendorFormModal';
 
 export interface AccountOption {
+  vendorId?: string;
   id: string;
   name: string;
   cuit?: string;
@@ -45,7 +48,7 @@ interface AccountSelectorProps {
   excludePersonal?: boolean;
   paymentType?: ExpensePaymentType;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
-  onUpdateVendor?: (vendor: Vendor) => void;
+  onUpdateVendor?: VendorUpdateHandler;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -74,6 +77,11 @@ export function AccountSelector({
   const [search, setSearch] = useState('');
   const [isNewVendorModalOpen, setIsNewVendorModalOpen] = useState(false);
   const [isEditVendorModalOpen, setIsEditVendorModalOpen] = useState(false);
+  const pendingVendorRequests = usePendingVendorRequests();
+  const pendingVendorIds = useMemo(
+    () => new Set(pendingVendorRequests.filter((r) => r.type === 'UPDATE').map((r) => r.vendorId)),
+    [pendingVendorRequests]
+  );
 
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -186,6 +194,7 @@ export function AccountSelector({
 
       list.push({
         id: `vendor-${v.id}`,
+        vendorId: v.id,
         name,
         cuit: c,
         bankDetails: vBank,
@@ -429,8 +438,16 @@ export function AccountSelector({
                     </div>
                     <div className="min-w-0 flex-1">
                       {/* Línea 1: Nombre (y CUIT entre paréntesis si tiene) */}
-                      <div className="text-xs font-bold text-slate-900 truncate leading-tight group-hover:text-purple-700 transition-colors">
-                        {highlightMatch(acc.line1, search)}
+                      <div className="text-xs font-bold text-slate-900 truncate leading-tight group-hover:text-purple-700 transition-colors flex items-center gap-1">
+                        <span className="truncate">{highlightMatch(acc.line1, search)}</span>
+                        {acc.vendorId && pendingVendorIds.has(acc.vendorId) && (
+                          <span
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded px-1 py-px"
+                            title="Hay un cambio pendiente de aprobación para este proveedor"
+                          >
+                            <Clock className="w-2.5 h-2.5" /> Cambio pendiente
+                          </span>
+                        )}
                       </div>
                       {/* Línea 2: Solo Alias o CBU (si ambos, CBU) */}
                       <div className="text-[10.5px] text-slate-500 font-mono truncate leading-tight mt-0.5">
@@ -514,6 +531,17 @@ export function AccountSelector({
       <VendorFormModal
         isOpen={isEditVendorModalOpen}
         existingVendors={vendors}
+        approvalMode={Boolean(matchedVendor && onUpdateVendor && currentUser?.role !== 'admin')}
+        pendingRequest={
+          matchedVendor
+            ? pendingVendorRequests.find(
+                (r) =>
+                  r.type === 'UPDATE' &&
+                  r.vendorId === matchedVendor.id &&
+                  r.requestedByEmail === (currentUser?.email || '').toLowerCase()
+              ) || null
+            : null
+        }
         title="Editar datos de cuenta bancaria"
         subtitle="Modificar datos bancarios asignados a este comprobante"
         initialData={{
@@ -524,13 +552,16 @@ export function AccountSelector({
           bankDetails: bankDetails || matchedVendor?.bankDetails,
         }}
         onClose={() => setIsEditVendorModalOpen(false)}
-        onSave={(savedVendor) => {
+        onSave={(savedVendor, extra) => {
           if (matchedVendor && onUpdateVendor) {
-            onUpdateVendor({
-              ...matchedVendor,
-              ...savedVendor,
-              id: matchedVendor.id,
-            });
+            onUpdateVendor(
+              {
+                ...matchedVendor,
+                ...savedVendor,
+                id: matchedVendor.id,
+              },
+              extra
+            );
           } else if (onAddVendor) {
             onAddVendor(savedVendor);
           }
