@@ -32,7 +32,7 @@ import { getStoredAuth, saveStoredAuth, getStoredUserBankDetails, saveStoredUser
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './lib/firebase';
 import { waitForPendingWrites } from 'firebase/firestore';
-import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName, escapeHtml } from './utils/helpers';
+import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTransferDetails, cleanCuit, generateDriveFileName, escapeHtml, hasPayableBankDetails } from './utils/helpers';
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
@@ -616,6 +616,7 @@ export default function App() {
       ...newVendorData,
       id: `v-${Date.now()}`,
       createdAt: new Date().toISOString(),
+      createdByEmail: currentUser?.email?.toLowerCase() || undefined,
     };
     setVendors((prev) => [newVendor, ...prev]);
     // Solo el proveedor nuevo: reescribir todo el catálogo fallaba para Colaboradores
@@ -646,6 +647,7 @@ export default function App() {
       ...v,
       id: `v-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       createdAt: new Date().toISOString(),
+      createdByEmail: currentUser?.email?.toLowerCase() || undefined,
     }));
     setVendors((prev) => [...initialized, ...prev]);
     if (!(await saveCentralVendors(initialized))) {
@@ -669,8 +671,37 @@ export default function App() {
     showToast(`✅ Se importaron ${initialized.length} proveedores exitosamente.`);
   };
 
-  const handleUpdateVendor = async (updatedVendor: Vendor) => {
-    const prevVendor = vendors.find((v) => v.id === updatedVendor.id);
+  const handleUpdateVendor = async (incomingVendor: Vendor) => {
+    const prevVendor = vendors.find((v) => v.id === incomingVendor.id);
+    const isAdminUser = permissionRole === 'admin';
+    const myEmail = (currentUser?.email || '').toLowerCase();
+    // Quién lo creó no cambia al editarlo
+    let updatedVendor: Vendor = {
+      ...incomingVendor,
+      createdByEmail: prevVendor?.createdByEmail ?? incomingVendor.createdByEmail,
+      updatedAt: new Date().toISOString(),
+      updatedByEmail: myEmail || undefined,
+    };
+
+    if (!isAdminUser && prevVendor) {
+      const isMine = Boolean(myEmail && prevVendor.createdByEmail?.toLowerCase() === myEmail);
+      if (!isMine) {
+        if (hasPayableBankDetails(prevVendor.bankDetails)) {
+          // La cuenta registrada de un proveedor ajeno solo la cambia un Admin: el comprobante igual se queda con la cuenta elegida
+          showToast(
+            `ℹ️ La cuenta quedó cargada en tu comprobante. Para cambiar la cuenta de "${prevVendor.name}" en el catálogo de proveedores, pedíselo a un administrador.`
+          );
+          return;
+        }
+        // Proveedor sin cuenta bancaria: el Colaborador solo puede completarle la cuenta
+        updatedVendor = {
+          ...prevVendor,
+          bankDetails: incomingVendor.bankDetails,
+          updatedAt: updatedVendor.updatedAt,
+          updatedByEmail: updatedVendor.updatedByEmail,
+        };
+      }
+    }
     const prevName = (prevVendor?.name || '').trim().toLowerCase();
     const prevCuitDigits = (prevVendor?.cuit || prevVendor?.bankDetails?.cuitCuil || '').replace(/[^0-9]/g, '');
     const prevCbu = (prevVendor?.bankDetails?.cbuCvu || '').trim();
@@ -722,7 +753,11 @@ export default function App() {
       changes: diffs.length > 0 ? diffs : undefined,
     });
 
-    // 2. Cascade update matching expenses
+    // 2. Cascade update matching expenses (solo Admins: un Colaborador ya tiene la cuenta en el comprobante que está cargando)
+    if (!isAdminUser) {
+      showToast(`✅ Proveedor "${updatedVendor.name}" actualizado.`);
+      return;
+    }
     const otherVendorsWithSameCuit = vendors.filter(
       (v) => v.id !== updatedVendor.id && cleanCuit(v.cuit || v.bankDetails?.cuitCuil) === (newCuitDigits || prevCuitDigits)
     );

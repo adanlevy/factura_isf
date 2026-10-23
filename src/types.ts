@@ -56,6 +56,10 @@ export interface Vendor {
   bankDetails?: UserBankDetails;
   notes?: string;
   createdAt: string;
+  /** Quién lo dio de alta (un Colaborador puede corregir los proveedores que cargó) */
+  createdByEmail?: string;
+  updatedAt?: string;
+  updatedByEmail?: string;
 }
 
 export interface UserProfile {

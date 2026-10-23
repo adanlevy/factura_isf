@@ -317,6 +317,7 @@ La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas banc
 - **Importar CSV:** pegá filas desde Google Sheets/Excel o subí un archivo `.csv/.tsv`. Detecta columnas y duplicados y muestra una previsualización antes de importar.
 - **Ver gastos de un proveedor:** botón **"Gastos"** lleva a *Gestión de Pagos* filtrado por ese proveedor.
 - **Editar:** los cambios de nombre, CUIT o cuenta se copian a los comprobantes **pendientes** de ese proveedor. Los comprobantes **ya pagados** conservan los datos con los que se pagaron.
+- **Quién puede editar:** cualquier colaborador puede **dar de alta** un proveedor (también desde la carga de un comprobante, con *"Nueva cuenta"*), **corregir los proveedores que cargó** y **completar la cuenta bancaria de un proveedor que no tenía**. Cambiar la cuenta ya registrada de un proveedor cargado por otra persona, o eliminar proveedores, lo hace **Administración**: si un colaborador elige otra cuenta para ese proveedor, la cuenta queda en su comprobante y la app le avisa que el cambio en el catálogo lo hace un administrador.
 - **Eliminar:** si el proveedor tiene comprobantes pendientes vinculados, la aplicación **desvincula los datos de cuenta** de esos comprobantes pero **conserva el nombre/factura** (los pagados no se modifican).
 
 ### 7.9 Centros de Costos

@@ -184,11 +184,32 @@ service cloud.firestore {
     // Vendors catalog (contains sensitive banking details: CBU, Alias, CUIT):
     // - Only Colaboradores and Admins can read vendors for invoice association
     // - Colaboradores can register a new vendor during expense submission
-    // - Only Admins can modify existing vendors or delete them
+    // - Colaboradores can fix the vendors they registered, and add the bank account of a vendor that had none
+    // - Changing the registered bank account of someone else's vendor, or deleting vendors: Admins only
+    function hasVendorBankAccount(data) {
+      return data.get('bankDetails', null) != null &&
+        (data.bankDetails.get('cbuCvu', '') != '' || data.bankDetails.get('alias', '') != '');
+    }
+
+    function colaboradorCanUpdateVendor() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      return isColaborador() &&
+        request.resource.data.get('createdByEmail', '') == resource.data.get('createdByEmail', '') &&
+        (
+          resource.data.get('createdByEmail', '') == userEmail() ||
+          // Completar la cuenta (y el CUIT si estaba vacío) de un proveedor que no tenía cuenta
+          (!hasVendorBankAccount(resource.data) &&
+            affected.hasOnly(['bankDetails', 'cuit', 'updatedAt', 'updatedByEmail']) &&
+            (!affected.hasAny(['cuit']) || resource.data.get('cuit', '') == ''))
+        );
+    }
+
     match /vendors/{vendorId} {
       allow read: if isColaborador();
-      allow create: if isColaborador();
-      allow update, delete: if isAdmin();
+      allow create: if isAdmin() ||
+        (isColaborador() && request.resource.data.get('createdByEmail', userEmail()) == userEmail());
+      allow update: if isAdmin() || colaboradorCanUpdateVendor();
+      allow delete: if isAdmin();
     }
 
     // Cost centers and projects:

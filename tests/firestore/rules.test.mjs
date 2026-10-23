@@ -221,6 +221,30 @@ await seed();
   await expectDenied('Cuenta Google cualquiera lee la configuración', () => as('cualquiera@gmail.com').doc('app_settings/drive').get());
 }
 
+// ------------------------------------------------------------------ proveedores cargados por Colaboradores
+{
+  await seed();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await db.doc('vendors/v-mio').set({ id: 'v-mio', name: 'Fletes Juan', createdByEmail: 'colab@gmail.com', bankDetails: { cbuCvu: '2222222222222222222222', alias: 'juan.fletes' } });
+    await db.doc('vendors/v-sin-cuenta').set({ id: 'v-sin-cuenta', name: 'Kiosco', cuit: '20111111112', createdByEmail: 'otro@gmail.com' });
+    await db.doc('vendors/v-ajeno').set({ id: 'v-ajeno', name: 'Imprenta', createdByEmail: 'otro@gmail.com', bankDetails: { cbuCvu: '4444444444444444444444' } });
+  });
+  const colabDb = as('colab@gmail.com');
+  await expectAllowed('Colaborador crea un proveedor a su nombre', () => colabDb.doc('vendors/v-nuevo').set({ id: 'v-nuevo', name: 'Nuevo', createdByEmail: 'colab@gmail.com' }));
+  await expectDenied('Colaborador crea un proveedor a nombre de otra persona', () => colabDb.doc('vendors/v-falso').set({ id: 'v-falso', name: 'Falso', createdByEmail: 'otro@gmail.com' }));
+  await expectAllowed('Colaborador corrige el CBU de un proveedor que cargó', () => colabDb.doc('vendors/v-mio').set({ bankDetails: { cbuCvu: '2222222222222222222223', alias: 'juan.fletes' }, updatedAt: 'now', updatedByEmail: 'colab@gmail.com' }, { merge: true }));
+  await expectAllowed('Colaborador completa la cuenta de un proveedor que no tenía', () => colabDb.doc('vendors/v-sin-cuenta').set({ bankDetails: { cbuCvu: '5555555555555555555555' }, updatedAt: 'now', updatedByEmail: 'colab@gmail.com' }, { merge: true }));
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc('vendors/v-sin-cuit').set({ id: 'v-sin-cuit', name: 'Feria', createdByEmail: 'otro@gmail.com' }));
+  await expectAllowed('Colaborador completa la cuenta y el CUIT vacío de un proveedor sin cuenta', () => colabDb.doc('vendors/v-sin-cuit').set({ cuit: '20333333334', bankDetails: { alias: 'feria.x', cuitCuil: '20333333334' } }, { merge: true }));
+  await expectDenied('...pero no le cambia el nombre ni el CUIT a ese proveedor ajeno', () => colabDb.doc('vendors/v-sin-cuenta').set({ name: 'Otro nombre', cuit: '20999999999' }, { merge: true }));
+  await expectDenied('Colaborador cambia la cuenta registrada de un proveedor ajeno', () => colabDb.doc('vendors/v-ajeno').set({ bankDetails: { cbuCvu: '6666666666666666666666' } }, { merge: true }));
+  await expectDenied('Colaborador se adjudica un proveedor ajeno para poder editarlo', () => colabDb.doc('vendors/v-ajeno').set({ createdByEmail: 'colab@gmail.com', bankDetails: { cbuCvu: '6666666666666666666666' } }, { merge: true }));
+  await expectDenied('Colaborador cambia la cuenta de un proveedor viejo (sin creador registrado)', () => colabDb.doc('vendors/v1').set({ bankDetails: { cbuCvu: '7777777777777777777777' } }, { merge: true }));
+  await expectDenied('Colaborador borra un proveedor que cargó', () => colabDb.doc('vendors/v-mio').delete());
+  await expectAllowed('Admin cambia la cuenta de cualquier proveedor', () => as('jefe@isf-argentina.org').doc('vendors/v-ajeno').set({ bankDetails: { cbuCvu: '8888888888888888888888' } }, { merge: true }));
+}
+
 // ------------------------------------------------------------------ reporte
 await env.cleanup();
 console.log('\n=== Reglas de Firestore ===');
