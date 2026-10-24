@@ -13,7 +13,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { ExpensePaymentType, UserBankDetails, UserProfile, Vendor, Expense, ReimbursementStatus, VendorUpdateHandler } from '../types';
-import { getStoredUserBankDetails } from '../utils/auth';
+import { useReimbursementAccount, vendorToReimbursementBank } from '../utils/reimbursementAccountContext';
 import { matchesSearch, findVendorByCuitOrName } from '../utils/helpers';
 import { AccountSelector } from './AccountSelector';
 
@@ -66,8 +66,9 @@ export function PaymentTypeSelector({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const storedUserBank = currentUser?.email ? getStoredUserBankDetails(currentUser.email) : null;
-  const myBank = currentUser?.bankDetails || storedUserBank;
+  // Cuenta para "Reintegro a mí": registro del listado de proveedores asociado al perfil
+  const { vendor: myReimbursementVendor, chooseAccount } = useReimbursementAccount();
+  const myBank = vendorToReimbursementBank(myReimbursementVendor);
 
   // Click outside to close suggestion dropdown
   useEffect(() => {
@@ -178,18 +179,12 @@ export function PaymentTypeSelector({
     }
   };
 
-  const handleUseMyAccount = () => {
-    if (!myBank) return;
-    const updated: UserBankDetails = {
-      bankName: myBank.bankName || '',
-      accountType: myBank.accountType || 'Indefinido',
-      cbuCvu: myBank.cbuCvu || '',
-      alias: myBank.alias || '',
-      cuitCuil: myBank.cuitCuil || '',
-      accountHolder: myBank.accountHolder || currentUser?.name || '',
-    };
-    onChangeBankDetails(updated);
-    setSearchQuery(updated.accountHolder);
+  const handleUseMyAccount = async () => {
+    // Sin cuenta asociada: se elige del listado de proveedores (con confirmación) y queda en el perfil
+    const bank = myBank || vendorToReimbursementBank(await chooseAccount('first-use'));
+    if (!bank) return;
+    onChangeBankDetails(bank);
+    setSearchQuery(bank.accountHolder);
   };
 
   // Matched vendor from catalog (to show observations/notes)
@@ -322,18 +317,16 @@ export function PaymentTypeSelector({
               </div>
             </div>
 
-            {/* Quick 1-Click Button: "Ingresar mi cuenta" */}
-            {myBank && (
-              <button
-                type="button"
-                onClick={handleUseMyAccount}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-bold shadow-xs transition cursor-pointer"
-                title="Cargar automáticamente los datos de mi cuenta precargada en el perfil"
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-200" />
-                <span>Ingresar mi cuenta ({myBank.alias || myBank.bankName})</span>
-              </button>
-            )}
+            {/* Quick 1-Click Button: cuenta para reintegros asociada al perfil */}
+            <button
+              type="button"
+              onClick={handleUseMyAccount}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+              title={myBank ? 'Usar la cuenta para reintegros asociada a mi perfil' : 'Elegir del listado de proveedores la cuenta para mis reintegros'}
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-200" />
+              <span>{myBank ? `Usar mi cuenta (${myBank.alias || myBank.bankName || myReimbursementVendor?.name})` : 'Elegir mi cuenta para reintegros'}</span>
+            </button>
           </div>
 
           {/* Status selector if editable, or badge if read-only */}

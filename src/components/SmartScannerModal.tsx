@@ -36,7 +36,8 @@ import {
   CostCenter,
   VendorUpdateHandler,
 } from '../types';
-import { getStoredUserBankDetails, getSuggestedProject } from '../utils/auth';
+import { getSuggestedProject } from '../utils/auth';
+import { useReimbursementAccount, vendorToReimbursementBank } from '../utils/reimbursementAccountContext';
 import {
   getSmartSortedCostCenters,
   recordCategoryCostCenterUsage,
@@ -155,7 +156,6 @@ function highlightLookupMatch(text: string, query: string): React.ReactNode {
 function AccountDataCell({
   item,
   currentUser,
-  storedBank,
   vendors,
   onUpdateBankDetails,
   onAddVendor,
@@ -164,7 +164,6 @@ function AccountDataCell({
 }: {
   item: QueueItem;
   currentUser: UserProfile | null;
-  storedBank: UserBankDetails | null;
   vendors: Vendor[];
   onUpdateBankDetails: (details: UserBankDetails | undefined) => void;
   onAddVendor?: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => void;
@@ -187,7 +186,6 @@ function AccountDataCell({
       cuit={item.cuit || item.bankDetails?.cuitCuil}
       vendors={vendors}
       currentUser={currentUser || undefined}
-      storedBank={storedBank || undefined}
       paymentType={item.paymentType}
       excludePersonal={Boolean(item.reimburseToOther)}
       onAddVendor={onAddVendor}
@@ -235,9 +233,9 @@ export function SmartScannerModal({
     return getSuggestedProject(currentUser?.email || '', existingExpenses, availableProjects);
   }, [currentUser, existingExpenses, availableProjects]);
 
-  const storedBank = useMemo(() => {
-    return currentUser?.email ? getStoredUserBankDetails(currentUser.email) : null;
-  }, [currentUser]);
+  // Cuenta para "Reintegro a mí": registro del listado de proveedores asociado al perfil
+  const { vendor: myReimbursementVendor, chooseAccount } = useReimbursementAccount();
+  const myBank = useMemo(() => vendorToReimbursementBank(myReimbursementVendor), [myReimbursementVendor]);
 
   // Al guardar el último comprobante de la cola se cierra la ventana (si quedan pendientes, sigue abierta)
   const queueRef = useRef<QueueItem[]>(queue);
@@ -661,11 +659,11 @@ export function SmartScannerModal({
     item.paymentType === 'REINTEGRO' && item.reimburseToOther ? 'REINTEGRO_OTRO' : item.paymentType || '';
 
   const isMyBank = (bank?: UserBankDetails) => {
-    if (!bank || !storedBank) return false;
+    if (!bank || !myBank) return false;
     const norm = (v?: string) => (v || '').replace(/\s+/g, '').toLowerCase();
     return Boolean(
-      (norm(bank.cbuCvu) && norm(bank.cbuCvu) === norm(storedBank.cbuCvu)) ||
-        (norm(bank.alias) && norm(bank.alias) === norm(storedBank.alias))
+      (norm(bank.cbuCvu) && norm(bank.cbuCvu) === norm(myBank.cbuCvu)) ||
+        (norm(bank.alias) && norm(bank.alias) === norm(myBank.alias))
     );
   };
 
@@ -673,16 +671,11 @@ export function SmartScannerModal({
     const toOther = rawValue === 'REINTEGRO_OTRO';
     const val = (toOther ? 'REINTEGRO' : rawValue) as ExpensePaymentType;
     let newBank = item.bankDetails;
+    let mustChooseMyAccount = false;
     if (val === 'REINTEGRO' && !toOther && (!item.bankDetails || item.reimburseToOther || item.paymentType !== 'REINTEGRO')) {
-      // Reintegro a mí: se completa con la cuenta del perfil
-      newBank = storedBank || (currentUser?.name ? {
-        accountHolder: currentUser.name,
-        bankName: '',
-        accountType: 'Indefinido',
-        cbuCvu: '',
-        alias: '',
-        cuitCuil: '',
-      } : undefined);
+      // Reintegro a mí: la cuenta del registro de proveedor asociado al perfil; si no hay, se elige ahora
+      newBank = myBank || undefined;
+      mustChooseMyAccount = !myBank;
     } else if (toOther && (!item.reimburseToOther || isMyBank(item.bankDetails) || !item.bankDetails?.cbuCvu && !item.bankDetails?.alias)) {
       // Reintegro a otra persona: la cuenta NO se completa con la propia; se elige o se carga
       newBank = undefined;
@@ -705,6 +698,34 @@ export function SmartScannerModal({
           ? 'Tarjeta Débito Galicia'
           : '',
     });
+
+    if (mustChooseMyAccount) {
+      // Primer "Reintegro a mí": se elige el registro del listado de proveedores y se confirma
+      // antes de asociarlo al perfil; si se cancela, el comprobante vuelve al tipo de pago anterior
+      chooseAccount('first-use').then((vendor) => {
+        const bank = vendorToReimbursementBank(vendor);
+        if (bank) {
+          // También se completa en los demás "Reintegro a mí" de la cola que esperaban cuenta
+          setQueue((prev) =>
+            prev.map((q) =>
+              q.id === item.id ||
+              (q.paymentType === 'REINTEGRO' && !q.reimburseToOther && !hasPayableBankDetails(q.bankDetails))
+                ? { ...q, bankDetails: bank }
+                : q
+            )
+          );
+        } else {
+          updateQueueItem(item.id, {
+            paymentType: item.paymentType,
+            reimburseToOther: item.reimburseToOther,
+            reimbursable: item.reimbursable,
+            reimbursementStatus: item.reimbursementStatus,
+            bankDetails: item.bankDetails,
+            paymentMethod: item.paymentMethod,
+          });
+        }
+      });
+    }
   };
 
   const handleVendorChange = (itemId: string, newVendor: string) => {
@@ -792,8 +813,12 @@ export function SmartScannerModal({
       alert('Elegí el Tipo de Pago (Reintegro, Pago a Proveedor, Tarjeta Corporativa o Débito Galicia).');
       return;
     }
-    if (item.reimburseToOther && !hasPayableBankDetails(item.bankDetails)) {
-      alert('Reintegro a otra persona: elegí o cargá la cuenta (CBU/CVU o alias) de la persona a quien se le reintegra.');
+    if (item.paymentType === 'REINTEGRO' && !hasPayableBankDetails(item.bankDetails)) {
+      if (item.reimburseToOther) {
+        alert('Reintegro a otra persona: elegí o cargá la cuenta (CBU/CVU o alias) de la persona a quien se le reintegra.');
+      } else {
+        alert('Reintegro a mí: falta tu cuenta para reintegros. Elegila en «Datos de Cuenta» o volvé a elegir «Reintegro a mí».');
+      }
       return;
     }
     if (!confirmUnusualDates([item])) return;
@@ -863,7 +888,7 @@ export function SmartScannerModal({
         Boolean(q.project && q.project.trim()) &&
         Boolean(q.date && q.date.trim().length >= 8) &&
         Boolean(q.paymentType) &&
-        (!q.reimburseToOther || hasPayableBankDetails(q.bankDetails))
+        (q.paymentType !== 'REINTEGRO' || hasPayableBankDetails(q.bankDetails))
     );
 
     const incompleteItems = queue.filter(
@@ -875,7 +900,7 @@ export function SmartScannerModal({
           Boolean(q.project && q.project.trim()) &&
           Boolean(q.date && q.date.trim().length >= 8) &&
           Boolean(q.paymentType) &&
-          (!q.reimburseToOther || hasPayableBankDetails(q.bankDetails))
+          (q.paymentType !== 'REINTEGRO' || hasPayableBankDetails(q.bankDetails))
         )
     );
 
@@ -886,7 +911,7 @@ export function SmartScannerModal({
 
     if (incompleteItems.length > 0) {
       const confirmPartial = confirm(
-        `Hay ${validItems.length} comprobante(s) completos listos para guardar y ${incompleteItems.length} comprobante(s) a los que les falta Monto, Centro de Costos, Fecha o Tipo de Pago.\n\n¿Deseas guardar los ${validItems.length} comprobantes completos ahora?`
+        `Hay ${validItems.length} comprobante(s) completos listos para guardar y ${incompleteItems.length} comprobante(s) a los que les falta Monto, Centro de Costos, Fecha, Tipo de Pago o la cuenta del reintegro.\n\n¿Deseas guardar los ${validItems.length} comprobantes completos ahora?`
       );
       if (!confirmPartial) return;
     }
@@ -1394,7 +1419,6 @@ export function SmartScannerModal({
                             <AccountDataCell
                               item={item}
                               currentUser={currentUser}
-                              storedBank={storedBank}
                               vendors={vendors}
                               onAddVendor={onAddVendor}
                               onUpdateVendor={onUpdateVendor}
@@ -1717,7 +1741,6 @@ export function SmartScannerModal({
                           <AccountDataCell
                             item={item}
                             currentUser={currentUser}
-                            storedBank={storedBank}
                             vendors={vendors}
                             onAddVendor={onAddVendor}
                             onUpdateVendor={onUpdateVendor}

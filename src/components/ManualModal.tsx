@@ -124,7 +124,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <h4 className="font-bold text-slate-900 text-sm mb-1">👤 Colaborador / Rendidor</h4>
-                <p className="text-slate-600">Equipo de ingeniería y terreno. Solo ve la pestaña <strong>Mis Gastos</strong>. Carga comprobantes, ve/edita <strong>los suyos</strong> (si no están pagados) y edita su perfil bancario.</p>
+                <p className="text-slate-600">Equipo de ingeniería y terreno. Solo ve la pestaña <strong>Mis Gastos</strong>. Carga comprobantes, ve/edita <strong>los suyos</strong> (si no están pagados) y elige su cuenta para reintegros.</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <h4 className="font-bold text-slate-900 text-sm mb-1">🛡️ Administrador / Finanzas</h4>
@@ -161,21 +161,22 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
       },
       {
         id: 'perfil',
-        label: 'Mi perfil y datos bancarios',
+        label: 'Mi perfil y cuenta para reintegros',
         icon: <UserCog className="w-4 h-4" />,
         node: (
           <>
             <p className="text-slate-600">
               Hacé clic en tu <strong>nombre/avatar</strong> (arriba a la derecha). Tu nombre y correo vienen de Google
-              (solo lectura). El bloque <strong>«Mis Datos Bancarios para Reintegros»</strong> se carga una sola vez y
-              queda autocompletado en tus rendiciones de tipo Reintegro:
+              (solo lectura). El perfil <strong>no guarda datos bancarios sueltos</strong>: en
+              <strong> «Mi cuenta para reintegros»</strong> elegís un <strong>registro del listado de proveedores</strong>
+              (tu nombre con tu CBU/alias), que es adonde se transfieren tus «Reintegro a mí».
             </p>
             <ul className="list-disc pl-5 space-y-1 text-slate-600">
-              <li><strong>Banco / Billetera</strong> (ej. Galicia / Mercado Pago)</li>
-              <li><strong>Tipo de Cuenta</strong> (Caja de Ahorro / Cuenta Corriente)</li>
-              <li><strong>Alias</strong> · <strong>CUIT / CUIL</strong> · <strong>CBU / CVU</strong> (22 dígitos) · <strong>Titular</strong></li>
+              <li><strong>Elegir / Cambiar:</strong> buscás tu registro (nombre, CUIT, alias o CBU) o lo creás, y confirmás antes de asociarlo.</li>
+              <li><strong>Primera vez:</strong> si no la elegiste, se te pide al cargar tu primer «Reintegro a mí» y queda asociada para los próximos.</li>
+              <li><strong>¿Cambió tu CBU?</strong> Elegí otro registro o editá la cuenta al cargar: el cambio va a Administración para aprobar.</li>
             </ul>
-            <p className="text-slate-600">Guardá con <strong>«Guardar Datos de Destinatario»</strong>. Desde aquí también cerrás sesión o cambiás de cuenta.</p>
+            <p className="text-slate-600">Desde aquí también cerrás sesión o cambiás de cuenta.</p>
           </>
         ),
       },
@@ -211,7 +212,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
                   </tr>
                 </thead>
                 <tbody className="text-slate-600">
-                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🔄 Reintegro a mí</td><td className="p-2.5">Pagaste de tu bolsillo y pedís devolución.</td><td className="p-2.5">Sí (tu perfil)</td></tr>
+                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🔄 Reintegro a mí</td><td className="p-2.5">Pagaste de tu bolsillo y pedís devolución.</td><td className="p-2.5">Sí (tu cuenta para reintegros)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">👥 Reintegro a otra persona</td><td className="p-2.5">Pagó otra persona y vos cargás el comprobante.</td><td className="p-2.5">Sí (la cuenta de esa persona)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🏢 Pago a Proveedor</td><td className="p-2.5">Se transfiere directo al proveedor.</td><td className="p-2.5">Sí (catálogo)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">💳 Tarjeta Corporativa</td><td className="p-2.5">Se abonó con la tarjeta corporativa.</td><td className="p-2.5">No</td></tr>

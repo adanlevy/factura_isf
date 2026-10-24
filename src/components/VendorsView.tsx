@@ -35,7 +35,7 @@ interface VendorsViewProps {
   vendors: Vendor[];
   expenses: Expense[];
   availableCategories?: string[];
-  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<void> | void;
+  onAddVendor: (vendor: Omit<Vendor, 'id' | 'createdAt'>) => Promise<unknown> | void;
   onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
   onUpdateVendor: VendorUpdateHandler;
   onDeleteVendor: (id: string) => Promise<void> | void;
@@ -307,17 +307,19 @@ export function VendorsView({
                 {/* Top: Name, CUIT, CreatedAt */}
                 <div className="space-y-1">
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug truncate" title={vendor.name}>
-                      {vendor.name}
+                    <div className="min-w-0 flex items-center gap-1.5">
+                      <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug truncate" title={vendor.name}>
+                        {vendor.name}
+                      </h3>
                       {changeRequests.some((r) => r.vendorId === vendor.id) && (
                         <span
-                          className="ml-1.5 align-middle inline-flex items-center gap-0.5 text-[9.5px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded px-1 py-px"
+                          className="shrink-0 inline-flex items-center gap-0.5 text-[9.5px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded px-1 py-px"
                           title="Hay un pedido de este proveedor en Pendientes de revisión"
                         >
                           <Clock className="w-2.5 h-2.5" /> Pendiente
                         </span>
                       )}
-                    </h3>
+                    </div>
                     {vendor.createdAt && (
                       <span
                         className="text-[10px] font-medium text-slate-400 shrink-0 bg-slate-50 border border-slate-100 px-1.5 py-0.5 rounded-md flex items-center gap-0.5"

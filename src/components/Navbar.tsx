@@ -109,7 +109,7 @@ export function Navbar({
                 id="btn-user-profile"
                 onClick={onOpenAuthProfile}
                 className="flex items-center space-x-2 p-1.5 sm:px-3 sm:py-2 rounded-2xl border border-slate-200 bg-slate-50/80 hover:bg-slate-100 transition cursor-pointer"
-                title="Mi perfil y datos bancarios (Click para editar)"
+                title="Mi perfil y cuenta para reintegros"
               >
                 <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
                   {currentUser.picture ? (

@@ -51,7 +51,11 @@ export function saveStoredAuth(user: { email: string; name: string; picture?: st
   }
 }
 
-export function getStoredUserBankDetails(email: string) {
+/**
+ * Datos bancarios sueltos que versiones anteriores guardaban en este navegador.
+ * Solo se leen para sugerir el registro de proveedor equivalente; se borran al asociarlo.
+ */
+export function getLegacyStoredBankDetails(email: string) {
   try {
     const saved = localStorage.getItem(`isf_bank_details_${email}`);
     if (saved) {
@@ -63,11 +67,11 @@ export function getStoredUserBankDetails(email: string) {
   return null;
 }
 
-export function saveStoredUserBankDetails(email: string, details: any) {
+export function clearLegacyStoredBankDetails(email: string) {
   try {
-    localStorage.setItem(`isf_bank_details_${email}`, JSON.stringify(details));
-  } catch (e) {
-    console.warn('Error saving bank details:', e);
+    localStorage.removeItem(`isf_bank_details_${email}`);
+  } catch {
+    // Sin almacenamiento disponible: no hay nada que borrar
   }
 }
 

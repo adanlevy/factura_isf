@@ -14,7 +14,7 @@ Ingeniería Sin Fronteras Argentina (CUIT 30‑71254928‑5)
 2. [Conceptos clave (glosario rápido)](#2-conceptos-clave-glosario-rápido)
 3. [Roles y perfiles de acceso](#3-roles-y-perfiles-de-acceso)
 4. [Ingreso al sistema (login)](#4-ingreso-al-sistema-login)
-5. [Mi perfil y datos bancarios](#5-mi-perfil-y-datos-bancarios)
+5. [Mi perfil y cuenta para reintegros](#5-mi-perfil-y-cuenta-para-reintegros)
 6. [Guía para el Colaborador / Rendidor](#6-guía-para-el-colaborador--rendidor)
    - 6.1 [Cargar comprobantes con IA](#61-cargar-comprobantes-con-ia)
    - 6.2 [Los tipos de pago](#62-los-tipos-de-pago)
@@ -112,19 +112,16 @@ Un usuario administrador puede alternar entre "vista Administrador" y "vista Col
 
 ---
 
-## 5. Mi perfil y datos bancarios
+## 5. Mi perfil y cuenta para reintegros
 
 Hacé clic en tu **nombre/avatar** (arriba a la derecha) para abrir tu perfil.
 
 - **Identidad de Google (solo lectura):** *Nombre y Apellido* y *Correo Electrónico* vienen de Google y no se editan manualmente.
-- **Mis Datos Bancarios para Reintegros:** cargá una sola vez tus datos y quedan **autocompletados en tus rendiciones de tipo Reintegro**. Campos:
-  - **Banco / Billetera** (ej. Galicia / Mercado Pago)
-  - **Tipo de Cuenta** (Caja de Ahorro / Cuenta Corriente)
-  - **Alias**
-  - **CUIT / CUIL**
-  - **CBU / CVU (22 dígitos)**
-  - **Titular de la Cuenta**
-- Guardá con **"Guardar Datos de Destinatario"**.
+- **Mi cuenta para reintegros:** el perfil **no guarda datos bancarios sueltos**. Se asocia un **registro del listado de proveedores** (tu nombre con tu CBU/alias), que es la cuenta a la que se transfieren tus «Reintegro a mí».
+  - **Elegir / Cambiar:** abre un buscador del listado de proveedores (por nombre, CUIT, alias o CBU). Si tu registro no existe, lo creás ahí mismo. Antes de asociarlo se pide confirmación (*"¿Estás seguro de que esta es tu cuenta?"*).
+  - **Primera vez:** si todavía no elegiste tu cuenta, la primera vez que cargues un comprobante como **«Reintegro a mí»** se abre ese buscador; al confirmar, queda asociada a tu perfil para los próximos. Si cancelás, el comprobante vuelve al tipo de pago anterior.
+  - **¿Cambió tu CBU o alias?** Elegí otro registro, o editá la cuenta al cargar un comprobante: el cambio le llega a Administración como **pedido de cambio** para aprobar (ver Proveedores).
+  - Si tenías datos bancarios cargados en el perfil con la versión anterior, el buscador te sugiere el registro que coincide (o los usa para crear el tuyo) y, al asociarlo, esos datos sueltos se borran.
 
 Desde este panel también podés **cerrar sesión / cambiar de cuenta** ("Desconectar cuenta").
 
@@ -174,13 +171,13 @@ El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de 
 
 | Tipo | Cuándo usarlo | ¿Requiere datos bancarios? | Estado inicial |
 |---|---|---|---|
-| **🔄 Reintegro a mí** | Pagaste con **fondos propios** y pedís que te lo devuelvan. | **Sí** — tu cuenta (se autocompleta desde tu perfil). | Pendiente de reintegro |
+| **🔄 Reintegro a mí** | Pagaste con **fondos propios** y pedís que te lo devuelvan. | **Sí** — tu cuenta para reintegros (el registro de proveedor asociado a tu perfil). | Pendiente de reintegro |
 | **👥 Reintegro a otra persona** | Pagó **otra persona** con fondos propios (por ejemplo, un voluntario) y vos cargás el comprobante. | **Sí** — la cuenta de esa persona: se elige del catálogo o se carga con **"Nueva cuenta"**. **No** se completa con la tuya. | Pendiente de reintegro |
 | **🏢 Pago a Proveedor** | Se le va a **transferir directamente al proveedor**. | **Sí** — datos de la cuenta del proveedor (se eligen del catálogo). | Pendiente de pago |
 | **💳 Tarjeta Corporativa** | Se **abonó con la tarjeta corporativa** de la organización. | No | Directo (no requiere reintegro) |
 | **🏦 Tarjeta Débito Galicia** | Se **debitó de la cuenta institucional del Banco Galicia**. | No | Directo (no requiere reintegro) |
 
-- En **Reintegro a mí**, la cuenta se toma de tu perfil (o con el botón **"Ingresar mi cuenta"** al editar).
+- En **Reintegro a mí**, la cuenta es el registro de proveedor asociado a tu perfil (al editar, botón **"Usar mi cuenta"**). Si todavía no tenés uno asociado, la app te pide elegirlo la primera vez. Un reintegro no se puede guardar sin una cuenta a la que transferir.
 - En **Reintegro a otra persona**, no se ofrece tu cuenta: hay que elegir o cargar la de la persona (CBU/CVU o alias), si no, no deja guardar. Los avisos de pago te llegan a vos, que cargaste el comprobante.
 - En **Pago a Proveedor**, elegís el proveedor del **catálogo oficial** y sus datos (CBU, alias, CUIT, titular) se completan solos y quedan en modo lectura.
 - La IA **no** decide el tipo de pago: lo elegís vos, y es obligatorio. **Reintegro** y **Pago a Proveedor** quedan *Pendientes* de pago; las tarjetas quedan como *Directo*.
