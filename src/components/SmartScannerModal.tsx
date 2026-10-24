@@ -51,14 +51,15 @@ import {
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
 import { prepareFileForUpload } from '../utils/imageProcessing';
+import { getOcrRequestOptions } from '../utils/aiSettings';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import { VendorFormModal } from './VendorFormModal';
 import { AccountSelector } from './AccountSelector';
 
-// Espera máxima de la lectura con IA (incluye el reintento)
-const AI_EXTRACTION_TIMEOUT_MS = 90_000;
+// Espera máxima de la lectura con IA (incluye el reintento y, con Claude, el respaldo con Gemini)
+const AI_EXTRACTION_TIMEOUT_MS = 120_000;
 
 export interface SmartScannerModalProps {
   isOpen: boolean;
@@ -388,6 +389,8 @@ export function SmartScannerModal({
               imageBase64: previewUrl,
               mimeType,
               availableCategories,
+              // Motor de IA elegido en Sistema (Gemini por defecto); el servidor lo valida
+              ...getOcrRequestOptions(),
             }),
             signal: abortController.signal,
           });

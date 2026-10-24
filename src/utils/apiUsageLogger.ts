@@ -107,7 +107,7 @@ export function normalizeApiLog(log: ApiUsageLogEntry): ApiUsageLogEntry {
  * Persists an API usage log entry to Cloud Firestore
  */
 export async function logApiUsageEvent(entry: {
-  service: 'gemini_ai' | 'google_drive' | 'google_gmail' | 'firestore';
+  service: 'gemini_ai' | 'claude_ai' | 'google_drive' | 'google_gmail' | 'firestore';
   serviceName: string;
   endpoint: string;
   actionName: string;
@@ -269,6 +269,7 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
     let totalCostUsd = 0;
     const byService: Record<string, ServiceUsageSummary> = {
       gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+      claude_ai: { service: 'claude_ai', serviceName: 'Anthropic Claude', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
       google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
       google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
       firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },

@@ -21,6 +21,7 @@ import { Vendor, UserBankDetails, VendorChangeRequest } from '../types';
 import { formatCuit } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { prepareFileForUpload } from '../utils/imageProcessing';
+import { getOcrRequestOptions } from '../utils/aiSettings';
 
 interface VendorFormModalProps {
   isOpen: boolean;
@@ -231,6 +232,7 @@ export function VendorFormModal({
         body: JSON.stringify({
           imageBase64: base64,
           mimeType,
+          ...getOcrRequestOptions(),
         }),
       });
       const result = await res.json();
