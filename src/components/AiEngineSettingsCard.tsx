@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Bot, Check, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, Check, CheckCircle2, Loader2, PlugZap, Sparkles, XCircle } from 'lucide-react';
 import {
   AiOcrSettings,
   CLAUDE_OCR_MODELS,
@@ -31,6 +31,31 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [claudeConfigured, setClaudeConfigured] = useState<boolean | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Llamada mínima a Claude con el modelo elegido: confirma clave, saldo y acceso, o muestra el error exacto
+  const handleTestClaude = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await authFetch('/api/ai/test-claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: claudeModel }),
+      });
+      const data = await res.json().catch(() => null);
+      setTestResult(
+        data && typeof data.message === 'string'
+          ? { ok: Boolean(data.ok), message: data.message }
+          : { ok: false, message: `El servidor respondió ${res.status}.` }
+      );
+    } catch {
+      setTestResult({ ok: false, message: 'No se pudo contactar al servidor.' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     setProvider(settings.ocrProvider);
@@ -153,6 +178,33 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
               <CheckCircle2 className="w-3.5 h-3.5" /> Clave de Claude configurada en el servidor.
             </p>
           )}
+          <div className="flex flex-wrap items-start gap-2 pt-1">
+            <button
+              type="button"
+              disabled={testing}
+              onClick={handleTestClaude}
+              className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
+            >
+              {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5" />}
+              Probar conexión con Claude
+            </button>
+            {testResult && (
+              <p
+                className={`flex-1 min-w-[220px] text-xs rounded-lg px-2.5 py-1.5 border flex items-start gap-1.5 break-words ${
+                  testResult.ok
+                    ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                    : 'text-rose-800 bg-rose-50 border-rose-200'
+                }`}
+              >
+                {testResult.ok ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                )}
+                <span>{testResult.message}</span>
+              </p>
+            )}
+          </div>
         </div>
       )}
 

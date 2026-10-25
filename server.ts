@@ -9,7 +9,7 @@ import { initializeApp, cert, applicationDefault, type App } from "firebase-admi
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { APP_VERSION, APP_BUILD_ID, APP_BUILD_DATE } from "./src/version";
-import { extractJsonWithClaude, isClaudeConfigured, ClaudeOcrError } from "./claudeOcr";
+import { extractJsonWithClaude, isClaudeConfigured, ClaudeOcrError, testClaudeConnection } from "./claudeOcr";
 import { normalizeAiOcrSettings, GEMINI_OCR_MODEL, CLAUDE_OCR_MODELS } from "./src/utils/aiModels";
 
 dotenv.config();
@@ -2333,6 +2333,13 @@ async function runDocumentOcr(opts: {
     engineNote,
   };
 }
+
+// Prueba de conexión con Claude desde Sistema (solo administradores): muestra el error exacto si falla
+app.post("/api/ai/test-claude", authenticateFirebaseUser, requireAdminRole, rateLimit("ai-test", { user: 0, admin: 30 }, 60 * 60 * 1000), async (req, res) => {
+  const result = await testClaudeConnection(typeof req.body?.model === "string" ? req.body.model : undefined);
+  if (!result.ok) console.warn("[AI test] Claude:", result.message);
+  res.json(result);
+});
 
 // Estado de los motores de IA para la pestaña Sistema (no expone la clave)
 app.get("/api/ai/status", authenticateFirebaseUser, (_req, res) => {

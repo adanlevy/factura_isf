@@ -66,6 +66,54 @@ function emptyStringsToNull(data: Record<string, unknown>): Record<string, unkno
   return out;
 }
 
+/**
+ * Explica en castellano por qué falló un pedido a Claude, con el mensaje exacto de Anthropic
+ * (el cuerpo del error trae { error: { type, message } }).
+ */
+export function describeClaudeError(error: unknown): string {
+  if (error instanceof Anthropic.APIError) {
+    const body = error.error as { error?: { type?: string; message?: string } } | undefined;
+    const apiMessage = body?.error?.message || error.message;
+    const apiType = body?.error?.type || error.type || '';
+    const raw = `[${error.status ?? 'sin estado'}${apiType ? ` ${apiType}` : ''}] ${apiMessage}`;
+    if (error instanceof Anthropic.AuthenticationError) {
+      return `La clave ANTHROPIC_API_KEY no es válida o fue desactivada. ${raw}`;
+    }
+    if (error instanceof Anthropic.PermissionDeniedError) {
+      return `La clave no tiene permiso para usar este modelo o espacio de trabajo. ${raw}`;
+    }
+    if (error instanceof Anthropic.RateLimitError) {
+      return `Se alcanzó el límite de pedidos o de gasto de la cuenta de Anthropic. ${raw}`;
+    }
+    if (/credit balance|billing|purchase credits/i.test(apiMessage)) {
+      return `La cuenta de Anthropic no tiene saldo: cargá créditos en console.anthropic.com → Billing. ${raw}`;
+    }
+    if (error instanceof Anthropic.NotFoundError || /model/i.test(apiMessage) && error.status === 404) {
+      return `El modelo no está disponible para esta clave. ${raw}`;
+    }
+    return `Claude rechazó el pedido. ${raw}`;
+  }
+  return `No se pudo contactar a Claude: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+/** Prueba mínima (pocos tokens) para verificar clave, saldo y acceso al modelo */
+export async function testClaudeConnection(model?: string): Promise<{ ok: boolean; model: string; message: string }> {
+  const modelInfo = findClaudeModel(model) || findClaudeModel(DEFAULT_CLAUDE_OCR_MODEL)!;
+  if (!isClaudeConfigured()) {
+    return { ok: false, model: modelInfo.id, message: 'Falta configurar ANTHROPIC_API_KEY en el servidor.' };
+  }
+  try {
+    const response = await getAnthropicClient().messages.create({
+      model: modelInfo.id,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: 'Respondé solamente: OK' }],
+    });
+    return { ok: true, model: response.model, message: `Conexión correcta con ${modelInfo.label}.` };
+  } catch (error) {
+    return { ok: false, model: modelInfo.id, message: describeClaudeError(error) };
+  }
+}
+
 export interface ClaudeOcrResult {
   data: Record<string, unknown>;
   /** Modelo que respondió (puede ser otro si actuó el respaldo de Anthropic) */
@@ -123,14 +171,7 @@ export async function extractJsonWithClaude(params: {
   try {
     response = await getAnthropicClient().beta.messages.create(request);
   } catch (error) {
-    if (error instanceof Anthropic.AuthenticationError) {
-      throw new ClaudeOcrError('La clave ANTHROPIC_API_KEY del servidor no es válida.');
-    } else if (error instanceof Anthropic.RateLimitError) {
-      throw new ClaudeOcrError('Claude alcanzó el límite de pedidos de la cuenta; se reintenta con Gemini.');
-    } else if (error instanceof Anthropic.APIError) {
-      throw new ClaudeOcrError(`Claude respondió con error ${error.status ?? ''}: ${error.message}`);
-    }
-    throw new ClaudeOcrError(`No se pudo contactar a Claude: ${error instanceof Error ? error.message : String(error)}`);
+    throw new ClaudeOcrError(describeClaudeError(error));
   }
 
   if (response.stop_reason === 'refusal') {

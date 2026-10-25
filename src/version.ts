@@ -2,9 +2,9 @@
  * Application Version & Build Tracking
  * Incremental versioning with semantic release tags and build timestamps.
  */
-export const APP_VERSION = '2.19.0';
-export const APP_BUILD_DATE = '2026.10.24';
-export const APP_BUILD_ID = 'build-20261024-ocr-engine-selector-claude';
+export const APP_VERSION = '2.19.1';
+export const APP_BUILD_DATE = '2026.10.25';
+export const APP_BUILD_ID = 'build-20261025-claude-error-diagnostics';
 
 export interface VersionInfo {
   version: string;
