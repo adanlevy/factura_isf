@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Receipt,
-  Volume2,
   Download,
   Copy,
   Check,
@@ -794,16 +793,6 @@ export function ReceiptViewerModal({
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
                 <div className="text-slate-500 font-semibold mb-1">Motivo / Detalle:</div>
                 <p className="text-slate-800">{expense.notes}</p>
-              </div>
-            )}
-
-            {expense.voiceTranscription && (
-              <div className="p-3.5 bg-indigo-50/80 rounded-2xl border border-indigo-100 space-y-1">
-                <div className="flex items-center text-indigo-700 font-semibold">
-                  <Volume2 className="w-3.5 h-3.5 mr-1" />
-                  Nota de voz procesada:
-                </div>
-                <p className="italic text-indigo-950">"{expense.voiceTranscription}"</p>
               </div>
             )}
 

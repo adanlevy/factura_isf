@@ -70,7 +70,7 @@ service cloud.firestore {
         'submittedByName', 'submittedByPicture', 'bankDetails',
         'reimbursable', 'reimbursementStatus', 'reimbursementNotes', 'paymentType', 'paymentMethod',
         'notes', 'accountingNotes', 'items', 'appliesWithholdings',
-        'voiceTranscription', 'aiConfidenceSummary', 'isAiExtracted',
+        'aiConfidenceSummary', 'isAiExtracted',
         'receiptFileName', 'driveFileId', 'driveUploadedFileName', 'driveFolderTarget',
         'driveFolderUrl', 'driveUploadedUrl', 'driveUploadStatus', 'driveUploadedAt', 'updatedAt'
       ];

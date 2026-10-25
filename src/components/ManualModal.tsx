@@ -287,7 +287,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <p className="text-slate-600 text-xs">Orientativo para administradores técnicos. Frontend React + TypeScript, backend Express que centraliza los servicios de Google; datos en Firebase Firestore.</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {[
-                ['🤖 IA — Google Gemini', 'Lee facturas (OCR), constancias, audio y texto. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
+                ['🤖 IA — Google Gemini', 'Lee facturas (OCR) y constancias de proveedores. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
                 ['🧠 IA alternativa — Claude', 'Opcional, se elige en Sistema (Opus 5.5, Sonnet 5.5 o Haiku 5.5) para leer comprobantes y constancias. Requiere ANTHROPIC_API_KEY en el servidor; si falla o falta, sigue con Gemini. Costos por modelo en la tabla de Sistema.'],
                 ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta para facturas y tickets; los comprobantes de pago y certificados de retención van a una carpeta única aparte. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
                 ['✉️ Correos — Gmail API', 'Plantillas HTML institucionales. El CC automático combina usuarios «copiar en todo», emails del centro de costos y CC explícito.'],

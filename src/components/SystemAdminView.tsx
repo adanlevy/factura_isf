@@ -589,7 +589,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
             {/* Service Breakdown Comparison Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-              {/* 1. Google Gemini AI OCR & Voice */}
+              {/* 1. Google Gemini AI OCR */}
               <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
@@ -600,7 +600,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       <span className="font-bold text-xs text-slate-800">Gemini 3.7 Flash (AI)</span>
                     </div>
                     <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-mono">
-                      OCR / Audio
+                      OCR
                     </span>
                   </div>
                   <div className="mt-3">

@@ -212,7 +212,6 @@ export function exportToCSV(expenses: Expense[]): void {
     'Estado Reintegro',
     'Método de Pago',
     'Notas / Justificación',
-    'Transcripción de Audio',
   ];
 
   const rows = expenses.map((exp) => [
@@ -235,7 +234,6 @@ export function exportToCSV(expenses: Expense[]): void {
       : 'No Aplica',
     csvCell(exp.paymentMethod),
     csvCell(exp.notes),
-    csvCell(exp.voiceTranscription),
   ]);
 
   const csvContent =

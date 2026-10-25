@@ -203,7 +203,7 @@ La pestaña **"Mis Gastos"** muestra **todos tus comprobantes** (los cargados co
 
 ### 6.5 Ver y reemplazar un comprobante
 
-El **visor de comprobante** muestra la imagen o PDF y todos los datos: Monto, Centro de Costos, Solicitante, Categoría, Forma de Pago, Estado, datos de transferencia (con botón **Copiar**), notas, nota de voz procesada (si la hubiera) e ítems de la factura.
+El **visor de comprobante** muestra la imagen o PDF y todos los datos: Monto, Centro de Costos, Solicitante, Categoría, Forma de Pago, Estado, datos de transferencia (con botón **Copiar**), notas e ítems de la factura.
 
 Tiene **pestañas** según lo que exista: *Factura / Ticket Original*, *Comprobante de Pago* y *Certificado de Retención*.
 
@@ -374,9 +374,9 @@ La pestaña **"Log de Cambios"** registra **en tiempo real** todo lo que se crea
 La aplicación es un frontend **React + TypeScript** servido junto a un backend **Express** (`server.ts`) que actúa como intermediario centralizado hacia los servicios de Google. Los datos estructurados viven en **Firebase Firestore**.
 
 ### 8.1 Inteligencia Artificial (Google Gemini)
-- Lee facturas/tickets (OCR), constancias de proveedores, y puede procesar audio y texto.
+- Lee facturas/tickets (OCR) y constancias de proveedores.
 - **Modelo:** `gemini-3.7-flash` como principal, con respaldo automático a variantes más livianas si hay saturación.
-- **Costos registrados:** ~US$ 0,10 por millón de tokens de entrada y ~US$ 0,40 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a ARS con tipo de cambio fijo configurado).
+- **Costos registrados:** ~US$ 0,75 por millón de tokens de entrada y ~US$ 3,75 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a ARS con tipo de cambio fijo configurado).
 
 ### 8.1b Claude (Anthropic) como motor alternativo de lectura
 - Opcional: se elige en **Sistema → Motor de IA para leer comprobantes**. Usa las mismas instrucciones y el mismo esquema que Gemini, con respuesta JSON estructurada.

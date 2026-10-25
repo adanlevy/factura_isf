@@ -205,9 +205,6 @@ export interface Expense {
   withholdingCertificateDriveUrl?: string;
   withholdingCertificateSentAt?: string;
 
-  audioRecordingUrl?: string; // Data URL or base64 audio
-  voiceTranscription?: string;
-  
   // AI extraction metadata
   aiConfidenceSummary?: string;
   isAiExtracted?: boolean;
@@ -233,20 +230,6 @@ export interface ExtractionResult {
   items?: ExpenseItem[];
   paymentMethod?: string;
   confidenceSummary?: string;
-}
-
-export interface AudioProcessingResult {
-  transcription: string;
-  project?: string;
-  category?: string;
-  reimbursable?: boolean;
-  reimbursementStatus?: ReimbursementStatus;
-  notes?: string;
-  amount?: number;
-  vendor?: string;
-  date?: string;
-  paymentMethod?: string;
-  explanation?: string;
 }
 
 export interface FirestoreCollectionMetric {
