@@ -47,6 +47,8 @@ import {
 import { matchesSearch } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
+import { AiEngineSettingsCard } from './AiEngineSettingsCard';
+import { AiOcrSettings, DEFAULT_AI_OCR_SETTINGS, CLAUDE_OCR_MODELS } from '../utils/aiModels';
 
 interface SystemAdminViewProps {
   expenses: Expense[];
@@ -54,6 +56,8 @@ interface SystemAdminViewProps {
   costCenters: CostCenter[];
   categories: string[];
   appUsers: AppUserRecord[];
+  /** Motor de IA para leer comprobantes (Gemini por defecto o Claude) */
+  aiOcrSettings?: AiOcrSettings;
 }
 
 export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
@@ -62,6 +66,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   costCenters,
   categories,
   appUsers,
+  aiOcrSettings = DEFAULT_AI_OCR_SETTINGS,
 }) => {
   const [metrics, setMetrics] = useState<SystemMetricsReport | null>(null);
   const [firestoreApiLogs, setFirestoreApiLogs] = useState<ApiUsageLogEntry[]>([]);
@@ -542,6 +547,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
         </div>
       )}
 
+      {/* Motor de IA para leer comprobantes + costos por modelo */}
+      {(selectedTab === 'overview' || selectedTab === 'apis') && <AiEngineSettingsCard settings={aiOcrSettings} />}
+
       {/* VIEW SECTION: API USAGE MONTH OVER MONTH */}
       {(selectedTab === 'overview' || selectedTab === 'apis') && apiUsage && (
         <div className="space-y-6">
@@ -553,7 +561,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   <span>Comparativa de Costos de APIs: Este Mes vs Mes Anterior</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Consumo discriminado de Gemini 3.7 Flash OCR, Google Drive v3, Gmail REST API y Firestore
+                  Consumo discriminado de Gemini 3.7 Flash, Claude, Google Drive v3, Gmail REST API y Firestore
                 </p>
               </div>
 
@@ -580,7 +588,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
             </div>
 
             {/* Service Breakdown Comparison Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
               {/* 1. Google Gemini AI OCR & Voice */}
               <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between">
                 <div>
@@ -624,6 +632,53 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   <span>Mes Anterior:</span>
                   <span className="font-medium text-slate-700">
                     {formatCost(apiUsage.previousMonth.byService.gemini_ai?.costUsd || 0)}
+                  </span>
+                </div>
+              </div>
+
+              {/* 1b. Anthropic Claude (OCR, si se eligió en el motor de IA) */}
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="p-1.5 bg-amber-100 text-amber-800 rounded-md">
+                        <Zap className="w-4 h-4" />
+                      </div>
+                      <span className="font-bold text-xs text-slate-800">Anthropic Claude (AI)</span>
+                    </div>
+                    <span className="text-[10px] bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-mono">
+                      OCR
+                    </span>
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-xs text-slate-500">Este Mes:</div>
+                    <div className="text-lg font-bold text-slate-800">
+                      {formatCost(apiUsage.currentMonth.byService.claude_ai?.costUsd || 0)}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {apiUsage.currentMonth.byService.claude_ai?.calls || 0} llamadas •{' '}
+                      {((apiUsage.currentMonth.byService.claude_ai?.tokens || 0) / 1000).toFixed(1)}k tokens
+                    </div>
+                    {Boolean(apiUsage.currentMonth.byService.claude_ai?.tokens) && (
+                      <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                        <span className="text-indigo-600 font-semibold">
+                          {((apiUsage.currentMonth.byService.claude_ai?.promptTokens || 0) / 1000).toFixed(1)}k in
+                        </span>
+                        {' · '}
+                        <span className="text-violet-600 font-semibold">
+                          {((apiUsage.currentMonth.byService.claude_ai?.candidatesTokens || 0) / 1000).toFixed(1)}k out
+                        </span>
+                      </div>
+                    )}
+                    <div className="text-[10px] text-amber-800 bg-amber-50/80 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
+                      Tarifa según modelo (ver tabla)
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 flex justify-between">
+                  <span>Mes Anterior:</span>
+                  <span className="font-medium text-slate-700">
+                    {formatCost(apiUsage.previousMonth.byService.claude_ai?.costUsd || 0)}
                   </span>
                 </div>
               </div>
@@ -825,6 +880,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
               >
                 <option value="all">Todos los Servicios</option>
                 <option value="gemini_ai">Google Gemini AI</option>
+                <option value="claude_ai">Anthropic Claude</option>
                 <option value="google_drive">Google Drive API</option>
                 <option value="google_gmail">Google Gmail API</option>
               </select>
@@ -881,6 +937,8 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                           className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${
                             log.service === 'gemini_ai'
                               ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                              : log.service === 'claude_ai'
+                              ? 'bg-amber-50 text-amber-800 border border-amber-100'
                               : log.service === 'google_drive'
                               ? 'bg-blue-50 text-blue-700 border border-blue-100'
                               : log.service === 'google_gmail'
@@ -902,7 +960,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                         )}
                       </td>
                       <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-600">
-                        {log.service === 'gemini_ai' ? (
+                        {log.service === 'gemini_ai' || log.service === 'claude_ai' ? (
                           <div>
                             <span className="font-semibold text-slate-800">
                               {(log.totalTokens || 0).toLocaleString()}
@@ -935,7 +993,12 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                           <div className="text-right">
                             <span>{formatCost(log.estimatedCostUsd)}</span>
                             <span className="block text-[9px] text-indigo-500 font-normal mt-0.5">
-                              $0.75 in / $3.75 out
+                              {log.service === 'claude_ai'
+                                ? (() => {
+                                    const m = CLAUDE_OCR_MODELS.find((c) => log.model?.startsWith(c.id));
+                                    return m ? `${m.label}: $${m.inputPerMTok} in / $${m.outputPerMTok} out` : log.model || 'Claude';
+                                  })()
+                                : '$0.75 in / $3.75 out'}
                             </span>
                           </div>
                         )}

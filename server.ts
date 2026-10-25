@@ -9,6 +9,8 @@ import { initializeApp, cert, applicationDefault, type App } from "firebase-admi
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { APP_VERSION, APP_BUILD_ID, APP_BUILD_DATE } from "./src/version";
+import { extractJsonWithClaude, isClaudeConfigured, ClaudeOcrError } from "./claudeOcr";
+import { normalizeAiOcrSettings, GEMINI_OCR_MODEL, CLAUDE_OCR_MODELS } from "./src/utils/aiModels";
 
 dotenv.config();
 
@@ -446,7 +448,7 @@ declare global {
 export interface ApiUsageRecord {
   id: string;
   timestamp: string;
-  service: 'gemini_ai' | 'google_drive' | 'google_gmail' | 'firestore';
+  service: 'gemini_ai' | 'claude_ai' | 'google_drive' | 'google_gmail' | 'firestore';
   serviceName: string;
   endpoint: string;
   actionName: string;
@@ -1555,6 +1557,7 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
       let totalCostUsd = 0;
       const byService: Record<string, { service: string; serviceName: string; calls: number; tokens: number; promptTokens?: number; candidatesTokens?: number; costUsd: number; costArs: number }> = {
         gemini_ai: { service: 'gemini_ai', serviceName: 'Google Gemini AI', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
+        claude_ai: { service: 'claude_ai', serviceName: 'Anthropic Claude', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
         google_drive: { service: 'google_drive', serviceName: 'Google Drive API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
         google_gmail: { service: 'google_gmail', serviceName: 'Google Gmail API', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
         firestore: { service: 'firestore', serviceName: 'Firebase Firestore', calls: 0, tokens: 0, promptTokens: 0, candidatesTokens: 0, costUsd: 0, costArs: 0 },
@@ -2227,6 +2230,148 @@ app.get("/api/drive/status", authenticateFirebaseUser, async (_req, res) => {
   });
 });
 
+// --- Lectura de documentos (OCR): Gemini por defecto; Claude si Administración lo eligió en Sistema ---
+interface DocumentOcrResult {
+  data: any;
+  service: 'gemini_ai' | 'claude_ai';
+  serviceName: string;
+  model: string;
+  promptTokens: number;
+  candidatesTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  /** Aviso cuando se pidió Claude pero se terminó leyendo con Gemini */
+  engineNote?: string;
+}
+
+/**
+ * Lee un documento (imagen o PDF) con el motor elegido y devuelve el JSON según el esquema.
+ * El motor llega en el pedido (aiProvider / aiModel, del ajuste de Sistema) y se valida contra la lista de
+ * modelos permitidos. Si Claude falla (sin clave, error, formato no admitido), se continúa con Gemini.
+ */
+async function runDocumentOcr(opts: {
+  body: any;
+  endpoint: string;
+  actionName: string;
+  prompt: string;
+  schema: any;
+  mimeType: string;
+  base64: string;
+  fallbackTokens: { prompt: number; candidates: number };
+}): Promise<DocumentOcrResult> {
+  const choice = normalizeAiOcrSettings({ ocrProvider: opts.body?.aiProvider, claudeModel: opts.body?.aiModel });
+  let engineNote: string | undefined;
+
+  if (choice.ocrProvider === 'claude') {
+    const claudeStart = Date.now();
+    try {
+      const result = await extractJsonWithClaude({
+        model: choice.claudeModel,
+        prompt: opts.prompt,
+        mimeType: opts.mimeType,
+        base64: opts.base64,
+        geminiSchema: opts.schema,
+      });
+      return {
+        data: result.data,
+        service: 'claude_ai',
+        serviceName: 'Anthropic Claude',
+        model: result.model,
+        promptTokens: result.inputTokens,
+        candidatesTokens: result.outputTokens,
+        totalTokens: result.inputTokens + result.outputTokens,
+        costUsd: result.costUsd,
+      };
+    } catch (error: any) {
+      const reason = error instanceof ClaudeOcrError ? error.message : error?.message || String(error);
+      console.warn(`[OCR] Claude (${choice.claudeModel}) no pudo leer el documento; se usa Gemini:`, reason);
+      engineNote = `Claude no pudo leerlo (${reason}); se usó Gemini.`;
+      logApiUsage({
+        service: 'claude_ai',
+        serviceName: 'Anthropic Claude',
+        endpoint: opts.endpoint,
+        actionName: opts.actionName,
+        model: choice.claudeModel,
+        estimatedCostUsd: 0,
+        status: 'error',
+        durationMs: Date.now() - claudeStart,
+        details: `${reason} Se continuó con Gemini.`,
+      });
+    }
+  }
+
+  const response = await generateContentWithRetry(getGeminiClient(), {
+    contents: [{ inlineData: { mimeType: opts.mimeType, data: opts.base64 } }, { text: opts.prompt }],
+    config: {
+      temperature: 0,
+      responseMimeType: "application/json",
+      responseSchema: opts.schema,
+    },
+  });
+  const jsonText = response.text || "{}";
+  let data: any = {};
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    console.warn("Failed to parse JSON response directly:", jsonText);
+    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      data = JSON.parse(jsonMatch[0]);
+    }
+  }
+  const promptTokens = (response as any).usageMetadata?.promptTokenCount || opts.fallbackTokens.prompt;
+  const candidatesTokens = (response as any).usageMetadata?.candidatesTokenCount || opts.fallbackTokens.candidates;
+  return {
+    data,
+    service: 'gemini_ai',
+    serviceName: 'Google Gemini AI',
+    model: GEMINI_OCR_MODEL.id,
+    promptTokens,
+    candidatesTokens,
+    totalTokens: (response as any).usageMetadata?.totalTokenCount || promptTokens + candidatesTokens,
+    costUsd: calculateGeminiCost(promptTokens, candidatesTokens),
+    engineNote,
+  };
+}
+
+// Estado de los motores de IA para la pestaña Sistema (no expone la clave)
+app.get("/api/ai/status", authenticateFirebaseUser, (_req, res) => {
+  res.json({
+    gemini: { configured: Boolean(process.env.GEMINI_API_KEY), model: GEMINI_OCR_MODEL.id },
+    claude: { configured: isClaudeConfigured(), models: CLAUDE_OCR_MODELS.map((m) => m.id) },
+  });
+});
+
+// Esquema de respuesta del OCR de comprobantes (formato Gemini; para Claude se convierte a JSON Schema)
+const INVOICE_OCR_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    vendor: { type: Type.STRING, description: "Nombre del comercio o proveedor" },
+    cuit: { type: Type.STRING, description: "CUIT del emisor/proveedor si figura en la factura, con o sin guiones, o null" },
+    recipientCuit: { type: Type.STRING, description: "CUIT del receptor/cliente/comprador en la factura si figura, o null" },
+    recipientName: { type: Type.STRING, description: "Nombre o razón social del receptor/cliente de la factura si figura, o null" },
+    isIsfRecipient: { type: Type.BOOLEAN, description: "True si la factura está emitida a nombre de CUIT 30-71254928-5 o Ingeniería Sin Fronteras, false en caso contrario" },
+    amount: { type: Type.NUMBER, description: "Monto total final en número decimal o null si no se encuentra" },
+    currency: { type: Type.STRING, description: "Código de moneda ej: ARS, USD" },
+    date: { type: Type.STRING, description: "Fecha en formato YYYY-MM-DD o null si no se encuentra en el comprobante" },
+    invoiceNumber: { type: Type.STRING, description: "Número de factura o ticket fiscal" },
+    paymentMethod: { type: Type.STRING, description: "Forma de pago detectada" },
+    items: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          description: { type: Type.STRING },
+          quantity: { type: Type.NUMBER },
+          unitPrice: { type: Type.NUMBER },
+          total: { type: Type.NUMBER },
+        },
+      },
+    },
+    confidenceSummary: { type: Type.STRING, description: "Explicación breve de lo detectado" },
+  },
+};
+
 // Endpoint 1: Extract data from Invoice / Receipt Photo
 app.post("/api/extract-invoice", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
   const startTime = Date.now();
@@ -2268,8 +2413,6 @@ app.post("/api/extract-invoice", authenticateFirebaseUser, rateLimit("gemini", {
       effectiveMimeType = "image/jpeg";
     }
 
-    const ai = getGeminiClient();
-
     const systemPrompt = `Eres un auditor contable de máxima precisión y alta velocidad especializado en OCR de comprobantes fiscales, facturas A/B/C de AFIP, tickets de supermercado/autoservicio, estaciones de servicio (YPF, Shell, Axion, Puma, Gulf, Refinor), comprobantes de Mercado Pago, transferencias bancarias, tickets de POSNET/LapOS y recibos oficiales.
 
 TU OBJETIVO PRINCIPAL: Localizar con exactitud el MONTO TOTAL, la FECHA DE EMISIÓN, el PROVEEDOR (comercio emisor), CUIT y N° de Factura.
@@ -2306,64 +2449,17 @@ REGLAS DE EXTRACCIÓN:
 
 Devuelve los datos en JSON conforme al esquema.`;
 
-    const startTime = Date.now();
-    const response = await generateContentWithRetry(ai, {
-      contents: [
-        {
-          inlineData: {
-            mimeType: effectiveMimeType,
-            data: cleanBase64,
-          },
-        },
-        {
-          text: systemPrompt,
-        },
-      ],
-      config: {
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            vendor: { type: Type.STRING, description: "Nombre del comercio o proveedor" },
-            cuit: { type: Type.STRING, description: "CUIT del emisor/proveedor si figura en la factura, con o sin guiones, o null" },
-            recipientCuit: { type: Type.STRING, description: "CUIT del receptor/cliente/comprador en la factura si figura, o null" },
-            recipientName: { type: Type.STRING, description: "Nombre o razón social del receptor/cliente de la factura si figura, o null" },
-            isIsfRecipient: { type: Type.BOOLEAN, description: "True si la factura está emitida a nombre de CUIT 30-71254928-5 o Ingeniería Sin Fronteras, false en caso contrario" },
-            amount: { type: Type.NUMBER, description: "Monto total final en número decimal o null si no se encuentra" },
-            currency: { type: Type.STRING, description: "Código de moneda ej: ARS, USD" },
-            date: { type: Type.STRING, description: "Fecha en formato YYYY-MM-DD o null si no se encuentra en el comprobante" },
-            invoiceNumber: { type: Type.STRING, description: "Número de factura o ticket fiscal" },
-            paymentMethod: { type: Type.STRING, description: "Forma de pago detectada" },
-            items: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  description: { type: Type.STRING },
-                  quantity: { type: Type.NUMBER },
-                  unitPrice: { type: Type.NUMBER },
-                  total: { type: Type.NUMBER },
-                },
-              },
-            },
-            confidenceSummary: { type: Type.STRING, description: "Explicación breve de lo detectado" },
-          },
-        },
-      },
+    const ocr = await runDocumentOcr({
+      body: req.body,
+      endpoint: '/api/extract-invoice',
+      actionName: 'Escaneo Inteligente de Factura (OCR)',
+      prompt: systemPrompt,
+      schema: INVOICE_OCR_SCHEMA,
+      mimeType: effectiveMimeType,
+      base64: cleanBase64,
+      fallbackTokens: { prompt: Math.ceil((cleanBase64.length * 0.75) / 4) + 450, candidates: 300 },
     });
-
-    const jsonText = response.text || "{}";
-    let extractedData: any = {};
-    try {
-      extractedData = JSON.parse(jsonText);
-    } catch (parseErr) {
-      console.warn("Failed to parse JSON response directly:", jsonText);
-      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        extractedData = JSON.parse(jsonMatch[0]);
-      }
-    }
+    let extractedData: any = ocr.data || {};
 
     // Deterministic CUIT verification for Ingeniería Sin Fronteras (CUIT 30-71254928-5)
     const ISF_CUIT_CLEAN = "30712549285";
@@ -2396,27 +2492,28 @@ Devuelve los datos en JSON conforme al esquema.`;
     extractedData.isIsfRecipient = isIsfRecipient;
     extractedData.isfRecipientMismatchReason = isfRecipientMismatchReason;
 
-    const pTokens = (response as any).usageMetadata?.promptTokenCount || Math.ceil((cleanBase64.length * 0.75) / 4) + 450;
-    const cTokens = (response as any).usageMetadata?.candidatesTokenCount || Math.ceil(jsonText.length / 4);
-    const tTokens = (response as any).usageMetadata?.totalTokenCount || (pTokens + cTokens);
     const apiLog = logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
+      service: ocr.service,
+      serviceName: ocr.serviceName,
       endpoint: '/api/extract-invoice',
       actionName: 'Escaneo Inteligente de Factura (OCR)',
-      model: 'gemini-3.7-flash',
-      promptTokens: pTokens,
-      candidatesTokens: cTokens,
-      totalTokens: tTokens,
-      estimatedCostUsd: calculateGeminiCost(pTokens, cTokens),
+      model: ocr.model,
+      promptTokens: ocr.promptTokens,
+      candidatesTokens: ocr.candidatesTokens,
+      totalTokens: ocr.totalTokens,
+      estimatedCostUsd: ocr.costUsd,
       status: 'success',
       durationMs: Date.now() - startTime,
-      details: extractedData?.vendor ? `Comercio: ${extractedData.vendor} | Monto: ${extractedData.amount || 0}` : undefined,
+      details: [
+        extractedData?.vendor ? `Comercio: ${extractedData.vendor} | Monto: ${extractedData.amount || 0}` : '',
+        ocr.engineNote || '',
+      ].filter(Boolean).join(' | ') || undefined,
     });
 
     return res.json({
       success: true,
       data: extractedData,
+      engine: { service: ocr.service, model: ocr.model, note: ocr.engineNote },
       apiLog,
     });
   } catch (error: any) {
@@ -2439,6 +2536,25 @@ Devuelve los datos en JSON conforme al esquema.`;
     });
   }
 });
+
+// Esquema de respuesta del OCR de constancias / datos bancarios de proveedores
+const VENDOR_DOC_OCR_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    name: { type: Type.STRING, description: "Nombre o Razón Social del proveedor" },
+    cuit: { type: Type.STRING, description: "CUIT/CUIL del proveedor o null" },
+    contactEmail: { type: Type.STRING, description: "Email de contacto/facturación o null" },
+    phone: { type: Type.STRING, description: "Teléfono o null" },
+    address: { type: Type.STRING, description: "Dirección fiscal o null" },
+    category: { type: Type.STRING, description: "Categoría de servicios o bienes o null" },
+    bankName: { type: Type.STRING, description: "Banco o Billetera Virtual o null" },
+    accountType: { type: Type.STRING, description: "Caja de Ahorro, Cuenta Corriente o Indefinido si no está expresamente aclarado" },
+    cbuCvu: { type: Type.STRING, description: "CBU o CVU de 22 dígitos o null" },
+    alias: { type: Type.STRING, description: "Alias de la cuenta bancaria ÚNICAMENTE si figura con referencia explícita de Alias en el documento, o null si no figura. NUNCA inventar." },
+    accountHolder: { type: Type.STRING, description: "Titular de la cuenta bancaria o null" },
+    notes: { type: Type.STRING, description: "Notas adicionales detectadas o null" },
+  },
+};
 
 // Endpoint 1b: Process Vendor Document (Image or PDF) to extract vendor & bank details
 app.post("/api/process-vendor-doc", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
@@ -2481,8 +2597,6 @@ app.post("/api/process-vendor-doc", authenticateFirebaseUser, rateLimit("gemini"
       effectiveMimeType = "image/jpeg";
     }
 
-    const ai = getGeminiClient();
-
     const systemPrompt = `Eres un experto asistente contable que escanea constancias fiscales, facturas, comprobantes bancarios, capturas de pantalla de CBU/CVU/Alias, resúmenes bancarios y documentos de proveedores en Argentina.
 Analiza la imagen o PDF provisto e identifica todos los datos fiscales, de contacto y bancarios del proveedor.
 
@@ -2510,51 +2624,18 @@ Instrucciones de extracción:
 
 Devuelve los datos estrictamente en JSON conforme al esquema.`;
 
-    const response = await generateContentWithRetry(ai, {
-      contents: [
-        {
-          inlineData: {
-            mimeType: effectiveMimeType,
-            data: cleanBase64,
-          },
-        },
-        {
-          text: systemPrompt,
-        },
-      ],
-      config: {
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING, description: "Nombre o Razón Social del proveedor" },
-            cuit: { type: Type.STRING, description: "CUIT/CUIL del proveedor o null" },
-            contactEmail: { type: Type.STRING, description: "Email de contacto/facturación o null" },
-            phone: { type: Type.STRING, description: "Teléfono o null" },
-            address: { type: Type.STRING, description: "Dirección fiscal o null" },
-            category: { type: Type.STRING, description: "Categoría de servicios o bienes o null" },
-            bankName: { type: Type.STRING, description: "Banco o Billetera Virtual o null" },
-            accountType: { type: Type.STRING, description: "Caja de Ahorro, Cuenta Corriente o Indefinido si no está expresamente aclarado" },
-            cbuCvu: { type: Type.STRING, description: "CBU o CVU de 22 dígitos o null" },
-            alias: { type: Type.STRING, description: "Alias de la cuenta bancaria ÚNICAMENTE si figura con referencia explícita de Alias en el documento, o null si no figura. NUNCA inventar." },
-            accountHolder: { type: Type.STRING, description: "Titular de la cuenta bancaria o null" },
-            notes: { type: Type.STRING, description: "Notas adicionales detectadas o null" },
-          },
-        },
-      },
+    const startTime = Date.now();
+    const ocr = await runDocumentOcr({
+      body: req.body,
+      endpoint: '/api/process-vendor-doc',
+      actionName: 'Extracción Constancia CBU / Proveedor',
+      prompt: systemPrompt,
+      schema: VENDOR_DOC_OCR_SCHEMA,
+      mimeType: effectiveMimeType,
+      base64: cleanBase64,
+      fallbackTokens: { prompt: 1600, candidates: 300 },
     });
-
-    const jsonText = response.text || "{}";
-    let extractedData: any = {};
-    try {
-      extractedData = JSON.parse(jsonText);
-    } catch (parseErr) {
-      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        extractedData = JSON.parse(jsonMatch[0]);
-      }
-    }
+    let extractedData: any = ocr.data || {};
 
     // Post-process & sanitize extracted data to guarantee no placeholder strings
     if (extractedData && typeof extractedData === 'object') {
@@ -2589,27 +2670,28 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
       }
     }
 
-    const vpTokens = (response as any).usageMetadata?.promptTokenCount || 1600;
-    const vcTokens = (response as any).usageMetadata?.candidatesTokenCount || 300;
-    const vtTokens = (response as any).usageMetadata?.totalTokenCount || (vpTokens + vcTokens);
     const apiLog = logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
+      service: ocr.service,
+      serviceName: ocr.serviceName,
       endpoint: '/api/process-vendor-doc',
       actionName: 'Extracción Constancia CBU / Proveedor',
-      model: 'gemini-3.7-flash',
-      promptTokens: vpTokens,
-      candidatesTokens: vcTokens,
-      totalTokens: vtTokens,
-      estimatedCostUsd: calculateGeminiCost(vpTokens, vcTokens),
+      model: ocr.model,
+      promptTokens: ocr.promptTokens,
+      candidatesTokens: ocr.candidatesTokens,
+      totalTokens: ocr.totalTokens,
+      estimatedCostUsd: ocr.costUsd,
       status: 'success',
-      durationMs: 1400,
-      details: extractedData?.name ? `Proveedor: ${extractedData.name} | CUIT: ${extractedData.cuit || 'S/D'}` : undefined,
+      durationMs: Date.now() - startTime,
+      details: [
+        extractedData?.name ? `Proveedor: ${extractedData.name} | CUIT: ${extractedData.cuit || 'S/D'}` : '',
+        ocr.engineNote || '',
+      ].filter(Boolean).join(' | ') || undefined,
     });
 
     return res.json({
       success: true,
       data: extractedData,
+      engine: { service: ocr.service, model: ocr.model, note: ocr.engineNote },
       apiLog,
     });
   } catch (error: any) {

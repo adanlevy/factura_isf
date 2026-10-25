@@ -140,7 +140,7 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 
 > En el celular, al elegir archivo el sistema operativo suele ofrecer la cámara como una opción más del diálogo. La aplicación no tiene un botón de cámara ni de grabación de voz propios.
 
-**Qué hace la IA automáticamente:** cada archivo aparece como una fila con una miniatura y el cartel **"Analizando IA…"**. La Inteligencia Artificial (Google Gemini) **lee el comprobante** y completa:
+**Qué hace la IA automáticamente:** cada archivo aparece como una fila con una miniatura y el cartel **"Analizando IA…"**. La Inteligencia Artificial (**Google Gemini** por defecto, o **Claude** si Administración lo eligió en Sistema) **lee el comprobante** y completa:
 - **Proveedor / comercio**
 - **Monto** (la app opera solo en **pesos argentinos, ARS**)
 - **Fecha**
@@ -351,7 +351,8 @@ La pestaña **"Usuarios / Roles"** administra quién puede entrar y con qué per
 La pestaña **"Sistema"** es el tablero operativo (uso y costos), con actualización automática cada 30 segundos.
 - **KPIs:** espacio ocupado en Firestore (sobre 1 GB), gasto de APIs del mes actual y anterior, y la variación intermensual.
 - **Espacio Firestore:** cuánto pesa cada colección de datos. (Las imágenes pesadas viven en Drive, no en Firestore.)
-- **Consumo de APIs:** costos de **Gemini (IA/OCR)**, **Google Drive**, **Gmail** y **Firestore**, con conversión USD→ARS.
+- **Motor de IA para leer comprobantes:** elegí **Google Gemini** (por defecto) o **Anthropic Claude** y, en Claude, el modelo: **Opus 5.5** (el más capaz), **Sonnet 5.5** (equilibrio) o **Haiku 5.5** (el más económico). Se aplica a la carga de comprobantes y a la lectura de constancias de proveedores, y se guarda con **"Guardar motor de IA"**. Incluye la **tabla de costos** de cada modelo (por millón de tokens y estimado por comprobante, en USD y ARS). Si Claude no responde o falta su clave en el servidor, la lectura **sigue automáticamente con Gemini** y queda anotado en el registro de llamadas.
+- **Consumo de APIs:** costos de **Gemini (IA/OCR)**, **Claude (OCR)**, **Google Drive**, **Gmail** y **Firestore**, con conversión USD→ARS.
 - **Estado de servicios:** salud de cada integración (Operativo / Configurado).
 - **Auditoría de llamadas:** registro cronológico de cada llamada a las APIs (con opción de limpiar logs).
 
@@ -376,6 +377,12 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - Lee facturas/tickets (OCR), constancias de proveedores, y puede procesar audio y texto.
 - **Modelo:** `gemini-3.7-flash` como principal, con respaldo automático a variantes más livianas si hay saturación.
 - **Costos registrados:** ~US$ 0,10 por millón de tokens de entrada y ~US$ 0,40 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a ARS con tipo de cambio fijo configurado).
+
+### 8.1b Claude (Anthropic) como motor alternativo de lectura
+- Opcional: se elige en **Sistema → Motor de IA para leer comprobantes**. Usa las mismas instrucciones y el mismo esquema que Gemini, con respuesta JSON estructurada.
+- **Clave:** el servidor necesita la variable de entorno `ANTHROPIC_API_KEY` (clave de la consola de Anthropic, con facturación propia). Sin ella, la lectura sigue con Gemini.
+- **Formatos:** JPG, PNG, WebP, GIF y PDF. Las fotos HEIC se leen con Gemini.
+- **Costos (USD por millón de tokens, entrada / salida):** Opus 5.5 $4 / $20 · Sonnet 5.5 $2 / $10 · Haiku 5.5 $0,10 / $0,50. Cada lectura registra su costo real en Sistema.
 
 ### 8.2 Archivo en Google Drive
 - Cada **centro de costos** tiene su **carpeta propia** en Drive, donde se archivan las **facturas y tickets**.

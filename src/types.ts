@@ -272,7 +272,7 @@ export interface FirestoreStorageMetrics {
 }
 
 export interface ServiceUsageSummary {
-  service: 'gemini_ai' | 'google_drive' | 'google_gmail' | 'firestore';
+  service: 'gemini_ai' | 'claude_ai' | 'google_drive' | 'google_gmail' | 'firestore';
   serviceName: string;
   calls: number;
   tokens: number;
@@ -297,7 +297,7 @@ export interface MonthApiUsage {
 export interface ApiUsageLogEntry {
   id: string;
   timestamp: string;
-  service: 'gemini_ai' | 'google_drive' | 'google_gmail' | 'firestore';
+  service: 'gemini_ai' | 'claude_ai' | 'google_drive' | 'google_gmail' | 'firestore';
   serviceName: string;
   endpoint: string;
   actionName: string;

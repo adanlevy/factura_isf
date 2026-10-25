@@ -191,7 +191,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
               Tocá <strong>«Cargar Comprobante»</strong> (o el botón flotante <span className="kbd">➕</span>). Podés
               elegir por explorador (se abre solo), por <strong>«Seleccionar archivos»</strong> o
               <strong> arrastrando</strong>. Acepta <strong>JPG, PNG y PDF</strong>, y varios a la vez. La IA (Google
-              Gemini) completa proveedor, monto, moneda, fecha, CUIT, N° de factura e ítems, y verifica si está a nombre
+              Gemini por defecto, o Claude si Administración lo eligió en Sistema) completa proveedor, monto, moneda, fecha, CUIT, N° de factura e ítems, y verifica si está a nombre
               de ISF (CUIT 30‑71254928‑5).
             </p>
             <p className="text-slate-600">
@@ -288,6 +288,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <div className="grid sm:grid-cols-2 gap-3">
               {[
                 ['🤖 IA — Google Gemini', 'Lee facturas (OCR), constancias, audio y texto. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
+                ['🧠 IA alternativa — Claude', 'Opcional, se elige en Sistema (Opus 5.5, Sonnet 5.5 o Haiku 5.5) para leer comprobantes y constancias. Requiere ANTHROPIC_API_KEY en el servidor; si falla o falta, sigue con Gemini. Costos por modelo en la tabla de Sistema.'],
                 ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta para facturas y tickets; los comprobantes de pago y certificados de retención van a una carpeta única aparte. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
                 ['✉️ Correos — Gmail API', 'Plantillas HTML institucionales. El CC automático combina usuarios «copiar en todo», emails del centro de costos y CC explícito.'],
                 ['☁️ Datos — Firestore', 'Centralizado y en tiempo real. Los archivos binarios nunca se guardan en Firestore, solo en Drive; en la base van los datos livianos y los enlaces.'],

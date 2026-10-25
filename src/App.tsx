@@ -11,6 +11,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { VendorRequestsContext } from './utils/vendorRequestsContext';
 import { ReimbursementAccountContext, ReimbursementAccountContextValue } from './utils/reimbursementAccountContext';
 import { ReimbursementAccountPicker } from './components/ReimbursementAccountPicker';
+import { subscribeToAiOcrSettings } from './utils/aiSettings';
+import { AiOcrSettings, DEFAULT_AI_OCR_SETTINGS } from './utils/aiModels';
 import { ExpenseList } from './components/ExpenseList';
 import { CostCentersView } from './components/CostCentersView';
 import { ReceiptViewerModal } from './components/ReceiptViewerModal';
@@ -475,6 +477,13 @@ export default function App() {
 
   // Configuración de Drive: carpeta única para comprobantes de pago y certificados de retención
   const [driveSettings, setDriveSettings] = useState<DriveSettings | null>(null);
+  // Motor de IA para leer comprobantes (lo elige Administración en Sistema)
+  const [aiOcrSettings, setAiOcrSettings] = useState<AiOcrSettings>(DEFAULT_AI_OCR_SETTINGS);
+  useEffect(() => {
+    if (!isFirebaseAuthReady || !currentUser?.email) return;
+    return subscribeToAiOcrSettings(setAiOcrSettings);
+  }, [isFirebaseAuthReady, currentUser?.email]);
+
   useEffect(() => {
     if (!isFirebaseAuthReady || !currentUser?.email) return;
     const unsubscribe = subscribeToDriveSettings(setDriveSettings);
@@ -3063,6 +3072,7 @@ export default function App() {
               costCenters={costCenters}
               categories={availableCategories}
               appUsers={appUsers}
+              aiOcrSettings={aiOcrSettings}
             />
           )}
 
