@@ -954,7 +954,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                           {log.actionName}
                         </span>
                         {log.details && (
-                          <span className="text-[11px] text-slate-400 block truncate max-w-xs">
+                          <span
+                            className={`text-[11px] block max-w-xs ${
+                              log.service === 'claude_ai' && log.status === 'error'
+                                ? 'text-rose-600 whitespace-normal break-words'
+                                : 'text-slate-400 truncate'
+                            }`}
+                            title={log.details}
+                          >
                             {log.details}
                           </span>
                         )}
@@ -1007,9 +1014,15 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                         {log.durationMs}ms
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          Éxito
-                        </span>
+                        {log.status === 'error' ? (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                            Error
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Éxito
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))
