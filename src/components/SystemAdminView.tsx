@@ -42,9 +42,9 @@ import {
   clearCentralApiUsageLogs,
   calculateGeminiCost,
   normalizeApiLog,
-  ARS_EXCHANGE_RATE,
 } from '../utils/apiUsageLogger';
-import { matchesSearch } from '../utils/helpers';
+import { formatExchangeRateDate, useExchangeRate } from '../utils/exchangeRate';
+import { formatNumber, matchesSearch } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
 import { AiEngineSettingsCard } from './AiEngineSettingsCard';
@@ -169,7 +169,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   }, [allLogs, metrics?.apiUsage]);
 
   const apiUsage = liveApiUsage;
-  const exchangeRate = apiUsage?.exchangeRateArs || ARS_EXCHANGE_RATE;
+  // Cotización del día (dólar oficial Banco Nación, venta) que consulta el servidor
+  const exchangeRateInfo = useExchangeRate();
+  const exchangeRate = exchangeRateInfo.rate;
 
   // Format currency helper based on state
   const formatCost = (usd: number) => {
@@ -257,7 +259,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
               <span>•</span>
               <span>ID: <code className="font-mono text-[11px] bg-slate-100 px-1 py-0.5 rounded">b8bc195a-3ac7-493a</code></span>
               <span>•</span>
-              <span>Moneda: 1 USD = ${exchangeRate.toLocaleString('es-AR')} ARS</span>
+              <span
+                title={exchangeRateInfo.source}
+              >
+                Moneda: 1 USD = $ {formatNumber(exchangeRate, 0, 2)} ARS
+                {exchangeRateInfo.isFallback
+                  ? ' (respaldo: no se pudo consultar la cotización)'
+                  : ` (oficial BNA, venta, ${formatExchangeRateDate(exchangeRateInfo)})`}
+              </span>
             </p>
           </div>
         </div>
@@ -378,7 +387,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
             />
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400">
-            <span>{firestoreData.percentUsed}% utilizado</span>
+            <span>{formatNumber(firestoreData.percentUsed, 0, 4)}% utilizado</span>
             <span>{firestoreData.totalDocuments} documentos</span>
           </div>
         </div>
@@ -395,13 +404,13 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
           </div>
           <div className="mt-2 flex items-baseline space-x-2">
             <span className="text-2xl font-bold text-slate-800">
-              {apiUsage ? formatCost(apiUsage.currentMonth.totalCostUsd) : '$0.00 USD'}
+              {apiUsage ? formatCost(apiUsage.currentMonth.totalCostUsd) : formatCost(0)}
             </span>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
             <span>{apiUsage?.currentMonth.totalCalls || 0} peticiones ejecutadas</span>
             <span className="font-mono text-slate-400">
-              {((apiUsage?.currentMonth.totalTokens || 0) / 1000).toFixed(1)}k tokens
+              {formatNumber((apiUsage?.currentMonth.totalTokens || 0) / 1000, 1)}k tokens
             </span>
           </div>
         </div>
@@ -418,13 +427,13 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
           </div>
           <div className="mt-2 flex items-baseline space-x-2">
             <span className="text-2xl font-bold text-slate-800">
-              {apiUsage ? formatCost(apiUsage.previousMonth.totalCostUsd) : '$0.00 USD'}
+              {apiUsage ? formatCost(apiUsage.previousMonth.totalCostUsd) : formatCost(0)}
             </span>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
             <span>{apiUsage?.previousMonth.totalCalls || 0} peticiones ejecutadas</span>
             <span className="font-mono text-slate-400">
-              {((apiUsage?.previousMonth.totalTokens || 0) / 1000).toFixed(1)}k tokens
+              {formatNumber((apiUsage?.previousMonth.totalTokens || 0) / 1000, 1)}k tokens
             </span>
           </div>
         </div>
@@ -449,14 +458,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
             <span className={`text-2xl font-bold ${
               apiUsage?.comparison.isHigher ? 'text-rose-600' : 'text-emerald-600'
             }`}>
-              {apiUsage ? `${apiUsage.comparison.isHigher ? '+' : ''}${apiUsage.comparison.percentageChange}%` : '0%'}
+              {apiUsage ? `${apiUsage.comparison.isHigher ? '+' : ''}${formatNumber(apiUsage.comparison.percentageChange, 0, 1)}%` : '0%'}
             </span>
             <span className="text-xs text-slate-400">vs mes anterior</span>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
             <span>Diferencia neta:</span>
             <span className="font-medium text-slate-700">
-              {apiUsage ? `${apiUsage.comparison.diffCostUsd >= 0 ? '+' : ''}${formatCost(apiUsage.comparison.diffCostUsd)}` : '$0.00'}
+              {apiUsage ? `${apiUsage.comparison.diffCostUsd >= 0 ? '+' : ''}${formatCost(apiUsage.comparison.diffCostUsd)}` : formatCost(0)}
             </span>
           </div>
         </div>
@@ -514,13 +523,13 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                         {col.description}
                       </td>
                       <td className="py-3.5 px-4 text-center font-medium text-slate-700">
-                        {col.documentCount.toLocaleString()}
+                        {formatNumber(col.documentCount)}
                       </td>
                       <td className="py-3.5 px-4 text-right font-medium text-slate-800">
                         {formatBytes(col.estimatedBytes)}
                       </td>
                       <td className="py-3.5 px-4 text-right font-semibold text-indigo-600">
-                        {col.percentage}%
+                        {formatNumber(col.percentage, 0, 1)}%
                       </td>
                       <td className="py-3.5 px-4 w-36">
                         <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
@@ -589,7 +598,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
             {/* Service Breakdown Comparison Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-              {/* 1. Google Gemini AI OCR & Voice */}
+              {/* 1. Google Gemini AI OCR */}
               <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
@@ -600,7 +609,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       <span className="font-bold text-xs text-slate-800">Gemini 3.7 Flash (AI)</span>
                     </div>
                     <span className="text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-mono">
-                      OCR / Audio
+                      OCR
                     </span>
                   </div>
                   <div className="mt-3">
@@ -610,21 +619,21 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {apiUsage.currentMonth.byService.gemini_ai?.calls || 0} llamadas •{' '}
-                      {((apiUsage.currentMonth.byService.gemini_ai?.tokens || 0) / 1000).toFixed(1)}k tokens
+                      {formatNumber((apiUsage.currentMonth.byService.gemini_ai?.tokens || 0) / 1000, 1)}k tokens
                     </div>
                     {Boolean(apiUsage.currentMonth.byService.gemini_ai?.tokens) && (
                       <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
                         <span className="text-indigo-600 font-semibold">
-                          {((apiUsage.currentMonth.byService.gemini_ai?.promptTokens || 0) / 1000).toFixed(1)}k in
+                          {formatNumber((apiUsage.currentMonth.byService.gemini_ai?.promptTokens || 0) / 1000, 1)}k in
                         </span>
                         {' · '}
                         <span className="text-violet-600 font-semibold">
-                          {((apiUsage.currentMonth.byService.gemini_ai?.candidatesTokens || 0) / 1000).toFixed(1)}k out
+                          {formatNumber((apiUsage.currentMonth.byService.gemini_ai?.candidatesTokens || 0) / 1000, 1)}k out
                         </span>
                       </div>
                     )}
                     <div className="text-[10px] text-indigo-600 bg-indigo-50/80 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
-                      Tarifa: $0.75 in / $3.75 out x 1M
+                      Tarifa: US$ 0,75 in / US$ 3,75 out x 1M
                     </div>
                   </div>
                 </div>
@@ -657,16 +666,16 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {apiUsage.currentMonth.byService.claude_ai?.calls || 0} llamadas •{' '}
-                      {((apiUsage.currentMonth.byService.claude_ai?.tokens || 0) / 1000).toFixed(1)}k tokens
+                      {formatNumber((apiUsage.currentMonth.byService.claude_ai?.tokens || 0) / 1000, 1)}k tokens
                     </div>
                     {Boolean(apiUsage.currentMonth.byService.claude_ai?.tokens) && (
                       <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
                         <span className="text-indigo-600 font-semibold">
-                          {((apiUsage.currentMonth.byService.claude_ai?.promptTokens || 0) / 1000).toFixed(1)}k in
+                          {formatNumber((apiUsage.currentMonth.byService.claude_ai?.promptTokens || 0) / 1000, 1)}k in
                         </span>
                         {' · '}
                         <span className="text-violet-600 font-semibold">
-                          {((apiUsage.currentMonth.byService.claude_ai?.candidatesTokens || 0) / 1000).toFixed(1)}k out
+                          {formatNumber((apiUsage.currentMonth.byService.claude_ai?.candidatesTokens || 0) / 1000, 1)}k out
                         </span>
                       </div>
                     )}
@@ -700,7 +709,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   <div className="mt-3">
                     <div className="text-xs text-slate-500">Este Mes:</div>
                     <div className="text-lg font-bold text-slate-800 flex items-center space-x-2">
-                      <span>$0.00 USD</span>
+                      <span>{formatCost(0)}</span>
                       <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
                         Sin costo
                       </span>
@@ -716,7 +725,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                 <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 flex justify-between">
                   <span>Mes Anterior:</span>
                   <span className="font-medium text-slate-700">
-                    $0.00 USD
+                    {formatCost(0)}
                   </span>
                 </div>
               </div>
@@ -770,7 +779,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                   <div className="mt-3">
                     <div className="text-xs text-slate-500">Este Mes:</div>
                     <div className="text-lg font-bold text-slate-800">
-                      $0.00 (Incluido en Cuota)
+                      {formatCost(0)} (Incluido en Cuota)
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {firestoreData.totalDocuments} docs • 0.00% cuota
@@ -779,7 +788,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                 </div>
                 <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 flex justify-between">
                   <span>Mes Anterior:</span>
-                  <span className="font-medium text-slate-700">$0.00 USD</span>
+                  <span className="font-medium text-slate-700">{formatCost(0)}</span>
                 </div>
               </div>
             </div>
@@ -970,15 +979,15 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                         {log.service === 'gemini_ai' || log.service === 'claude_ai' ? (
                           <div>
                             <span className="font-semibold text-slate-800">
-                              {(log.totalTokens || 0).toLocaleString()}
+                              {formatNumber(log.totalTokens || 0)}
                             </span>
                             <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap">
                               <span className="text-indigo-600 font-medium">
-                                {(log.promptTokens || 0).toLocaleString()} in
+                                {formatNumber(log.promptTokens || 0)} in
                               </span>
                               {' · '}
                               <span className="text-violet-600 font-medium">
-                                {(log.candidatesTokens || 0).toLocaleString()} out
+                                {formatNumber(log.candidatesTokens || 0)} out
                               </span>
                             </div>
                           </div>
@@ -990,7 +999,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                         {log.service === 'google_drive' || log.service === 'google_gmail' ? (
                           <div className="text-right">
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
-                              $0.00 (Gratis)
+                              {formatCost(0)} (Gratis)
                             </span>
                             <span className="block text-[9px] text-slate-400 font-normal mt-0.5">
                               Google Workspace
@@ -1003,9 +1012,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                               {log.service === 'claude_ai'
                                 ? (() => {
                                     const m = CLAUDE_OCR_MODELS.find((c) => log.model?.startsWith(c.id));
-                                    return m ? `${m.label}: $${m.inputPerMTok} in / $${m.outputPerMTok} out` : log.model || 'Claude';
+                                    return m ? `${m.label}: US$ ${formatNumber(m.inputPerMTok, 2)} in / US$ ${formatNumber(m.outputPerMTok, 2)} out` : log.model || 'Claude';
                                   })()
-                                : '$0.75 in / $3.75 out'}
+                                : 'US$ 0,75 in / US$ 3,75 out'}
                             </span>
                           </div>
                         )}
@@ -1048,15 +1057,15 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       {filteredTotals.totalTokens > 0 ? (
                         <div>
                           <span className="font-bold text-slate-800">
-                            {filteredTotals.totalTokens.toLocaleString()}
+                            {formatNumber(filteredTotals.totalTokens)}
                           </span>
                           <div className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">
                             <span className="text-indigo-600 font-medium">
-                              {filteredTotals.promptTokens.toLocaleString()} in
+                              {formatNumber(filteredTotals.promptTokens)} in
                             </span>
                             {' · '}
                             <span className="text-violet-600 font-medium">
-                              {filteredTotals.candidatesTokens.toLocaleString()} out
+                              {formatNumber(filteredTotals.candidatesTokens)} out
                             </span>
                           </div>
                         </div>

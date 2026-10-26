@@ -19,8 +19,9 @@ import {
 } from 'lucide-react';
 import { Vendor, Expense, VendorUpdateHandler, VendorChangeRequest } from '../types';
 import { VendorChangeRequestsPanel } from './VendorChangeRequestsPanel';
-import { formatCurrency, formatDate, formatTransferDetails, matchesSearch, cleanCuit } from '../utils/helpers';
+import { formatCurrency, formatDate, formatNumber, formatTransferDetails, matchesSearch, cleanCuit } from '../utils/helpers';
 import { normalizeVendorBankDetails } from '../utils/cloudSync';
+import { computeVendorExpenseStats } from '../utils/vendorMatching';
 import { VendorFormModal } from './VendorFormModal';
 
 export type VendorSortOption =
@@ -39,7 +40,7 @@ interface VendorsViewProps {
   onBatchAddVendors?: (vendors: Omit<Vendor, 'id' | 'createdAt'>[]) => Promise<void> | void;
   onUpdateVendor: VendorUpdateHandler;
   onDeleteVendor: (id: string) => Promise<void> | void;
-  onViewVendorExpenses: (vendorName: string) => void;
+  onViewVendorExpenses: (vendor: Vendor) => void;
   /** Pedidos de cambio y altas de colaboradores pendientes de revisión */
   changeRequests?: VendorChangeRequest[];
   onApproveChangeRequest?: (request: VendorChangeRequest, editedVendor?: Vendor) => Promise<boolean>;
@@ -66,21 +67,8 @@ export function VendorsView({
   const [vendorToDelete, setVendorToDelete] = useState<Vendor | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Stats calculation per vendor
-  const vendorStats = useMemo(() => {
-    const map = new Map<string, { count: number; totalAmount: number }>();
-    expenses.forEach((e) => {
-      const vName = e.vendor?.trim().toLowerCase();
-      if (vName) {
-        const current = map.get(vName) || { count: 0, totalAmount: 0 };
-        map.set(vName, {
-          count: current.count + 1,
-          totalAmount: current.totalAmount + (e.amount || 0),
-        });
-      }
-    });
-    return map;
-  }, [expenses]);
+  // Cantidad y monto por proveedor: mismo criterio que el botón "Gastos"
+  const vendorStats = useMemo(() => computeVendorExpenseStats(vendors, expenses), [vendors, expenses]);
 
   // Filtered vendors
   const filteredVendors = useMemo(() => {
@@ -120,23 +108,18 @@ export function VendorsView({
         return (a.createdAt || '').localeCompare(b.createdAt || '');
       }
       if (sortOption === 'totalAmount-desc') {
-        const amountA = vendorStats.get(a.name.trim().toLowerCase())?.totalAmount || 0;
-        const amountB = vendorStats.get(b.name.trim().toLowerCase())?.totalAmount || 0;
+        const amountA = vendorStats.get(a.id)?.totalAmount || 0;
+        const amountB = vendorStats.get(b.id)?.totalAmount || 0;
         return amountB - amountA;
       }
       if (sortOption === 'count-desc') {
-        const countA = vendorStats.get(a.name.trim().toLowerCase())?.count || 0;
-        const countB = vendorStats.get(b.name.trim().toLowerCase())?.count || 0;
+        const countA = vendorStats.get(a.id)?.count || 0;
+        const countB = vendorStats.get(b.id)?.count || 0;
         return countB - countA;
       }
       return 0;
     });
   }, [filteredVendors, sortOption, vendorStats]);
-
-  // Total summary calculation
-  const totalBilled = useMemo(() => {
-    return expenses.reduce((acc, exp) => acc + (exp.amount || 0), 0);
-  }, [expenses]);
 
   // Check matching expenses whose bank details are linked to the vendor to delete
   const matchingExpensesForDelete = useMemo(() => {
@@ -192,19 +175,11 @@ export function VendorsView({
           </p>
         </div>
 
-        {/* Global Stats */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/10 text-left">
+        {/* Total de proveedores */}
+        <div className="shrink-0">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/10 text-left min-w-[160px]">
             <span className="text-[11px] font-semibold text-slate-300 block mb-1">Proveedores en Catálogo</span>
-            <div className="text-xl sm:text-2xl font-black text-white">{vendors.length}</div>
-            <p className="text-xs text-slate-300">{filteredVendors.length} visibles</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-white/10 text-left">
-            <span className="text-[11px] font-semibold text-slate-300 block mb-1">Facturación Total Registrada</span>
-            <div className="text-xl sm:text-2xl font-black text-emerald-400 font-mono">
-              {formatCurrency(totalBilled)}
-            </div>
-            <p className="text-xs text-slate-300">Total en comprobantes</p>
+            <div className="text-xl sm:text-2xl font-black text-white">{formatNumber(vendors.length)}</div>
           </div>
         </div>
       </div>
@@ -296,7 +271,7 @@ export function VendorsView({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {sortedVendors.map((vendor) => {
-            const stats = vendorStats.get(vendor.name.trim().toLowerCase()) || { count: 0, totalAmount: 0 };
+            const stats = vendorStats.get(vendor.id) || { count: 0, totalAmount: 0 };
             const bank = vendor.bankDetails;
 
             return (
@@ -380,12 +355,12 @@ export function VendorsView({
                 {/* Bottom Stats & Actions */}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
                   <span className="text-slate-500 font-medium">
-                    {stats.count} comp. ({formatCurrency(stats.totalAmount)})
+                    {formatNumber(stats.count)} comp. ({formatCurrency(stats.totalAmount)})
                   </span>
 
                   <div className="flex items-center space-x-1">
                     <button
-                      onClick={() => onViewVendorExpenses(vendor.name)}
+                      onClick={() => onViewVendorExpenses(vendor)}
                       className="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-indigo-50 hover:text-indigo-700 text-[11px] font-semibold text-slate-700 transition cursor-pointer flex items-center space-x-1"
                       title="Ver todos los comprobantes de este proveedor"
                     >

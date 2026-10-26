@@ -129,7 +129,8 @@ import { Plus, CreditCard, Cloud, RefreshCw } from 'lucide-react';
 export default function App() {
   // Navigation tabs: 'expenses' (default) | 'admin_movements' | 'vendors' | 'categories' | 'cost_centers'
   const [activeTab, setActiveTab] = useState<NavigationTab>('expenses');
-  const [initialFilterVendor, setInitialFilterVendor] = useState<string>('');
+  // Proveedor elegido con el botón "Gastos" de Proveedores: Gestión Pagos abre filtrada por él
+  const [vendorExpensesFilter, setVendorExpensesFilter] = useState<Vendor | null>(null);
 
   // Authenticated User State (Persistent Google Workspace Session)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -1189,10 +1190,15 @@ export default function App() {
     }
   };
 
-  const handleViewVendorExpenses = (vendorName: string) => {
-    setInitialFilterVendor(vendorName);
+  const handleViewVendorExpenses = (vendor: Vendor) => {
+    setVendorExpensesFilter(vendor);
     setActiveTab('admin_movements');
   };
+
+  // El filtro por proveedor vale solo para esa visita a Gestión Pagos
+  useEffect(() => {
+    if (activeTab !== 'admin_movements') setVendorExpensesFilter(null);
+  }, [activeTab]);
 
   // --- EXPENSE ACTIONS ---
   const handleUploadExpenseToDrive = async (expenseArg: Expense) => {
@@ -1409,7 +1415,7 @@ export default function App() {
         });
     }
 
-    showToast(`✅ Comprobante de "${newExpense.vendor}" ($${newExpense.amount.toLocaleString()}) registrado.`);
+    showToast(`✅ Comprobante de "${newExpense.vendor}" (${formatCurrency(newExpense.amount)}) registrado.`);
 
     // Audit log: registrar carga de gasto individual
     logAuditEvent({
@@ -1915,7 +1921,7 @@ export default function App() {
       actionLabel: 'Eliminación de Comprobante',
       entityType: 'expense',
       entityId: id,
-      entityName: toDelete ? `${toDelete.vendor} ($${toDelete.amount})` : id,
+      entityName: toDelete ? `${toDelete.vendor} (${formatCurrency(toDelete.amount)})` : id,
       summary: `Se eliminó el comprobante de "${toDelete?.vendor || id}" por ${toDelete ? formatCurrency(toDelete.amount, toDelete.currency) : ''}.`,
     });
 
@@ -2069,7 +2075,7 @@ export default function App() {
           actionLabel: 'Reversión de Pago',
           entityType: 'expense',
           entityId: id,
-          entityName: `${exp.vendor} ($${exp.amount})`,
+          entityName: `${exp.vendor} (${formatCurrency(exp.amount)})`,
           summary: `Se revirtió el pago de "${exp.vendor}" a Pendiente.${
             reversalEmailOk ? ' Se envió email de aviso.' : ' No se pudo enviar el email de aviso.'
           } Los comprobantes de transferencia y retención se enviaron a la papelera de Google Drive.`,
@@ -2770,7 +2776,7 @@ export default function App() {
           actionLabel: mode === 'request_bank_details' ? 'Solicitud de Datos Bancarios' : 'Confirmación de Pago',
           entityType: 'expense',
           entityId: expenseId,
-          entityName: targetExpense ? `${targetExpense.vendor} ($${targetExpense.amount})` : expenseId,
+          entityName: targetExpense ? `${targetExpense.vendor} (${formatCurrency(targetExpense.amount)})` : expenseId,
           summary:
             mode === 'request_bank_details'
               ? `Se envió solicitud de datos bancarios para el comprobante de "${targetExpense?.vendor}".`
@@ -2824,7 +2830,7 @@ export default function App() {
         actionLabel: 'Pago y Liquidación',
         entityType: 'expense',
         entityId: timestamped.id,
-        entityName: `${timestamped.vendor} ($${timestamped.amount})`,
+        entityName: `${timestamped.vendor} (${formatCurrency(timestamped.amount)})`,
         summary: `Se procesó y confirmó el pago del gasto de "${timestamped.vendor}" por ${formatCurrency(timestamped.amount, timestamped.currency)}.`,
       });
       showToast(`✅ Pago y comprobante registrados exitosamente para ${timestamped.submittedByName || timestamped.vendor}`);
@@ -3001,7 +3007,8 @@ export default function App() {
                 onUpdateVendor={handleUpdateVendor}
                 onReplaceReceipt={handleRequestReplaceReceipt}
                 onOpenWithholdingModal={(exp) => setWithholdingModalExpense(exp)}
-                initialFilterVendor={initialFilterVendor}
+                vendorFilter={vendorExpensesFilter}
+                onClearVendorFilter={() => setVendorExpensesFilter(null)}
               />
             ) : (
               <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center max-w-lg mx-auto shadow-xs space-y-4">

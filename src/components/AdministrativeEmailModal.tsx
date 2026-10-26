@@ -63,7 +63,7 @@ export function AdministrativeEmailModal({
 
       const defaultSubject =
         mode === 'request_bank_details'
-          ? `[ISF Finanzas] Solicitud de datos bancarios para reintegro de gasto: ${expense.vendor} ($${expense.amount.toLocaleString()})`
+          ? `[ISF Finanzas] Solicitud de datos bancarios para reintegro de gasto: ${expense.vendor} (${formatCurrency(expense.amount)})`
           : formatPaymentEmailSubject(expense.vendor, expense.amount, expense.currency);
 
       const defaultPlainText =

@@ -44,6 +44,7 @@ import {
   findVendorByCuitOrName,
   hasPayableBankDetails,
 } from '../utils/helpers';
+import { createVendorExpenseMatcher } from '../utils/vendorMatching';
 import { BatchPaymentModal } from './BatchPaymentModal';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
@@ -76,7 +77,9 @@ interface AdminMovementViewProps {
   onUpdateVendor?: VendorUpdateHandler;
   onReplaceReceipt?: (expense: Expense) => void;
   onOpenWithholdingModal?: (expense: Expense) => void;
-  initialFilterVendor?: string;
+  /** Proveedor elegido con el botón "Gastos": se muestran solo sus comprobantes */
+  vendorFilter?: Vendor | null;
+  onClearVendorFilter?: () => void;
   // Server-side query filtering & pagination props
   queryPeriod?: string;
   onPeriodChange?: (period: string) => void;
@@ -112,7 +115,8 @@ export function AdminMovementView({
   onUpdateVendor,
   onReplaceReceipt,
   onOpenWithholdingModal,
-  initialFilterVendor = '',
+  vendorFilter = null,
+  onClearVendorFilter,
   queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
@@ -123,7 +127,13 @@ export function AdminMovementView({
   isLoadingMore = false,
   onLoadMore,
 }: AdminMovementViewProps) {
-  const [searchTerm, setSearchTerm] = useState(initialFilterVendor);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Mismo criterio que el resumen de la tarjeta del proveedor (cantidad y monto)
+  const vendorFilterMatches = useMemo(
+    () => (vendorFilter ? createVendorExpenseMatcher(vendors)(vendorFilter) : null),
+    [vendorFilter, vendors]
+  );
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'PENDING' | 'REIMBURSED' | 'PENDING_WITHHOLDING' | 'NOT_APPLICABLE' | 'MISSING_BANK'>('ALL');
   const [localCostCenter, setLocalCostCenter] = useState<string>('ALL');
   const [localPeriodFilter, setLocalPeriodFilter] = useState<'all' | '30days' | 'currentYear' | 'lastYear'>('all');
@@ -224,6 +234,7 @@ export function AdminMovementView({
   const filteredExpenses = useMemo(() => {
     const matching = (expenses || []).filter((e) => {
       if (!e) return false;
+      if (vendorFilterMatches && !vendorFilterMatches(e)) return false;
       if (searchTerm.trim()) {
         const matches = matchesSearch(
           [
@@ -308,14 +319,14 @@ export function AdminMovementView({
     });
 
     return sortExpenses(matching, sortConfig);
-  }, [expenses, searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
+  }, [expenses, vendorFilterMatches, searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
 
   // Se muestran de a tramos al bajar (todo está cargado; solo se dibuja a medida que se scrollea)
   const RENDER_STEP = 100;
   const [visibleCount, setVisibleCount] = useState(RENDER_STEP);
   useEffect(() => {
     setVisibleCount(RENDER_STEP);
-  }, [searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
+  }, [vendorFilterMatches, searchTerm, filterStatus, activeCostCenter, activePeriod, sortConfig]);
   const visibleExpenses = useMemo(() => filteredExpenses.slice(0, visibleCount), [filteredExpenses, visibleCount]);
   const hasMoreToShow = visibleCount < filteredExpenses.length;
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -496,6 +507,25 @@ export function AdminMovementView({
 
       {/* Filter Row */}
       <div className="bg-white rounded-3xl p-4 border border-slate-200 shadow-xs flex flex-wrap items-center gap-3">
+        {vendorFilter && (
+          <div className="w-full flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 font-semibold">
+              <Building2 className="w-3.5 h-3.5" />
+              Proveedor: {vendorFilter.name}
+              {onClearVendorFilter && (
+                <button
+                  type="button"
+                  onClick={onClearVendorFilter}
+                  className="ml-1 p-0.5 rounded-md hover:bg-indigo-100 cursor-pointer"
+                  title="Quitar el filtro por proveedor"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </span>
+            <span className="text-slate-500">Incluye comprobantes con su nombre, su CUIT o pagados a su cuenta.</span>
+          </div>
+        )}
         {/* Search */}
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />

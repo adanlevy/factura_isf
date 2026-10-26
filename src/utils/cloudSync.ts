@@ -250,7 +250,6 @@ export function prepareExpenseForFirestore(expense: Expense): any {
   delete item.receiptImage;
   delete item.paymentProofImage;
   delete item.withholdingCertificateImage;
-  delete item.audioRecordingUrl;
 
   // Defensive boundary guard: remove any large data URLs or oversized binary strings from any field
   for (const key of Object.keys(item)) {
@@ -372,7 +371,6 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
               receiptImage: localExp.receiptImage || cloudExp.receiptImage,
               paymentProofImage: localExp.paymentProofImage || cloudExp.paymentProofImage,
               withholdingCertificateImage: localExp.withholdingCertificateImage || cloudExp.withholdingCertificateImage,
-              audioRecordingUrl: localExp.audioRecordingUrl || cloudExp.audioRecordingUrl,
             });
           } else {
             // La nube es más nueva o igual: se parte del documento de la nube (así un campo que otra
@@ -383,7 +381,6 @@ export function mergeExpensesList(local: Expense[], incoming: Expense[]): Expens
               receiptImage: localExp.receiptImage || cloudExp.receiptImage,
               paymentProofImage: localExp.paymentProofImage || cloudExp.paymentProofImage,
               withholdingCertificateImage: localExp.withholdingCertificateImage || cloudExp.withholdingCertificateImage,
-              audioRecordingUrl: localExp.audioRecordingUrl || cloudExp.audioRecordingUrl,
             });
           }
         }
@@ -967,7 +964,6 @@ const EXPENSE_LOCAL_ONLY_KEYS = new Set([
   'receiptImage',
   'paymentProofImage',
   'withholdingCertificateImage',
-  'audioRecordingUrl',
 ]);
 
 const stableStringify = (value: any): string => {

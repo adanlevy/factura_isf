@@ -10,6 +10,7 @@ import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { APP_VERSION, APP_BUILD_ID, APP_BUILD_DATE } from "./src/version";
 import { extractJsonWithClaude, isClaudeConfigured, ClaudeOcrError, testClaudeConnection } from "./claudeOcr";
+import { getUsdArsRate, getUsdArsRateValue, refreshUsdArsRate, startUsdArsRateUpdates } from "./exchangeRate";
 import { normalizeAiOcrSettings, GEMINI_OCR_MODEL, CLAUDE_OCR_MODELS } from "./src/utils/aiModels";
 
 dotenv.config();
@@ -32,7 +33,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Cuerpos JSON: 5 MB en general. Solo las rutas que reciben archivos (fotos, PDFs, audio, adjuntos)
+// Cuerpos JSON: 5 MB en general. Solo las rutas que reciben archivos (fotos, PDFs, adjuntos)
 // aceptan hasta 50 MB, y recién DESPUÉS de verificar la sesión (ver largeJsonParser en cada ruta),
 // para que nadie sin cuenta pueda hacer que el servidor procese cuerpos enormes.
 const LARGE_BODY_ROUTES = new Set([
@@ -40,8 +41,6 @@ const LARGE_BODY_ROUTES = new Set([
   "/api/send-email",
   "/api/extract-invoice",
   "/api/process-vendor-doc",
-  "/api/process-audio",
-  "/api/process-text-prompt",
 ]);
 const largeJsonParser = express.json({ limit: "50mb" });
 const defaultJsonParser = express.json({ limit: "5mb" });
@@ -464,7 +463,7 @@ export interface ApiUsageRecord {
   details?: string;
 }
 
-const ARS_EXCHANGE_RATE = 1060;
+// Pesos por dólar: cotización oficial actualizada (ver exchangeRate.ts)
 
 function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number = 0, model: string = 'gemini-3.7-flash'): number {
   // Tarifas oficiales de Google Gemini API (Google AI Studio / Cloud Billing):
@@ -668,7 +667,7 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
           estimatedCostUsd = calculateGeminiCost(promptTokens, candidatesTokens, parsed.model || 'gemini-3.7-flash');
         }
 
-        const estimatedCostArs = Number((estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+        const estimatedCostArs = Number((estimatedCostUsd * getUsdArsRateValue()).toFixed(2));
 
         records.push({
           id: parsed.id,
@@ -737,7 +736,7 @@ async function fetchFirestoreAuditLogs(): Promise<any[]> {
 
 function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimatedCostArs'>): ApiUsageRecord {
   const timestamp = new Date().toISOString();
-  const estimatedCostArs = Number((entry.estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+  const estimatedCostArs = Number((entry.estimatedCostUsd * getUsdArsRateValue()).toFixed(2));
   const record: ApiUsageRecord = {
     id: `api_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp,
@@ -801,7 +800,7 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
         candidatesTokens,
         totalTokens,
         estimatedCostUsd: costUsd,
-        estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+        estimatedCostArs: Number((costUsd * getUsdArsRateValue()).toFixed(2)),
       };
     })
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -1585,13 +1584,13 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
         svc.promptTokens = (svc.promptTokens || 0) + (log.promptTokens || 0);
         svc.candidatesTokens = (svc.candidatesTokens || 0) + (log.candidatesTokens || 0);
         svc.costUsd += log.estimatedCostUsd || 0;
-        svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * ARS_EXCHANGE_RATE);
+        svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * getUsdArsRateValue());
         byService[log.service] = svc;
       }
 
       // Round aggregated values
       totalCostUsd = Number(totalCostUsd.toFixed(6));
-      const totalCostArs = Number((totalCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+      const totalCostArs = Number((totalCostUsd * getUsdArsRateValue()).toFixed(2));
       for (const k of Object.keys(byService)) {
         byService[k].costUsd = Number(byService[k].costUsd.toFixed(6));
         byService[k].costArs = Number(byService[k].costArs.toFixed(2));
@@ -1615,7 +1614,7 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
 
     // Percentage comparison
     const diffCostUsd = Number((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd).toFixed(4));
-    const diffCostArs = Number((diffCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+    const diffCostArs = Number((diffCostUsd * getUsdArsRateValue()).toFixed(2));
     let percentageChange = 0;
     if (previousMonthUsage.totalCostUsd > 0) {
       percentageChange = Number((((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd) / previousMonthUsage.totalCostUsd) * 100).toFixed(1));
@@ -1648,7 +1647,8 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
             diffCostArs,
             isHigher: diffCostUsd >= 0,
           },
-          exchangeRateArs: ARS_EXCHANGE_RATE,
+          exchangeRateArs: getUsdArsRateValue(),
+          exchangeRateInfo: getUsdArsRate(),
           recentLogs: logs.slice(0, 50),
           totalHistoricalCalls,
           totalHistoricalCostUsd,
@@ -2341,6 +2341,13 @@ app.post("/api/ai/test-claude", authenticateFirebaseUser, requireAdminRole, rate
   res.json(result);
 });
 
+// Cotización del dólar con la que se pasan a pesos los costos de las APIs
+app.get("/api/exchange-rate", authenticateFirebaseUser, async (_req, res) => {
+  const info = getUsdArsRate();
+  // Si todavía es el respaldo (por ejemplo, recién arrancó), se intenta consultar en el momento
+  res.json(info.isFallback ? await refreshUsdArsRate() : info);
+});
+
 // Estado de los motores de IA para la pestaña Sistema (no expone la clave)
 app.get("/api/ai/status", authenticateFirebaseUser, (_req, res) => {
   res.json({
@@ -2722,239 +2729,7 @@ Devuelve los datos estrictamente en JSON conforme al esquema.`;
   }
 });
 
-// Endpoint 2: Process Voice Note / Audio for expense categorization & assignment
-app.post("/api/process-audio", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
-  try {
-    const { 
-      audioBase64, 
-      mimeType = "audio/webm", 
-      currentExpense = {}, 
-      availableProjects = [], 
-      availableCategories = [],
-      costCenters = [],
-    } = req.body;
-
-    if (!audioBase64) {
-      return res.status(400).json({ success: false, error: "No se proporcionó el audio grabado." });
-    }
-
-    let cleanBase64 = audioBase64;
-    let effectiveAudioMime = mimeType || "audio/webm";
-
-    if (typeof audioBase64 === "string" && audioBase64.includes(",")) {
-      const dataUrlMatch = audioBase64.match(/^data:([^;]+);base64,(.+)$/s);
-      if (dataUrlMatch) {
-        effectiveAudioMime = dataUrlMatch[1];
-        cleanBase64 = dataUrlMatch[2];
-      } else {
-        const parts = audioBase64.split(",");
-        cleanBase64 = parts[parts.length - 1];
-      }
-    }
-
-    cleanBase64 = cleanBase64.replace(/\s+/g, "");
-    effectiveAudioMime = effectiveAudioMime.split(";")[0].toLowerCase().trim();
-    if (effectiveAudioMime === "audio/x-m4a" || effectiveAudioMime === "audio/m4a") {
-      effectiveAudioMime = "audio/mp4";
-    }
-
-    const ai = getGeminiClient();
-
-    const prompt = `Escucha atentamente este audio grabado por un usuario para registrar o justificar un comprobante/gasto contable.
-
-Tu misión es extraer y completar con total fidelidad:
-1. "transcription": Transcribe TODO el mensaje hablado palabra por palabra en español con ortografía y puntuación correcta.
-2. "project" (Centro de Costos): Identifica a qué Centro de Costos / Proyecto se imputa el gasto.
-   - Lista de Centros de Costos / Proyectos disponibles: ${JSON.stringify(availableProjects)}
-   - Si el usuario dice "para el proyecto X", "centro de costos Y", o nombra un cliente/obra/departamento (ej: "Infraestructura", "Administración", "Ventas", "Campaña ISF", "Renovables"), haz coincidir con la lista o asígnalo prolijamente en Title Case.
-3. "paymentType" (Tipo de pago): Clasifica en una de las siguientes opciones exactas:
-   - "REINTEGRO": si el usuario menciona que pagó con plata de su bolsillo, con su tarjeta personal, pide que se lo reintegren/devuelvan, o es para reintegro.
-   - "TARJETA_CORPORATIVA": si dice que pagó con tarjeta corporativa, tarjeta de la empresa o tarjeta mastercard/visa corporativa.
-   - "TARJETA_DEBITO_GALICIA": si menciona tarjeta de débito Galicia o débito de la cuenta bancaria.
-   - "PAGO_PROVEEDOR": si es una factura a pagar directo al proveedor por transferencia.
-   - Si no menciona nada explícito, mantén "TARJETA_CORPORATIVA".
-4. "notes": Transcripción directa o justificación clara del gasto a partir de lo que dijo la persona (ej: si dijo "Compré cables para la oficina de ventas", poner "Compré cables para la oficina de ventas").
-5. "category": Categoría contable si fue mencionada o deducible ("Alimentos y Bebidas", "Transporte y Combustible", "Insumos y Oficina", etc.).
-6. "reimbursable": true si paymentType es "REINTEGRO", false en caso contrario.
-7. "reimbursementStatus": "PENDING" si reimbursable es true, sino "NOT_APPLICABLE".
-8. "amount": Si menciona un monto numérico específico (ej: "fueron tres mil pesos" -> 3000), indícalo. Sino null.
-9. "date": Si menciona una fecha específica (ej: "del viernes pasado"), indícala en YYYY-MM-DD. Sino null.
-10. "vendor": Si menciona el comercio ("en la ferretería Los Andes"), indícalo. Sino null.`;
-
-    const response = await generateContentWithRetry(ai, {
-      contents: [
-        {
-          inlineData: {
-            mimeType: effectiveAudioMime,
-            data: cleanBase64,
-          },
-        },
-        {
-          text: prompt,
-        },
-      ],
-      config: {
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            transcription: { type: Type.STRING, description: "Transcripción directa y completa del audio en español" },
-            project: { type: Type.STRING, description: "Centro de costos / Proyecto asignado" },
-            paymentType: { 
-              type: Type.STRING, 
-              enum: ["REINTEGRO", "PAGO_PROVEEDOR", "TARJETA_CORPORATIVA", "TARJETA_DEBITO_GALICIA"],
-              description: "Tipo de pago detectado" 
-            },
-            category: { type: Type.STRING, description: "Categoría asignada" },
-            reimbursable: { type: Type.BOOLEAN, description: "Indica si requiere reintegro/reembolso" },
-            reimbursementStatus: { 
-              type: Type.STRING, 
-              enum: ["PENDING", "REIMBURSED", "NOT_APPLICABLE"],
-              description: "Estado del reintegro" 
-            },
-            notes: { type: Type.STRING, description: "Transcripción o motivo para observaciones" },
-            amount: { type: Type.NUMBER, description: "Monto si fue mencionado en el audio" },
-            vendor: { type: Type.STRING, description: "Proveedor si fue mencionado" },
-            date: { type: Type.STRING, description: "Fecha YYYY-MM-DD si fue mencionada" },
-            paymentMethod: { type: Type.STRING, description: "Forma de pago mencionada" },
-            explanation: { type: Type.STRING, description: "Explicación breve de la asignación automática" },
-          },
-          required: ["transcription", "project", "notes"],
-        },
-      },
-    });
-
-    const jsonText = response.text || "{}";
-    const parsedData = JSON.parse(jsonText);
-
-    const apTokens = (response as any).usageMetadata?.promptTokenCount || 2100;
-    const acTokens = (response as any).usageMetadata?.candidatesTokenCount || 220;
-    const atTokens = (response as any).usageMetadata?.totalTokenCount || (apTokens + acTokens);
-    logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
-      endpoint: '/api/process-audio',
-      actionName: 'Procesamiento de Nota de Voz (Audio)',
-      model: 'gemini-3.7-flash',
-      promptTokens: apTokens,
-      candidatesTokens: acTokens,
-      totalTokens: atTokens,
-      estimatedCostUsd: calculateGeminiCost(apTokens, acTokens),
-      status: 'success',
-      durationMs: 1800,
-      details: parsedData?.project ? `Centro Costos: ${parsedData.project}` : undefined,
-    });
-
-    return res.json({
-      success: true,
-      data: parsedData,
-    });
-  } catch (error: any) {
-    console.error("Error processing audio:", error);
-    const friendlyMsg = formatAiErrorMessage(error);
-    logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
-      endpoint: '/api/process-audio',
-      actionName: 'Transcripción y Clasificación por Voz',
-      model: 'gemini-3.7-flash',
-      estimatedCostUsd: 0,
-      status: 'error',
-      durationMs: 500,
-      details: friendlyMsg,
-    });
-    return res.status(500).json({
-      success: false,
-      error: friendlyMsg,
-    });
-  }
-});
-
-// Endpoint 3: Text or Combined Quick Extraction (Fallback or Direct Dictation)
-app.post("/api/process-text-prompt", authenticateFirebaseUser, rateLimit("gemini", { user: 120, admin: 600 }, 60 * 60 * 1000), largeJsonParser, async (req, res) => {
-  try {
-    const { text, availableProjects = [], availableCategories = [] } = req.body;
-    if (!text) {
-      return res.status(400).json({ error: "Texto no proporcionado" });
-    }
-
-    const ai = getGeminiClient();
-    const prompt = `Analiza la siguiente descripción o nota de gasto en español:
-"${text}"
-Proyectos disponibles: ${JSON.stringify(availableProjects)}
-Categorías disponibles: ${JSON.stringify(availableCategories)}
-
-Extrae estructuradamente:
-- project: Proyecto asignado
-- category: Categoría
-- reimbursable: boolean (true si pide reintegro o pagó de su bolsillo)
-- reimbursementStatus: "PENDING" | "NOT_APPLICABLE"
-- notes: Resumen contable limpio
-- amount: Monto si está presente
-- vendor: Proveedor si está presente
-- paymentMethod: Método de pago`;
-
-    const response = await generateContentWithRetry(ai, {
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            project: { type: Type.STRING },
-            category: { type: Type.STRING },
-            reimbursable: { type: Type.BOOLEAN },
-            reimbursementStatus: { type: Type.STRING, enum: ["PENDING", "REIMBURSED", "NOT_APPLICABLE"] },
-            notes: { type: Type.STRING },
-            amount: { type: Type.NUMBER },
-            vendor: { type: Type.STRING },
-            paymentMethod: { type: Type.STRING },
-          },
-        },
-      },
-    });
-
-    const tpTokens = (response as any).usageMetadata?.promptTokenCount || 600;
-    const tcTokens = (response as any).usageMetadata?.candidatesTokenCount || 150;
-    const ttTokens = (response as any).usageMetadata?.totalTokenCount || (tpTokens + tcTokens);
-    logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
-      endpoint: '/api/process-text-prompt',
-      actionName: 'Interpretación de Prompt de Texto',
-      model: 'gemini-3.7-flash',
-      promptTokens: tpTokens,
-      candidatesTokens: tcTokens,
-      totalTokens: ttTokens,
-      estimatedCostUsd: calculateGeminiCost(tpTokens, tcTokens),
-      status: 'success',
-      durationMs: 850,
-    });
-
-    return res.json({
-      success: true,
-      data: JSON.parse(response.text || "{}"),
-    });
-  } catch (error: any) {
-    console.error("Error in text extraction:", error);
-    const friendlyMsg = formatAiErrorMessage(error);
-    logApiUsage({
-      service: 'gemini_ai',
-      serviceName: 'Google Gemini AI',
-      endpoint: '/api/process-text-prompt',
-      actionName: 'Interpretación de Prompt de Texto',
-      model: 'gemini-3.7-flash',
-      estimatedCostUsd: 0,
-      status: 'error',
-      durationMs: 500,
-      details: friendlyMsg,
-    });
-    return res.status(500).json({ success: false, error: friendlyMsg });
-  }
-});
-
-// Endpoint 4: Send Administrative Notification Emails (Bank Details Request, Payment Confirmation, Upload Receipt Summary & Withholdings)
+// Endpoint 2: Send Administrative Notification Emails (Bank Details Request, Payment Confirmation, Upload Receipt Summary & Withholdings)
 app.post(
   "/api/send-email",
   authenticateFirebaseUser,
@@ -3191,7 +2966,7 @@ app.post(
   }
 });
 
-// Endpoint 5: Upload receipt to Google Drive folder with standardized nomenclature & Shared Drive support
+// Endpoint 3: Upload receipt to Google Drive folder with standardized nomenclature & Shared Drive support
 app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, async (req, res) => {
   try {
     const {
@@ -3452,7 +3227,7 @@ async function trashReplacedDriveFiles(
   }
 }
 
-// Endpoint 6: Delete receipt file from Google Drive
+// Endpoint 4: Delete receipt file from Google Drive
 app.post(
   "/api/delete-from-drive",
   authenticateFirebaseUser,
@@ -3560,7 +3335,7 @@ app.post(
   }
 });
 
-// Endpoint 7: Get Google Drive Folder Name and details automatically from URL or folder ID
+// Endpoint 5: Get Google Drive Folder Name and details automatically from URL or folder ID
 app.all("/api/drive-folder-info", authenticateFirebaseUser, async (req, res) => {
   try {
     const folderUrlOrId = (req.method === "POST" ? req.body?.folderUrl || req.body?.folderId : req.query?.folderUrl || req.query?.folderId) as string;
@@ -3668,6 +3443,7 @@ async function start() {
 
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://0.0.0.0:${PORT}`);
+      startUsdArsRateUpdates();
     });
   } catch (error) {
     console.error("[Server Startup Error]:", error);

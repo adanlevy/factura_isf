@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Receipt,
-  Volume2,
   Download,
   Copy,
   Check,
@@ -797,16 +796,6 @@ export function ReceiptViewerModal({
               </div>
             )}
 
-            {expense.voiceTranscription && (
-              <div className="p-3.5 bg-indigo-50/80 rounded-2xl border border-indigo-100 space-y-1">
-                <div className="flex items-center text-indigo-700 font-semibold">
-                  <Volume2 className="w-3.5 h-3.5 mr-1" />
-                  Nota de voz procesada:
-                </div>
-                <p className="italic text-indigo-950">"{expense.voiceTranscription}"</p>
-              </div>
-            )}
-
             {expense.items && expense.items.length > 0 && (
               <div className="space-y-1.5 pt-2">
                 <div className="font-bold text-slate-700">Ítems de la Factura:</div>
@@ -817,7 +806,7 @@ export function ReceiptViewerModal({
                         {item.quantity ? `${item.quantity}x ` : ''}
                         {item.description}
                       </span>
-                      <span className="font-bold text-slate-900">${(item.total || 0).toLocaleString('es-AR')}</span>
+                      <span className="font-bold text-slate-900">{formatCurrency(item.total || 0)}</span>
                     </div>
                   ))}
                 </div>
