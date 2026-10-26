@@ -42,8 +42,8 @@ import {
   clearCentralApiUsageLogs,
   calculateGeminiCost,
   normalizeApiLog,
-  ARS_EXCHANGE_RATE,
 } from '../utils/apiUsageLogger';
+import { formatExchangeRateDate, useExchangeRate } from '../utils/exchangeRate';
 import { formatNumber, matchesSearch } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
@@ -169,7 +169,9 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   }, [allLogs, metrics?.apiUsage]);
 
   const apiUsage = liveApiUsage;
-  const exchangeRate = apiUsage?.exchangeRateArs || ARS_EXCHANGE_RATE;
+  // Cotización del día (dólar oficial Banco Nación, venta) que consulta el servidor
+  const exchangeRateInfo = useExchangeRate();
+  const exchangeRate = exchangeRateInfo.rate;
 
   // Format currency helper based on state
   const formatCost = (usd: number) => {
@@ -257,7 +259,14 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
               <span>•</span>
               <span>ID: <code className="font-mono text-[11px] bg-slate-100 px-1 py-0.5 rounded">b8bc195a-3ac7-493a</code></span>
               <span>•</span>
-              <span>Moneda: 1 USD = $ {formatNumber(exchangeRate, 0, 2)} ARS</span>
+              <span
+                title={exchangeRateInfo.source}
+              >
+                Moneda: 1 USD = $ {formatNumber(exchangeRate, 0, 2)} ARS
+                {exchangeRateInfo.isFallback
+                  ? ' (respaldo: no se pudo consultar la cotización)'
+                  : ` (oficial BNA, venta, ${formatExchangeRateDate(exchangeRateInfo)})`}
+              </span>
             </p>
           </div>
         </div>

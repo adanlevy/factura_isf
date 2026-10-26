@@ -12,16 +12,15 @@ import {
 } from '../utils/aiModels';
 import { saveAiOcrSettings } from '../utils/aiSettings';
 import { authFetch } from '../utils/authFetch';
-import { ARS_EXCHANGE_RATE } from '../utils/apiUsageLogger';
+import { formatExchangeRateDate, useExchangeRate } from '../utils/exchangeRate';
 import { formatCurrency, formatNumber, formatUsd } from '../utils/helpers';
 
 interface AiEngineSettingsCardProps {
   settings: AiOcrSettings;
 }
 
-/** Costo en dólares y su equivalente en pesos (al tipo de cambio fijo configurado) */
+/** Costo en dólares (el equivalente en pesos se calcula con la cotización vigente) */
 const usd = (value: number) => formatUsd(value);
-const arsEquivalent = (valueUsd: number) => `≈ ${formatCurrency(valueUsd * ARS_EXCHANGE_RATE)} en pesos`;
 
 /**
  * Sistema → motor de IA que lee comprobantes y constancias: Gemini (por defecto) o Claude con el modelo elegido.
@@ -30,6 +29,8 @@ const arsEquivalent = (valueUsd: number) => `≈ ${formatCurrency(valueUsd * ARS
 export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
   const [provider, setProvider] = useState<OcrProvider>(settings.ocrProvider);
   const [claudeModel, setClaudeModel] = useState(settings.claudeModel);
+  const exchangeRate = useExchangeRate();
+  const arsEquivalent = (valueUsd: number) => `≈ ${formatCurrency(valueUsd * exchangeRate.rate)} en pesos`;
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [claudeConfigured, setClaudeConfigured] = useState<boolean | null>(null);
@@ -274,7 +275,9 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
         <p className="text-[11px] text-slate-500 leading-relaxed">
           Estimación con un comprobante típico (foto o PDF de 1 página): ~{formatNumber(TYPICAL_RECEIPT_TOKENS.input)} tokens de
           entrada y ~{formatNumber(TYPICAL_RECEIPT_TOKENS.output)} de salida. Debajo de cada costo en dólares figura su equivalente en
-          pesos, a $ {formatNumber(ARS_EXCHANGE_RATE)} por dólar. El costo real de cada lectura queda en el registro de consumo de abajo.
+          pesos, con el dólar oficial del Banco Nación (venta) a $ {formatNumber(exchangeRate.rate, 0, 2)}
+          {exchangeRate.isFallback ? ' (valor de respaldo: no se pudo consultar la cotización del día)' : ` del ${formatExchangeRateDate(exchangeRate)}`}
+          . El costo real de cada lectura queda en el registro de consumo de abajo.
         </p>
       </div>
     </div>

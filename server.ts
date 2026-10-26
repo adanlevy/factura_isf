@@ -10,6 +10,7 @@ import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { APP_VERSION, APP_BUILD_ID, APP_BUILD_DATE } from "./src/version";
 import { extractJsonWithClaude, isClaudeConfigured, ClaudeOcrError, testClaudeConnection } from "./claudeOcr";
+import { getUsdArsRate, getUsdArsRateValue, refreshUsdArsRate, startUsdArsRateUpdates } from "./exchangeRate";
 import { normalizeAiOcrSettings, GEMINI_OCR_MODEL, CLAUDE_OCR_MODELS } from "./src/utils/aiModels";
 
 dotenv.config();
@@ -462,7 +463,7 @@ export interface ApiUsageRecord {
   details?: string;
 }
 
-const ARS_EXCHANGE_RATE = 1060;
+// Pesos por dólar: cotización oficial actualizada (ver exchangeRate.ts)
 
 function calculateGeminiCost(promptTokens: number = 0, candidatesTokens: number = 0, model: string = 'gemini-3.7-flash'): number {
   // Tarifas oficiales de Google Gemini API (Google AI Studio / Cloud Billing):
@@ -666,7 +667,7 @@ async function fetchFirestoreApiLogs(): Promise<ApiUsageRecord[]> {
           estimatedCostUsd = calculateGeminiCost(promptTokens, candidatesTokens, parsed.model || 'gemini-3.7-flash');
         }
 
-        const estimatedCostArs = Number((estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+        const estimatedCostArs = Number((estimatedCostUsd * getUsdArsRateValue()).toFixed(2));
 
         records.push({
           id: parsed.id,
@@ -735,7 +736,7 @@ async function fetchFirestoreAuditLogs(): Promise<any[]> {
 
 function logApiUsage(entry: Omit<ApiUsageRecord, 'id' | 'timestamp' | 'estimatedCostArs'>): ApiUsageRecord {
   const timestamp = new Date().toISOString();
-  const estimatedCostArs = Number((entry.estimatedCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+  const estimatedCostArs = Number((entry.estimatedCostUsd * getUsdArsRateValue()).toFixed(2));
   const record: ApiUsageRecord = {
     id: `api_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp,
@@ -799,7 +800,7 @@ async function getRealApiLogsAsync(): Promise<ApiUsageRecord[]> {
         candidatesTokens,
         totalTokens,
         estimatedCostUsd: costUsd,
-        estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+        estimatedCostArs: Number((costUsd * getUsdArsRateValue()).toFixed(2)),
       };
     })
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -1583,13 +1584,13 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
         svc.promptTokens = (svc.promptTokens || 0) + (log.promptTokens || 0);
         svc.candidatesTokens = (svc.candidatesTokens || 0) + (log.candidatesTokens || 0);
         svc.costUsd += log.estimatedCostUsd || 0;
-        svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * ARS_EXCHANGE_RATE);
+        svc.costArs += log.estimatedCostArs || (log.estimatedCostUsd * getUsdArsRateValue());
         byService[log.service] = svc;
       }
 
       // Round aggregated values
       totalCostUsd = Number(totalCostUsd.toFixed(6));
-      const totalCostArs = Number((totalCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+      const totalCostArs = Number((totalCostUsd * getUsdArsRateValue()).toFixed(2));
       for (const k of Object.keys(byService)) {
         byService[k].costUsd = Number(byService[k].costUsd.toFixed(6));
         byService[k].costArs = Number(byService[k].costArs.toFixed(2));
@@ -1613,7 +1614,7 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
 
     // Percentage comparison
     const diffCostUsd = Number((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd).toFixed(4));
-    const diffCostArs = Number((diffCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+    const diffCostArs = Number((diffCostUsd * getUsdArsRateValue()).toFixed(2));
     let percentageChange = 0;
     if (previousMonthUsage.totalCostUsd > 0) {
       percentageChange = Number((((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd) / previousMonthUsage.totalCostUsd) * 100).toFixed(1));
@@ -1646,7 +1647,8 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
             diffCostArs,
             isHigher: diffCostUsd >= 0,
           },
-          exchangeRateArs: ARS_EXCHANGE_RATE,
+          exchangeRateArs: getUsdArsRateValue(),
+          exchangeRateInfo: getUsdArsRate(),
           recentLogs: logs.slice(0, 50),
           totalHistoricalCalls,
           totalHistoricalCostUsd,
@@ -2337,6 +2339,13 @@ app.post("/api/ai/test-claude", authenticateFirebaseUser, requireAdminRole, rate
   const result = await testClaudeConnection(typeof req.body?.model === "string" ? req.body.model : undefined);
   if (!result.ok) console.warn("[AI test] Claude:", result.message);
   res.json(result);
+});
+
+// Cotización del dólar con la que se pasan a pesos los costos de las APIs
+app.get("/api/exchange-rate", authenticateFirebaseUser, async (_req, res) => {
+  const info = getUsdArsRate();
+  // Si todavía es el respaldo (por ejemplo, recién arrancó), se intenta consultar en el momento
+  res.json(info.isFallback ? await refreshUsdArsRate() : info);
 });
 
 // Estado de los motores de IA para la pestaña Sistema (no expone la clave)
@@ -3434,6 +3443,7 @@ async function start() {
 
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://0.0.0.0:${PORT}`);
+      startUsdArsRateUpdates();
     });
   } catch (error) {
     console.error("[Server Startup Error]:", error);

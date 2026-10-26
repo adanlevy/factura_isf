@@ -376,7 +376,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 ### 8.1 Inteligencia Artificial (Google Gemini)
 - Lee facturas/tickets (OCR) y constancias de proveedores.
 - **Modelo:** `gemini-3.7-flash` como principal, con respaldo automático a variantes más livianas si hay saturación.
-- **Costos registrados:** ~US$ 0,75 por millón de tokens de entrada y ~US$ 3,75 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a ARS con tipo de cambio fijo configurado).
+- **Costos registrados:** ~US$ 0,75 por millón de tokens de entrada y ~US$ 3,75 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a pesos con el dólar oficial del Banco Nación, venta, que el servidor consulta solo en fuentes públicas y renueva cada 3 horas).
 
 ### 8.1b Claude (Anthropic) como motor alternativo de lectura
 - Opcional: se elige en **Sistema → Motor de IA para leer comprobantes**. Usa las mismas instrucciones y el mismo esquema que Gemini, con respuesta JSON estructurada.

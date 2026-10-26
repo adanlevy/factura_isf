@@ -14,9 +14,9 @@ import { db } from '../lib/firebase';
 import { ApiUsageLogEntry, MonthApiUsage, ServiceUsageSummary, SystemMetricsReport } from '../types';
 import { sanitizeForFirestore } from './cloudSync';
 import { authFetch } from './authFetch';
+import { getArsExchangeRate } from './exchangeRate';
 
 export const API_USAGE_COLLECTION = 'api_usage_logs';
-export const ARS_EXCHANGE_RATE = 1060;
 
 /**
  * Synchronizes an API log returned from the backend to Firestore directly from the authenticated client
@@ -83,7 +83,7 @@ export function normalizeApiLog(log: ApiUsageLogEntry): ApiUsageLogEntry {
     }
 
     const costUsd = calculateGeminiCost(pTokens, cTokens, log.model);
-    const costArs = Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2));
+    const costArs = Number((costUsd * getArsExchangeRate()).toFixed(2));
 
     return {
       ...log,
@@ -99,7 +99,7 @@ export function normalizeApiLog(log: ApiUsageLogEntry): ApiUsageLogEntry {
   return {
     ...log,
     estimatedCostUsd: costUsd,
-    estimatedCostArs: Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2)),
+    estimatedCostArs: Number((costUsd * getArsExchangeRate()).toFixed(2)),
   };
 }
 
@@ -136,7 +136,7 @@ export async function logApiUsageEvent(entry: {
       }
     }
 
-    const estimatedCostArs = Number((costUsd * ARS_EXCHANGE_RATE).toFixed(2));
+    const estimatedCostArs = Number((costUsd * getArsExchangeRate()).toFixed(2));
     const totalTokens = entry.totalTokens || ((entry.promptTokens || 0) + (entry.candidatesTokens || 0));
 
     const fullRecord: ApiUsageLogEntry = {
@@ -297,12 +297,12 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
       svc.promptTokens = (svc.promptTokens || 0) + (log.promptTokens || 0);
       svc.candidatesTokens = (svc.candidatesTokens || 0) + (log.candidatesTokens || 0);
       svc.costUsd += log.estimatedCostUsd || 0;
-      svc.costArs += log.estimatedCostArs || Number(((log.estimatedCostUsd || 0) * ARS_EXCHANGE_RATE).toFixed(2));
+      svc.costArs += log.estimatedCostArs || Number(((log.estimatedCostUsd || 0) * getArsExchangeRate()).toFixed(2));
       byService[log.service] = svc;
     }
 
     totalCostUsd = Number(totalCostUsd.toFixed(6));
-    const totalCostArs = Number((totalCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+    const totalCostArs = Number((totalCostUsd * getArsExchangeRate()).toFixed(2));
     for (const k of Object.keys(byService)) {
       byService[k].costUsd = Number(byService[k].costUsd.toFixed(6));
       byService[k].costArs = Number(byService[k].costArs.toFixed(2));
@@ -325,7 +325,7 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
   const previousMonthUsage = createMonthAggregation(prevMonthKey, prevMonthLabel);
 
   const diffCostUsd = Number((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd).toFixed(4));
-  const diffCostArs = Number((diffCostUsd * ARS_EXCHANGE_RATE).toFixed(2));
+  const diffCostArs = Number((diffCostUsd * getArsExchangeRate()).toFixed(2));
   let percentageChange = 0;
   if (previousMonthUsage.totalCostUsd > 0) {
     percentageChange = Number((((currentMonthUsage.totalCostUsd - previousMonthUsage.totalCostUsd) / previousMonthUsage.totalCostUsd) * 100).toFixed(1));
@@ -345,7 +345,7 @@ export function aggregateApiUsage(logs: ApiUsageLogEntry[]) {
       diffCostArs,
       isHigher: diffCostUsd >= 0,
     },
-    exchangeRateArs: ARS_EXCHANGE_RATE,
+    exchangeRateArs: getArsExchangeRate(),
     recentLogs: logs.slice(0, 100),
     totalHistoricalCalls,
     totalHistoricalCostUsd,
