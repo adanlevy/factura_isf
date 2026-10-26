@@ -29,13 +29,14 @@ import {
   getSmartSortedCostCenters,
   recordCategoryCostCenterUsage,
 } from '../utils/sorting';
-import { generateDriveFileName, findVendorByCuitOrName, cleanCuit } from '../utils/helpers';
+import { generateDriveFileName, findVendorByCuitOrName, cleanCuit, formatCurrency } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
 import { notifyBankDetailsChange } from '../utils/googleWorkspace';
 import { PaymentTypeSelector } from './PaymentTypeSelector';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { VendorFormModal } from './VendorFormModal';
+import { AmountInput } from './AmountInput';
 
 interface EditExpenseModalProps {
   expense: Expense | null;
@@ -142,7 +143,7 @@ export function EditExpenseModal({
         aiConfidenceSummary: data.confidenceSummary || 'Comprobante reanalizado con IA.',
       };
     });
-    setReanalyzeMessage(`✅ Datos actualizados por IA: ${data.vendor || ''} ($${amountNum})`);
+    setReanalyzeMessage(`✅ Datos actualizados por IA: ${data.vendor || ''} (${formatCurrency(Number(amountNum) || 0)})`);
   };
 
   const handleReanalyzeWithAi = async () => {
@@ -589,11 +590,9 @@ export function EditExpenseModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">Monto Total *</label>
-              <input
-                type="number"
-                step="0.01"
+              <AmountInput
                 value={formData.amount}
-                onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}
+                onValueChange={(amount) => setFormData({ ...formData, amount: amount === '' ? 0 : amount })}
                 className="w-full px-3.5 py-2 rounded-2xl border border-slate-200 font-bold text-sm text-slate-900 focus:ring-2 focus:ring-indigo-500 outline-hidden bg-slate-50/50 focus:bg-white transition"
                 required
               />

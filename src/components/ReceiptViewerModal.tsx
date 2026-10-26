@@ -806,7 +806,7 @@ export function ReceiptViewerModal({
                         {item.quantity ? `${item.quantity}x ` : ''}
                         {item.description}
                       </span>
-                      <span className="font-bold text-slate-900">${(item.total || 0).toLocaleString('es-AR')}</span>
+                      <span className="font-bold text-slate-900">{formatCurrency(item.total || 0)}</span>
                     </div>
                   ))}
                 </div>

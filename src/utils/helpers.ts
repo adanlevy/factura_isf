@@ -88,15 +88,52 @@ export function escapeHtml(value: unknown): string {
 /** La app opera solo en pesos argentinos (ARS): toda moneda se muestra como $. */
 export const APP_CURRENCY = 'ARS';
 
+/**
+ * Formato argentino para toda la app: punto para los miles y coma para los decimales (1.234.567,89).
+ * Se arma a mano (sin depender del idioma del navegador) para que se vea igual en cualquier equipo.
+ * Muestra entre minDecimals y maxDecimals decimales (los ceros sobrantes al final se quitan).
+ */
+export function formatNumber(value: unknown, minDecimals = 0, maxDecimals = minDecimals): string {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return minDecimals > 0 ? `0,${'0'.repeat(minDecimals)}` : '0';
+  const fixed = Math.abs(num).toFixed(Math.max(minDecimals, maxDecimals));
+  const [intPart, rawDecimals = ''] = fixed.split('.');
+  let decimals = rawDecimals;
+  while (decimals.length > minDecimals && decimals.endsWith('0')) decimals = decimals.slice(0, -1);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const sign = num < 0 && Number(fixed) !== 0 ? '-' : '';
+  return `${sign}${grouped}${decimals ? `,${decimals}` : ''}`;
+}
+
 export function formatCurrency(amount: number, _currency?: string): string {
-  try {
-    return `$ ${Number(amount || 0).toLocaleString('es-AR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-  } catch {
-    return `$ ${amount}`;
+  return `$ ${formatNumber(amount || 0, 2)}`;
+}
+
+/** Montos en dólares (costos de las APIs): 2 decimales, o hasta 4 si es menos de 1 dólar */
+export function formatUsd(amount: number): string {
+  const value = Number(amount) || 0;
+  return `US$ ${formatNumber(value, 2, Math.abs(value) >= 1 ? 2 : 4)}`;
+}
+
+/**
+ * Interpreta un número escrito por una persona: "1.234,56", "1234,56", "1234.56" o "$ 1.234".
+ * La coma es siempre el decimal; un punto seguido de grupos de 3 cifras se toma como separador de miles.
+ * Devuelve null si el texto está vacío o no es un número.
+ */
+export function parseLocaleNumber(text: unknown): number | null {
+  let s = String(text ?? '').replace(/US\$|\$|\s/gi, '');
+  if (!s) return null;
+  const negative = s.startsWith('-');
+  s = s.replace(/^[-+]/, '');
+  if (s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, '');
   }
+  if (!/^\d*\.?\d+$|^\d+\.$/.test(s)) return null;
+  const num = Number(s);
+  if (!Number.isFinite(num)) return null;
+  return negative ? -num : num;
 }
 
 export function formatDate(dateString: string): string {
@@ -225,7 +262,8 @@ export function exportToCSV(expenses: Expense[]): void {
     csvCell(exp.category),
     csvCell(exp.project),
     csvCell(APP_CURRENCY),
-    Number(exp.amount) || 0,
+    // Coma decimal y sin separador de miles: Excel en castellano lo toma como número
+    (Number(exp.amount) || 0).toFixed(2).replace('.', ','),
     exp.reimbursable ? 'SÍ' : 'NO',
     exp.reimbursementStatus === 'PENDING'
       ? 'Pendiente'

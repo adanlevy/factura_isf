@@ -6,6 +6,7 @@ import {
   FirestoreStorageMetrics,
   FirestoreCollectionMetric,
 } from '../types';
+import { formatCurrency, formatNumber, formatUsd } from './helpers';
 
 /**
  * Calculates accurate Firestore document size in bytes based on official Firestore documentation:
@@ -218,16 +219,16 @@ export function computeFirestoreStorage(
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes < 1024) return `${formatNumber(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${formatNumber(bytes / 1024, 2)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${formatNumber(bytes / (1024 * 1024), 2)} MB`;
+  return `${formatNumber(bytes / (1024 * 1024 * 1024), 2)} GB`;
 }
 
 export function formatCurrencyUsd(amount: number): string {
-  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`;
+  return formatUsd(amount);
 }
 
 export function formatCurrencyArs(amount: number): string {
-  return `$${amount.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ARS`;
+  return formatCurrency(amount);
 }

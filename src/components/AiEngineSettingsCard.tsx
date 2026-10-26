@@ -13,13 +13,15 @@ import {
 import { saveAiOcrSettings } from '../utils/aiSettings';
 import { authFetch } from '../utils/authFetch';
 import { ARS_EXCHANGE_RATE } from '../utils/apiUsageLogger';
+import { formatCurrency, formatNumber, formatUsd } from '../utils/helpers';
 
 interface AiEngineSettingsCardProps {
   settings: AiOcrSettings;
 }
 
-const usd = (value: number) => `US$ ${value < 0.01 ? value.toFixed(4) : value.toFixed(3)}`;
-const ars = (value: number) => `$ ${(value * ARS_EXCHANGE_RATE).toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
+/** Costo en dólares y su equivalente en pesos (al tipo de cambio fijo configurado) */
+const usd = (value: number) => formatUsd(value);
+const arsEquivalent = (valueUsd: number) => `≈ ${formatCurrency(valueUsd * ARS_EXCHANGE_RATE)} en pesos`;
 
 /**
  * Sistema → motor de IA que lee comprobantes y constancias: Gemini (por defecto) o Claude con el modelo elegido.
@@ -158,7 +160,7 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1 leading-snug">{m.description}</p>
                   <p className="text-[10.5px] font-mono text-indigo-700 mt-1.5">
-                    ${m.inputPerMTok} in / ${m.outputPerMTok} out × 1M · ≈ {usd(estimateCostPerReceipt(m))} por comprobante
+                    US$ {formatNumber(m.inputPerMTok, 2)} in / US$ {formatNumber(m.outputPerMTok, 2)} out × 1M · ≈ {usd(estimateCostPerReceipt(m))} por comprobante
                   </p>
                 </button>
               );
@@ -253,15 +255,15 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
                         <span className="ml-1.5 text-[10px] font-bold text-indigo-700 bg-indigo-100 rounded px-1.5 py-0.5">En uso</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">${m.inputPerMTok.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-mono">${m.outputPerMTok.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-mono">US$ {formatNumber(m.inputPerMTok, 2)}</td>
+                    <td className="px-3 py-2 text-right font-mono">US$ {formatNumber(m.outputPerMTok, 2)}</td>
                     <td className="px-3 py-2 text-right font-mono">
                       {usd(perReceipt)}
-                      <span className="block text-[10px] text-slate-400">{ars(perReceipt)}</span>
+                      <span className="block text-[10px] text-slate-500 font-sans">{arsEquivalent(perReceipt)}</span>
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
                       {usd(perReceipt * 100)}
-                      <span className="block text-[10px] text-slate-400">{ars(perReceipt * 100)}</span>
+                      <span className="block text-[10px] text-slate-500 font-sans">{arsEquivalent(perReceipt * 100)}</span>
                     </td>
                   </tr>
                 );
@@ -270,9 +272,9 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
           </table>
         </div>
         <p className="text-[11px] text-slate-500 leading-relaxed">
-          Estimación con un comprobante típico (foto o PDF de 1 página): ~{TYPICAL_RECEIPT_TOKENS.input.toLocaleString('es-AR')} tokens de
-          entrada y ~{TYPICAL_RECEIPT_TOKENS.output.toLocaleString('es-AR')} de salida; en pesos, a {ARS_EXCHANGE_RATE.toLocaleString('es-AR')}{' '}
-          $/USD. El costo real de cada lectura queda en el registro de consumo de abajo.
+          Estimación con un comprobante típico (foto o PDF de 1 página): ~{formatNumber(TYPICAL_RECEIPT_TOKENS.input)} tokens de
+          entrada y ~{formatNumber(TYPICAL_RECEIPT_TOKENS.output)} de salida. Debajo de cada costo en dólares figura su equivalente en
+          pesos, a $ {formatNumber(ARS_EXCHANGE_RATE)} por dólar. El costo real de cada lectura queda en el registro de consumo de abajo.
         </p>
       </div>
     </div>

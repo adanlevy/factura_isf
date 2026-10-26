@@ -47,6 +47,7 @@ import {
   formatCuit,
   cleanCuit,
   hasPayableBankDetails,
+  formatCurrency,
 } from '../utils/helpers';
 import { syncApiLogToCloud } from '../utils/apiUsageLogger';
 import { authFetch } from '../utils/authFetch';
@@ -57,6 +58,7 @@ import { FacturaIllustration } from './FacturaIcon';
 import { SafePdfViewer } from './SafePdfViewer';
 import { VendorFormModal } from './VendorFormModal';
 import { AccountSelector } from './AccountSelector';
+import { AmountInput } from './AmountInput';
 
 // Espera máxima de la lectura con IA (incluye el reintento y, con Claude, el respaldo con Gemini)
 const AI_EXTRACTION_TIMEOUT_MS = 120_000;
@@ -500,7 +502,7 @@ export function SmartScannerModal({
                   cuitWarningAcknowledged: data.isIsfRecipient === true ? true : item.cuitWarningAcknowledged,
                   aiConfidenceSummary: isSuccessfulOcr
                     ? data.confidenceSummary ||
-                      `Detectado: ${vendorDisplayNote} • $${amountNum?.toLocaleString()} • ${extractedDate}`
+                      `Detectado: ${vendorDisplayNote} • ${formatCurrency(Number(amountNum) || 0)} • ${extractedDate}`
                     : 'IA no pudo detectar Monto y/o Fecha con certeza. Por favor complétalos en la tabla.',
                 };
               })
@@ -1330,12 +1332,9 @@ export function SmartScannerModal({
                               <span className="absolute left-2 top-1.5 text-slate-400 font-bold text-xs">
                                 $
                               </span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={item.amount === '' ? '' : item.amount}
-                                onChange={(e) => handleAmountChange(item.id, e.target.value)}
-                                placeholder="0.00"
+                              <AmountInput
+                                value={item.amount}
+                                onValueChange={(amount) => handleAmountChange(item.id, amount === '' ? '' : String(amount))}
                                 className={`w-full pl-5 pr-2 py-1.5 text-xs font-extrabold rounded-lg border focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-hidden ${
                                   item.amount === '' || item.amount === 0
                                     ? 'border-amber-300 bg-amber-50/40 text-amber-900 placeholder:text-amber-400'
@@ -1643,12 +1642,9 @@ export function SmartScannerModal({
                             <span className="absolute left-2.5 top-2 text-slate-400 font-bold text-xs">
                               $
                             </span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={item.amount === '' ? '' : item.amount}
-                              onChange={(e) => handleAmountChange(item.id, e.target.value)}
-                              placeholder="0.00"
+                            <AmountInput
+                              value={item.amount}
+                              onValueChange={(amount) => handleAmountChange(item.id, amount === '' ? '' : String(amount))}
                               className={`w-full pl-6 pr-2 py-2 text-xs font-extrabold rounded-lg border focus:ring-1 focus:ring-indigo-500 outline-hidden ${
                                 item.amount === '' || item.amount === 0
                                   ? 'border-amber-300 bg-amber-50/40 text-amber-900'
