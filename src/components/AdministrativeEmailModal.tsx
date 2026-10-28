@@ -75,7 +75,7 @@ export function AdministrativeEmailModal({
           : `Hola ${recipientName},\n\nTe confirmamos que el reintegro por ${formatCurrency(
               expense.amount,
               expense.currency
-            )} correspondiente a tu comprobante de ${expense.vendor} (Comprobante: ${
+            )} correspondiente a tu factura/ticket de ${expense.vendor} (Factura/ticket: ${
               expense.invoiceNumber || 'Ticket Rendido'
             } / Centro de Costos: ${expense.project}) ha sido transferido y liquidado con éxito.\n\n${
               expense.bankDetails

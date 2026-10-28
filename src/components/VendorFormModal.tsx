@@ -275,7 +275,7 @@ export function VendorFormModal({
 
         setDocFeedback({
           type: 'success',
-          message: `✅ Datos leídos con éxito: ${data.name || 'Constancia/Comprobante'}`,
+          message: `✅ Datos leídos con éxito: ${data.name || 'Documento'}`,
           details: data.confidenceSummary || 'Información extraída con IA y aplicada al formulario.',
         });
       } else {
@@ -478,7 +478,7 @@ export function VendorFormModal({
             </div>
             <h4 className="text-xl font-extrabold text-white">¡Suelta el archivo aquí!</h4>
             <p className="text-sm text-indigo-200 mt-1 max-w-md text-center">
-              Constancia de CUIT, Factura o Comprobante bancario para autocompletar con IA.
+              Constancia de CUIT, Factura/Ticket o constancia bancaria para autocompletar con IA.
             </p>
           </div>
         )}
@@ -511,7 +511,7 @@ export function VendorFormModal({
                 <Send className="w-3.5 h-3.5" /> Los cambios en proveedores los revisa Administración
               </p>
               <p className="text-indigo-800">
-                Mientras tanto, esta cuenta ya queda cargada en tu comprobante. Te avisamos por correo cuando se apruebe.
+                Mientras tanto, esta cuenta ya queda cargada en tu factura/ticket. Te avisamos por correo cuando se apruebe.
               </p>
               {pendingRequest && (
                 <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-1.5 mt-1.5 flex items-start gap-1.5">
@@ -570,7 +570,7 @@ export function VendorFormModal({
                 <h4 className="text-sm font-extrabold text-slate-900">
                   {isProcessingDoc
                     ? 'Procesando documento con Inteligencia Artificial...'
-                    : 'Arrastra y suelta aquí la Constancia de CUIT, Factura o Comprobante'}
+                    : 'Arrastra y suelta aquí la Constancia de CUIT, Factura/Ticket o constancia bancaria'}
                 </h4>
                 <p className="text-xs text-slate-500 mt-1 max-w-lg mx-auto">
                   La IA detectará automáticamente <strong>Nombre / Razón Social</strong>, <strong>CUIT</strong>,{' '}
@@ -685,7 +685,7 @@ export function VendorFormModal({
                 />
                 {suggestedName && suggestedName.trim() && name.trim().toLowerCase() !== suggestedName.trim().toLowerCase() && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 animate-in fade-in">
-                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia del comprobante:</span>
+                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia de la factura/ticket:</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -724,7 +724,7 @@ export function VendorFormModal({
                 />
                 {suggestedCuit && suggestedCuit.trim() && cuit.replace(/[^0-9]/g, '') !== suggestedCuit.replace(/[^0-9]/g, '') && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 animate-in fade-in">
-                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia del comprobante:</span>
+                    <span className="text-[11px] text-slate-500 font-medium">Sugerencia de la factura/ticket:</span>
                     <button
                       type="button"
                       onClick={() => {

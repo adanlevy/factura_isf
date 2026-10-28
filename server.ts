@@ -1470,8 +1470,8 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
     const collections = [
       {
         id: 'expenses',
-        name: 'expenses (Comprobantes y Facturas)',
-        description: 'Comprobantes fiscales, datos OCR de tickets, metadatos y comprobantes de transferencias',
+        name: 'expenses (Facturas/tickets)',
+        description: 'Facturas/tickets, datos OCR, metadatos y comprobantes de pago',
         documentCount: expenses.length,
         estimatedBytes: expensesBytes,
         estimatedKb: Number((expensesBytes / 1024).toFixed(2)),
@@ -1661,7 +1661,7 @@ app.get("/api/system/metrics", authenticateFirebaseUser, requireAdminRole, async
           },
           drive: {
             status: 'healthy',
-            label: 'Google Drive API v3 (Almacenamiento y Comprobantes)',
+            label: 'Google Drive API v3 (Almacenamiento de documentos)',
           },
           gmail: {
             status: 'healthy',
@@ -2225,7 +2225,7 @@ app.get("/api/drive/status", authenticateFirebaseUser, async (_req, res) => {
     configured: Boolean(centralAuth),
     source: centralAuth ? centralAuth.source : null,
     message: centralAuth
-      ? `Autenticación centralizada activa mediante ${centralAuth.source}. Todos los usuarios subirán comprobantes automáticamente a Google Drive.`
+      ? `Autenticación centralizada activa mediante ${centralAuth.source}. Todos los usuarios subirán sus documentos automáticamente a Google Drive.`
       : "No se encontraron credenciales maestras configuradas en el backend (GOOGLE_REFRESH_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET).",
   });
 });
@@ -2497,7 +2497,7 @@ Devuelve los datos en JSON conforme al esquema.`;
       } else if (rawRecipientName && !/consumidor\s+final/i.test(rawRecipientName)) {
         isfRecipientMismatchReason = `La factura figura a nombre de: ${rawRecipientName}.`;
       } else {
-        isfRecipientMismatchReason = "El comprobante no especifica el CUIT de Ingeniería Sin Fronteras (30-71254928-5) o figura a Consumidor Final.";
+        isfRecipientMismatchReason = "La factura/ticket no especifica el CUIT de Ingeniería Sin Fronteras (30-71254928-5) o figura a Consumidor Final.";
       }
     }
 
@@ -3049,7 +3049,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
           const metadata: any = {
             name: fileName,
             mimeType: mimeType,
-            description: `Comprobante ISF Finanzas #${expenseId || ""} - Carpeta: ${folderName}`,
+            description: `Documento ISF Finanzas #${expenseId || ""} - Carpeta: ${folderName}`,
             // Marca de origen: permite autorizar luego quién puede mandar el archivo a la papelera
             appProperties: {
               app: "factura_isf",
@@ -3118,7 +3118,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
             service: 'google_drive',
             serviceName: 'Google Drive API',
             endpoint: '/api/upload-to-drive',
-            actionName: 'Subida Comprobante a Google Drive',
+            actionName: 'Subida de Documento a Google Drive',
             model: 'Drive v3 API',
             promptTokens: 0,
             candidatesTokens: 0,
@@ -3226,6 +3226,129 @@ async function trashReplacedDriveFiles(
     }
   }
 }
+
+// Renombra y/o mueve un archivo ya subido (al editar la factura/ticket: otro centro de costos,
+// fecha, monto…). No vuelve a subir el archivo: cambia el nombre y la carpeta del mismo archivo,
+// así se conservan su ID, su enlace y su historial. Mismos permisos que mandarlo a la papelera:
+// archivo en una carpeta de la app; un Colaborador solo los que subió él mismo.
+app.post(
+  "/api/drive/relocate-file",
+  authenticateFirebaseUser,
+  rateLimit("drive-relocate", { user: 120, admin: 1200 }, 60 * 60 * 1000),
+  async (req, res) => {
+  try {
+    const { expenseId, fileId, oldFileName, oldFolderId, newFileName, newFolderId, newFolderName, accessToken } = req.body || {};
+
+    if (typeof newFileName !== "string" || !newFileName.trim() || newFileName.length > 250) {
+      return res.status(400).json({ success: false, error: "Nombre de archivo nuevo inválido." });
+    }
+    if (newFolderId && !isValidDriveId(newFolderId)) {
+      return res.status(400).json({ success: false, error: "ID de carpeta de destino inválido." });
+    }
+
+    const centralAuth = await getCentralizedGoogleAccessToken();
+    const token = centralAuth?.token || accessToken;
+    if (!token) {
+      return res.status(401).json({ success: false, error: "No hay credenciales de Google Drive disponibles." });
+    }
+
+    const directory = await loadAppDirectory(req);
+    if (newFolderId && directory && !directory.folderIds.has(newFolderId)) {
+      return res.status(403).json({ success: false, error: "La carpeta de destino no es una carpeta registrada de la app." });
+    }
+
+    // 1. Ubicar el archivo: por ID (lo normal) o, como respaldo, por su nombre anterior
+    type DriveFileMeta = { id: string; name?: string; parents?: string[]; appProperties?: Record<string, string>; trashed?: boolean };
+    let file: DriveFileMeta | null = null;
+    if (isValidDriveId(fileId)) {
+      const metaRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents,trashed,appProperties&supportsAllDrives=true`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (metaRes.ok) {
+        const meta = (await metaRes.json()) as DriveFileMeta;
+        if (!meta.trashed) file = meta;
+      }
+    }
+    if (!file && typeof oldFileName === "string" && oldFileName.trim() && oldFileName.length <= 250 && directory) {
+      const candidates = await findDriveFilesByName(token, oldFileName.trim(), {
+        folderId: isValidDriveId(oldFolderId) ? oldFolderId : undefined,
+      });
+      // Si hay varios con el mismo nombre se prefiere el subido para este gasto
+      file =
+        candidates.find((f) => f.appProperties?.expenseId && f.appProperties.expenseId === String(expenseId || "")) ||
+        (candidates.length === 1 ? candidates[0] : null);
+    }
+    if (!file) {
+      return res.status(404).json({ success: false, notFound: true, error: "No se encontró el archivo en Google Drive." });
+    }
+
+    if (!(await authorizeDriveFileTrash(req, token, { id: file.id, parents: file.parents, appProperties: file.appProperties }, directory))) {
+      return res.status(403).json({ success: false, error: "No tenés permiso para modificar este archivo en Google Drive." });
+    }
+
+    // 2. Cambiar nombre y carpeta en una sola llamada
+    const currentParents = file.parents || [];
+    const moveTo = newFolderId && !currentParents.includes(newFolderId) ? newFolderId : null;
+    const rename = file.name !== newFileName;
+    if (!moveTo && !rename) {
+      return res.json({ success: true, fileId: file.id, fileName: file.name, moved: false, renamed: false });
+    }
+
+    const params = new URLSearchParams({ supportsAllDrives: "true", fields: "id,name,parents,webViewLink" });
+    if (moveTo) {
+      params.set("addParents", moveTo);
+      if (currentParents.length > 0) params.set("removeParents", currentParents.join(","));
+    }
+    const started = Date.now();
+    const patchRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?${params.toString()}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(rename ? { name: newFileName } : {}),
+    });
+    if (!patchRes.ok) {
+      const errBody = await patchRes.json().catch(() => null);
+      const formatted = formatGoogleErrorMessage(errBody, patchRes.status);
+      console.warn(`[DRIVE RELOCATE] ${file.id}: ${formatted.message}`);
+      return res.status(patchRes.status === 401 ? 401 : 502).json({
+        success: false,
+        isAuthError: formatted.isAuthError,
+        error: formatted.message,
+      });
+    }
+    const updated = (await patchRes.json()) as any;
+    console.log(
+      `[DRIVE RELOCATE] ${req.user?.email}: ${file.id} "${file.name}" -> "${updated.name}"${moveTo ? ` (carpeta ${moveTo})` : ""}`
+    );
+
+    const apiLog = logApiUsage({
+      service: "google_drive",
+      serviceName: "Google Drive API",
+      endpoint: "/api/drive/relocate-file",
+      actionName: moveTo ? "Mover y renombrar archivo" : "Renombrar archivo",
+      model: "drive-v3",
+      estimatedCostUsd: 0,
+      status: "success",
+      durationMs: Date.now() - started,
+      userEmail: req.user?.email,
+      details: `${updated.name}${moveTo && newFolderName ? ` → ${String(newFolderName).slice(0, 120)}` : ""}`,
+    });
+
+    return res.json({
+      success: true,
+      fileId: updated.id,
+      fileName: updated.name,
+      folderId: Array.isArray(updated.parents) ? updated.parents[0] : undefined,
+      webViewLink: updated.webViewLink || `https://drive.google.com/file/d/${updated.id}/view`,
+      moved: Boolean(moveTo),
+      renamed: rename,
+      apiLog,
+    });
+  } catch (error: any) {
+    console.error("Error in drive relocate-file:", error);
+    return res.status(500).json({ success: false, error: "Error al renombrar o mover el archivo en Google Drive." });
+  }
+});
 
 // Endpoint 4: Delete receipt file from Google Drive
 app.post(

@@ -750,7 +750,7 @@ export function formatPaymentEmailSubject(
   if (isVendorPayment) {
     descriptor = 'Comprobante de pago a proveedor';
   } else if (isReimbursement) {
-    descriptor = 'Comprobante de reintegro liquidado';
+    descriptor = 'Comprobante de pago de reintegro liquidado';
   }
 
   return `[Pagos] ${vendorShort}-${formattedAmt} / ${descriptor}`;

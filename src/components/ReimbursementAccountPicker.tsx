@@ -300,7 +300,7 @@ export function ReimbursementAccountPicker({
           ) : (
             <>
               <span className="text-[11px] text-slate-500">
-                {isFirstUse ? 'Si cancelás, el comprobante vuelve al tipo de pago anterior.' : ''}
+                {isFirstUse ? 'Si cancelás, la factura/ticket vuelve al tipo de pago anterior.' : ''}
               </span>
               <button
                 type="button"

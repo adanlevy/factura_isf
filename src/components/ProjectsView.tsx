@@ -117,7 +117,7 @@ export function ProjectsView({
               <div className="flex items-start justify-between">
                 <div>
                   <h4 className="font-bold text-slate-900 text-base">{proj.name}</h4>
-                  <span className="text-xs text-slate-500">{proj.count} comprobante(s) asignado(s)</span>
+                  <span className="text-xs text-slate-500">{proj.count} {proj.count === 1 ? 'factura/ticket asignada' : 'facturas/tickets asignadas'}</span>
                 </div>
                 <span className="p-2.5 rounded-2xl bg-indigo-50 text-indigo-600">
                   <FolderKanban className="w-5 h-5" />
@@ -168,7 +168,7 @@ export function ProjectsView({
               onClick={() => onFilterByProject(proj.name)}
               className="w-full py-2.5 px-3 bg-slate-50 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200 rounded-2xl text-xs font-semibold flex items-center justify-center space-x-1 transition cursor-pointer"
             >
-              <span>Ver {proj.count} comprobantes</span>
+              <span>Ver {proj.count} {proj.count === 1 ? 'factura/ticket' : 'facturas/tickets'}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

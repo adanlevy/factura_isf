@@ -37,7 +37,7 @@ export const CLAUDE_OCR_MODELS: AiModelInfo[] = [
     outputPerMTok: 20,
     effort: 'medium',
     supportsServerFallback: true,
-    description: 'El más capaz de la familia Opus: mejor para comprobantes difíciles (fotos borrosas, manuscritos).',
+    description: 'El más capaz de la familia Opus: mejor para facturas/tickets difíciles (fotos borrosas, manuscritos).',
   },
   {
     id: 'claude-sonnet-5-5',
@@ -56,7 +56,7 @@ export const CLAUDE_OCR_MODELS: AiModelInfo[] = [
     inputPerMTok: 0.1,
     outputPerMTok: 0.5,
     effort: 'medium',
-    description: 'El más rápido y económico (tarifa para pedidos de hasta 100K tokens, que cubre cualquier comprobante).',
+    description: 'El más rápido y económico (tarifa para pedidos de hasta 100K tokens, que cubre cualquier factura/ticket).',
   },
 ];
 

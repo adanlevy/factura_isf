@@ -51,7 +51,7 @@ export function LegalPagesModal({ type, onClose }: LegalPagesModalProps) {
                 </p>
                 <ul className="list-disc pl-5 space-y-1 text-slate-700">
                   <li><strong>Información de perfil público:</strong> Nombre, dirección de correo electrónico y foto de perfil proveniente de su cuenta de Google.</li>
-                  <li><strong>Datos de Rendición de Gastos:</strong> Facturas, comprobantes de pago, importes, proveedores, categorías contables y centros de costo.</li>
+                  <li><strong>Datos de Rendición de Gastos:</strong> Facturas/tickets, comprobantes de pago, importes, proveedores, categorías contables y centros de costo.</li>
                   <li><strong>Datos Bancarios:</strong> CBU, CVU, Alias, Tipo de Cuenta y Banco únicamente para la gestión de reintegros y transferencias operativas.</li>
                 </ul>
               </section>
@@ -67,7 +67,7 @@ export function LegalPagesModal({ type, onClose }: LegalPagesModalProps) {
                   <li>Verificación de identidad y control de acceso según roles (Administrador / Colaborador).</li>
                   <li>Gestión de solicitudes de reintegro de gastos y pagos a proveedores.</li>
                   <li>Notificaciones por correo electrónico sobre el estado de liquidaciones y cambios en datos bancarios.</li>
-                  <li>Almacenamiento y respaldo institucional de comprobantes en carpetas compartidas de Google Drive corporativo.</li>
+                  <li>Almacenamiento y respaldo institucional de documentos en carpetas compartidas de Google Drive corporativo.</li>
                 </ul>
               </section>
 
@@ -107,16 +107,16 @@ export function LegalPagesModal({ type, onClose }: LegalPagesModalProps) {
                   1. Objeto y Uso Autorizado
                 </h3>
                 <p>
-                  Esta plataforma está destinada exclusivamente a la carga, escaneo, clasificación y rendición de comprobantes de gastos incurridos por colaboradores, voluntarios y personal administrativo en el marco de las actividades y proyectos de <strong>Ingenieros Sin Fronteras Argentina</strong>.
+                  Esta plataforma está destinada exclusivamente a la carga, escaneo, clasificación y rendición de facturas/tickets de gastos incurridos por colaboradores, voluntarios y personal administrativo en el marco de las actividades y proyectos de <strong>Ingenieros Sin Fronteras Argentina</strong>.
                 </p>
               </section>
 
               <section className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900">
-                  2. Responsabilidad sobre los Comprobantes
+                  2. Responsabilidad sobre las Facturas/Tickets
                 </h3>
                 <p>
-                  El usuario es responsable de garantizar la veracidad, autenticidad y claridad visual de los comprobantes digitales y facturas que escanee o adjunte en el sistema. Todos los gastos deben contar con la correspondiente asignación a su Centro de Costos y Categoría adecuada.
+                  El usuario es responsable de garantizar la veracidad, autenticidad y claridad visual de las facturas/tickets digitales que escanee o adjunte en el sistema. Todos los gastos deben contar con la correspondiente asignación a su Centro de Costos y Categoría adecuada.
                 </p>
               </section>
 

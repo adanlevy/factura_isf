@@ -283,14 +283,14 @@ export function ReplaceReceiptModal({
                     <SafePdfViewer
                       url={newFileBase64}
                       fileName={newFileName}
-                      title={`Nuevo Comprobante: ${expense.vendor}`}
+                      title={`Nueva Factura/Ticket: ${expense.vendor}`}
                       heightClass="h-64"
                     />
                   </div>
                 ) : (
                   <img
                     src={newFileBase64}
-                    alt="Vista previa de nuevo comprobante"
+                    alt="Vista previa de nueva factura/ticket"
                     className="max-h-64 object-contain rounded-xl shadow-xs"
                   />
                 )}

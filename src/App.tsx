@@ -41,6 +41,7 @@ import { formatCurrency, sanitizeCostCenter, formatPaymentEmailSubject, formatTr
 import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
+  relocateReceiptInGoogleDrive,
   deleteReceiptFromGoogleDrive,
   extractDriveFileId,
   getStoredWorkspaceToken,
@@ -534,11 +535,11 @@ export default function App() {
           actionLabel: 'Corrección de Estado (Pendientes)',
           entityType: 'expense',
           entityId: 'repair-pending-status',
-          entityName: `${fixedIds.length} comprobante(s)`,
-          summary: `Se corrigieron ${fixedIds.length} comprobante(s) de Pago a Proveedor / Reintegro que figuraban como "No aplica": ahora están Pendientes de pago.`,
+          entityName: `${fixedIds.length} factura(s)/ticket(s)`,
+          summary: `Se corrigieron ${fixedIds.length} factura(s)/ticket(s) de Pago a Proveedor / Reintegro que figuraban como "No aplica": ahora están Pendientes de pago.`,
           metadata: { ids: fixedIds },
         }).catch(() => {});
-        showToast(`🔧 Se corrigieron ${fixedIds.length} comprobante(s) de Pago a Proveedor que no figuraban como pendientes.`);
+        showToast(`🔧 Se corrigieron ${fixedIds.length} factura(s)/ticket(s) de Pago a Proveedor que no figuraban como pendientes.`);
       })
       .catch((err) => console.warn('No se pudieron revisar los estados de pago:', err));
   }, [isFirebaseAuthReady, permissionRole, currentUser?.email]);
@@ -918,8 +919,8 @@ export default function App() {
     }
     showToast(
       existing
-        ? `📨 Se actualizó tu pedido de cambio de "${prevVendor.name}". La cuenta ya quedó en tu comprobante.`
-        : `📨 Cambio enviado a Administración para aprobar. La cuenta ya quedó en tu comprobante.`
+        ? `📨 Se actualizó tu pedido de cambio de "${prevVendor.name}". La cuenta ya quedó en tu factura/ticket.`
+        : `📨 Cambio enviado a Administración para aprobar. La cuenta ya quedó en tu factura/ticket.`
     );
     return true;
   };
@@ -1079,14 +1080,14 @@ export default function App() {
         }))
       );
       if (!cascade.ok) {
-        showToast(`⚠️ Proveedor actualizado, pero ${cascade.failedIds.length} comprobante(s) no se pudieron sincronizar.`);
+        showToast(`⚠️ Proveedor actualizado, pero ${cascade.failedIds.length} factura(s)/ticket(s) no se pudieron sincronizar.`);
         return true;
       }
     }
 
     showToast(
       updatedExpensesList.length > 0
-        ? `✅ Proveedor "${updatedVendor.name}" actualizado y sincronizado en ${updatedExpensesList.length} comprobante(s).`
+        ? `✅ Proveedor "${updatedVendor.name}" actualizado y sincronizado en ${updatedExpensesList.length} factura(s)/ticket(s).`
         : `✅ Proveedor "${updatedVendor.name}" actualizado.`
     );
     return true;
@@ -1184,7 +1185,7 @@ export default function App() {
 
       showToast(
         updatedExpensesList.length > 0
-          ? `🗑️ Proveedor "${vendorToDelete.name}" eliminado y desvinculado de los datos de cuenta de ${updatedExpensesList.length} comprobante(s).`
+          ? `🗑️ Proveedor "${vendorToDelete.name}" eliminado y desvinculado de los datos de cuenta de ${updatedExpensesList.length} factura(s)/ticket(s).`
           : `🗑️ Proveedor "${vendorToDelete.name}" eliminado del catálogo.`
       );
     }
@@ -1210,7 +1211,7 @@ export default function App() {
     }
     if (!expenseToUpload.receiptImage) {
       showToast(
-        '⚠️ El archivo de este comprobante no está en este navegador. Usá "Reemplazar" en el visor para volver a adjuntarlo.'
+        '⚠️ El archivo de esta factura/ticket no está en este navegador. Usá "Reemplazar" en el visor para volver a adjuntarlo.'
       );
       return;
     }
@@ -1219,7 +1220,7 @@ export default function App() {
       (c) => c.name.toLowerCase() === (expenseToUpload.project || '').toLowerCase()
     );
 
-    showToast(`☁️ Subiendo comprobante de "${expenseToUpload.vendor}" a Google Drive...`);
+    showToast(`☁️ Subiendo factura/ticket de "${expenseToUpload.vendor}" a Google Drive...`);
 
     // Set status to PENDING
     setExpenses((prev) =>
@@ -1250,7 +1251,7 @@ export default function App() {
         );
         // Solo los datos de Drive: no se pisa lo que otra persona haya cambiado en el comprobante
         await patchCentralExpenses([{ id: expenseToUpload.id, changes: pickExpenseFields(updatedObj, DRIVE_RECEIPT_FIELDS) }]);
-        showToast(`✅ Comprobante subido exitosamente a Drive ("${res.folderName}")`);
+        showToast(`✅ Factura/ticket subida exitosamente a Drive ("${res.folderName}")`);
       } else {
         setExpenses((prev) =>
           prev.map((e) =>
@@ -1384,7 +1385,7 @@ export default function App() {
     window.clearTimeout(slowNotice);
     if (failedIds.includes(initialExpense.id)) {
       setExpenses((prev) => prev.filter((e) => e.id !== initialExpense.id));
-      showToast(`⚠️ No se pudo guardar el comprobante de "${newExpense.vendor}" (${SAVE_ERROR_HINT}). Volvé a cargarlo.`);
+      showToast(`⚠️ No se pudo guardar la factura/ticket de "${newExpense.vendor}" (${SAVE_ERROR_HINT}). Volvé a cargarla.`);
       return;
     }
 
@@ -1415,30 +1416,30 @@ export default function App() {
         });
     }
 
-    showToast(`✅ Comprobante de "${newExpense.vendor}" (${formatCurrency(newExpense.amount)}) registrado.`);
+    showToast(`✅ Factura/ticket de "${newExpense.vendor}" (${formatCurrency(newExpense.amount)}) registrada.`);
 
     // Audit log: registrar carga de gasto individual
     logAuditEvent({
       userEmail: currentUser?.email || initialExpense.submittedByEmail,
       userName: currentUser?.name || initialExpense.submittedByName,
       action: 'EXPENSE_CREATE',
-      actionLabel: 'Carga de Comprobante',
+      actionLabel: 'Carga de Factura/Ticket',
       entityType: 'expense',
       entityId: initialExpense.id,
       entityName: `${initialExpense.vendor || 'Proveedor'} (${formatCurrency(initialExpense.amount, initialExpense.currency)})`,
-      summary: `Se cargó el comprobante de "${initialExpense.vendor || 'Proveedor'}" por ${formatCurrency(initialExpense.amount, initialExpense.currency)} (Proyecto: ${initialExpense.project || 'Sin asignar'}, Categoría: ${initialExpense.category || 'Sin asignar'}, Factura: ${initialExpense.invoiceNumber || 'S/N'}, Medio: ${initialExpense.paymentMethod || 'No especificado'}).`,
+      summary: `Se cargó la factura/ticket de "${initialExpense.vendor || 'Proveedor'}" por ${formatCurrency(initialExpense.amount, initialExpense.currency)} (Proyecto: ${initialExpense.project || 'Sin asignar'}, Categoría: ${initialExpense.category || 'Sin asignar'}, Factura: ${initialExpense.invoiceNumber || 'S/N'}, Medio: ${initialExpense.paymentMethod || 'No especificado'}).`,
       changes: [
         { field: 'vendor', fieldLabel: 'Proveedor', oldValue: '(Nuevo)', newValue: initialExpense.vendor || 'Sin especificar' },
         { field: 'amount', fieldLabel: 'Monto', oldValue: '0', newValue: formatCurrency(initialExpense.amount, initialExpense.currency) },
         { field: 'project', fieldLabel: 'Centro de Costos', oldValue: '(Sin asignar)', newValue: initialExpense.project || 'Sin asignar' },
         { field: 'category', fieldLabel: 'Categoría', oldValue: '(Sin asignar)', newValue: initialExpense.category || 'Sin asignar' },
-        { field: 'date', fieldLabel: 'Fecha del Comprobante', oldValue: '-', newValue: initialExpense.date || '-' },
-        ...(initialExpense.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura / Comprobante', oldValue: '-', newValue: initialExpense.invoiceNumber }] : []),
+        { field: 'date', fieldLabel: 'Fecha de la Factura/Ticket', oldValue: '-', newValue: initialExpense.date || '-' },
+        ...(initialExpense.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura/Ticket', oldValue: '-', newValue: initialExpense.invoiceNumber }] : []),
         ...(initialExpense.cuit ? [{ field: 'cuit', fieldLabel: 'CUIT Emisor', oldValue: '-', newValue: initialExpense.cuit }] : []),
         ...(initialExpense.paymentMethod ? [{ field: 'paymentMethod', fieldLabel: 'Medio de Pago', oldValue: '-', newValue: initialExpense.paymentMethod }] : []),
         ...(initialExpense.paymentType ? [{ field: 'paymentType', fieldLabel: 'Tipo de Pago', oldValue: '-', newValue: initialExpense.paymentType }] : []),
         ...(initialExpense.notes ? [{ field: 'notes', fieldLabel: 'Notas / Observaciones', oldValue: '-', newValue: initialExpense.notes }] : []),
-        { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: initialExpense.receiptImage ? (initialExpense.receiptFileName || 'Comprobante adjunto') : 'Sin archivo' },
+        { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: initialExpense.receiptImage ? (initialExpense.receiptFileName || 'Factura/ticket adjunta') : 'Sin archivo' },
       ],
       metadata: {
         amount: initialExpense.amount,
@@ -1532,7 +1533,7 @@ export default function App() {
     }
     const savedExpenses = initializedExpenses.filter((e) => !failedSet.has(e.id));
     if (savedExpenses.length === 0) {
-      showToast(`⚠️ No se pudo guardar ningún comprobante (${SAVE_ERROR_HINT}). Volvé a cargarlos.`);
+      showToast(`⚠️ No se pudo guardar ninguna factura/ticket (${SAVE_ERROR_HINT}). Volvé a cargarlas.`);
       return;
     }
 
@@ -1553,7 +1554,7 @@ export default function App() {
       })
         .then((res) => {
           if (res.success) {
-            showToast(`📧 Resumen con los ${savedExpenses.length} comprobantes enviado a ${batchTargetRecipient}.`);
+            showToast(`📧 Resumen con las ${savedExpenses.length} facturas/tickets enviado a ${batchTargetRecipient}.`);
           } else {
             console.warn('Batch receipt upload email notice:', res.error || res.message);
           }
@@ -1569,23 +1570,23 @@ export default function App() {
         userEmail: currentUser?.email || exp.submittedByEmail,
         userName: currentUser?.name || exp.submittedByName,
         action: 'EXPENSE_CREATE',
-        actionLabel: 'Carga de Comprobante (Lote)',
+        actionLabel: 'Carga de Factura/Ticket (Lote)',
         entityType: 'expense',
         entityId: exp.id,
         entityName: `${exp.vendor || 'Proveedor'} (${formatCurrency(exp.amount, exp.currency)})`,
-        summary: `Se cargó el comprobante de "${exp.vendor || 'Proveedor'}" por ${formatCurrency(exp.amount, exp.currency)} (Proyecto: ${exp.project || 'Sin asignar'}, Categoría: ${exp.category || 'Sin asignar'}, Factura: ${exp.invoiceNumber || 'S/N'}, Medio: ${exp.paymentMethod || 'No especificado'}).`,
+        summary: `Se cargó la factura/ticket de "${exp.vendor || 'Proveedor'}" por ${formatCurrency(exp.amount, exp.currency)} (Proyecto: ${exp.project || 'Sin asignar'}, Categoría: ${exp.category || 'Sin asignar'}, Factura: ${exp.invoiceNumber || 'S/N'}, Medio: ${exp.paymentMethod || 'No especificado'}).`,
         changes: [
           { field: 'vendor', fieldLabel: 'Proveedor', oldValue: '(Nuevo)', newValue: exp.vendor || 'Sin especificar' },
           { field: 'amount', fieldLabel: 'Monto', oldValue: '0', newValue: formatCurrency(exp.amount, exp.currency) },
           { field: 'project', fieldLabel: 'Centro de Costos', oldValue: '(Sin asignar)', newValue: exp.project || 'Sin asignar' },
           { field: 'category', fieldLabel: 'Categoría', oldValue: '(Sin asignar)', newValue: exp.category || 'Sin asignar' },
-          { field: 'date', fieldLabel: 'Fecha del Comprobante', oldValue: '-', newValue: exp.date || '-' },
-          ...(exp.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura / Comprobante', oldValue: '-', newValue: exp.invoiceNumber }] : []),
+          { field: 'date', fieldLabel: 'Fecha de la Factura/Ticket', oldValue: '-', newValue: exp.date || '-' },
+          ...(exp.invoiceNumber ? [{ field: 'invoiceNumber', fieldLabel: 'N° Factura/Ticket', oldValue: '-', newValue: exp.invoiceNumber }] : []),
           ...(exp.cuit ? [{ field: 'cuit', fieldLabel: 'CUIT Emisor', oldValue: '-', newValue: exp.cuit }] : []),
           ...(exp.paymentMethod ? [{ field: 'paymentMethod', fieldLabel: 'Medio de Pago', oldValue: '-', newValue: exp.paymentMethod }] : []),
           ...(exp.paymentType ? [{ field: 'paymentType', fieldLabel: 'Tipo de Pago', oldValue: '-', newValue: exp.paymentType }] : []),
           ...(exp.notes ? [{ field: 'notes', fieldLabel: 'Notas / Observaciones', oldValue: '-', newValue: exp.notes }] : []),
-          { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: exp.receiptImage ? (exp.receiptFileName || 'Comprobante adjunto') : 'Sin archivo' },
+          { field: 'hasReceipt', fieldLabel: 'Archivo Adjunto', oldValue: 'No', newValue: exp.receiptImage ? (exp.receiptFileName || 'Factura/ticket adjunta') : 'Sin archivo' },
         ],
         metadata: {
           amount: exp.amount,
@@ -1607,11 +1608,11 @@ export default function App() {
         userEmail: currentUser?.email || savedExpenses[0]?.submittedByEmail,
         userName: currentUser?.name || savedExpenses[0]?.submittedByName,
         action: 'BATCH_CREATE',
-        actionLabel: 'Carga en Lote de Comprobantes',
+        actionLabel: 'Carga en Lote de Facturas/Tickets',
         entityType: 'expense',
         entityId: `batch-${Date.now()}`,
-        entityName: `${savedExpenses.length} comprobantes`,
-        summary: `Se cargaron ${savedExpenses.length} comprobantes en lote por un monto total de ${formatCurrency(totalAmount)}.`,
+        entityName: `${savedExpenses.length} facturas/tickets`,
+        summary: `Se cargaron ${savedExpenses.length} facturas/tickets en lote por un monto total de ${formatCurrency(totalAmount)}.`,
         metadata: {
           count: savedExpenses.length,
           totalAmount,
@@ -1621,8 +1622,8 @@ export default function App() {
 
     showToast(
       failedSet.size > 0
-        ? `⚠️ Se guardaron ${savedExpenses.length} comprobante(s); ${failedSet.size} no se pudieron guardar (${SAVE_ERROR_HINT}).`
-        : `✅ ${savedExpenses.length} comprobantes guardados exitosamente.`
+        ? `⚠️ Se guardaron ${savedExpenses.length} factura(s)/ticket(s); ${failedSet.size} no se pudieron guardar (${SAVE_ERROR_HINT}).`
+        : `✅ ${savedExpenses.length} facturas/tickets guardadas exitosamente.`
     );
     });
   };
@@ -1655,8 +1656,8 @@ export default function App() {
         currency: 'Moneda',
         project: 'Centro de Costos',
         category: 'Categoría',
-        date: 'Fecha del Comprobante',
-        invoiceNumber: 'N° Factura / Comprobante',
+        date: 'Fecha de la Factura/Ticket',
+        invoiceNumber: 'N° Factura/Ticket',
         reimbursementStatus: 'Estado de Reintegro',
         reimbursable: 'Aplica Reintegro',
         paymentMethod: 'Medio de Pago',
@@ -1672,17 +1673,36 @@ export default function App() {
         userEmail: currentUser?.email,
         userName: currentUser?.name,
         action: 'EXPENSE_UPDATE',
-        actionLabel: 'Edición de Comprobante',
+        actionLabel: 'Edición de Factura/Ticket',
         entityType: 'expense',
         entityId: timestamped.id,
-        entityName: `${timestamped.vendor || 'Comprobante'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
-        summary: `Se actualizaron los datos del comprobante de "${timestamped.vendor || 'Comprobante'}".`,
+        entityName: `${timestamped.vendor || 'Factura/ticket'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
+        summary: `Se actualizaron los datos de la factura/ticket de "${timestamped.vendor || 'Factura/ticket'}".`,
         changes: diffs.length > 0 ? diffs : undefined,
       });
 
-      showToast('✅ Comprobante actualizado correctamente.');
+      showToast('✅ Factura/ticket actualizada correctamente.');
     } catch (err) {
       console.error('Error saving updated expense:', err);
+    }
+
+    // Si el archivo ya está en Drive y cambió algo que forma su nombre (centro de costos, fecha,
+    // monto) o su carpeta (centro de costos), se renombra y se mueve el mismo archivo
+    if (prevExpense) {
+      const driveResult = await relocateReceiptInGoogleDrive({ previous: prevExpense, updated: merged, costCenters });
+      if (driveResult.status === 'success') {
+        const fields = driveResult.fields;
+        setExpenses((prev) => prev.map((e) => (e.id === merged.id ? { ...e, ...fields } : e)));
+        setViewingReceiptExpense((v) => (v && v.id === merged.id ? { ...v, ...fields } : v));
+        await patchCentralExpenses([{ id: merged.id, changes: fields }]);
+        showToast(
+          driveResult.moved
+            ? `📁 En Drive, el archivo se movió a la carpeta "${fields.driveFolderTarget}" y se renombró como "${fields.driveUploadedFileName}".`
+            : `📁 En Drive, el archivo se renombró como "${fields.driveUploadedFileName}".`
+        );
+      } else if (driveResult.status === 'error') {
+        showToast(`⚠️ Los cambios se guardaron, pero no se pudo actualizar el archivo en Drive: ${driveResult.error}`);
+      }
     }
   };
 
@@ -1719,8 +1739,8 @@ export default function App() {
         actionLabel: 'Certificado de Retención',
         entityType: 'expense',
         entityId: timestamped.id,
-        entityName: `${timestamped.vendor || 'Comprobante'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
-        summary: `Se adjuntó certificado de retención para el comprobante de "${timestamped.vendor}".`,
+        entityName: `${timestamped.vendor || 'Factura/ticket'} (${formatCurrency(timestamped.amount, timestamped.currency)})`,
+        summary: `Se adjuntó certificado de retención para la factura/ticket de "${timestamped.vendor}".`,
       });
 
       // Si además se envía por correo, el aviso final lo da handleWithholdingEmailResult
@@ -1734,7 +1754,7 @@ export default function App() {
   // Un comprobante ya pagado es evidencia contable: solo Administración puede reemplazar su archivo
   const handleRequestReplaceReceipt = (exp: Expense) => {
     if (exp.reimbursementStatus === 'REIMBURSED' && permissionRole !== 'admin') {
-      showToast('🔒 Este comprobante ya fue pagado: solo Administración puede reemplazar su archivo.');
+      showToast('🔒 Esta factura/ticket ya fue pagada: solo Administración puede reemplazar su archivo.');
       return;
     }
     setExpenseToReplaceReceipt(exp);
@@ -1745,7 +1765,7 @@ export default function App() {
     expenseId: string,
     result: { sent: boolean; error?: string; sentAt: string }
   ) => {
-    const vendor = expenses.find((e) => e.id === expenseId)?.vendor || 'el comprobante';
+    const vendor = expenses.find((e) => e.id === expenseId)?.vendor || 'la factura/ticket';
     if (!result.sent) {
       showToast(`⚠️ Certificado guardado para ${vendor}, pero no se pudo enviar el correo${result.error ? `: ${result.error}` : '.'}`);
       return;
@@ -1821,11 +1841,11 @@ export default function App() {
       userEmail: currentUser?.email,
       userName: currentUser?.name,
       action: 'REPLACE_RECEIPT',
-      actionLabel: 'Reemplazo de Foto de Comprobante',
+      actionLabel: 'Reemplazo de Foto de Factura/Ticket',
       entityType: 'expense',
       entityId: targetExpense.id,
       entityName: `${targetExpense.vendor} (${formatCurrency(targetExpense.amount, targetExpense.currency)})`,
-      summary: `Se reemplazó el archivo adjunto del comprobante de "${targetExpense.vendor}" por "${newFileName}".`,
+      summary: `Se reemplazó el archivo adjunto de la factura/ticket de "${targetExpense.vendor}" por "${newFileName}".`,
       changes: [
         {
           field: 'receiptFileName',
@@ -1907,7 +1927,7 @@ export default function App() {
     const { deletedIds } = await deleteCentralExpenses([id]);
     if (!deletedIds.includes(id)) {
       if (toDelete) restoreExpensesInState([toDelete]);
-      showToast('⚠️ No se pudo eliminar el comprobante (sin permisos o sin conexión). No se hicieron cambios.');
+      showToast('⚠️ No se pudo eliminar la factura/ticket (sin permisos o sin conexión). No se hicieron cambios.');
       return;
     }
 
@@ -1918,14 +1938,14 @@ export default function App() {
       userEmail: currentUser?.email,
       userName: currentUser?.name,
       action: 'EXPENSE_DELETE',
-      actionLabel: 'Eliminación de Comprobante',
+      actionLabel: 'Eliminación de Factura/Ticket',
       entityType: 'expense',
       entityId: id,
       entityName: toDelete ? `${toDelete.vendor} (${formatCurrency(toDelete.amount)})` : id,
-      summary: `Se eliminó el comprobante de "${toDelete?.vendor || id}" por ${toDelete ? formatCurrency(toDelete.amount, toDelete.currency) : ''}.`,
+      summary: `Se eliminó la factura/ticket de "${toDelete?.vendor || id}" por ${toDelete ? formatCurrency(toDelete.amount, toDelete.currency) : ''}.`,
     });
 
-    showToast('🗑️ Comprobante eliminado.');
+    showToast('🗑️ Factura/ticket eliminada.');
   };
 
   const handleBatchDeleteExpenses = async (ids: string[]) => {
@@ -1941,7 +1961,7 @@ export default function App() {
     restoreExpensesInState(toDeleteItems.filter((e) => !deletedSet.has(e.id)));
 
     if (deletedIds.length === 0) {
-      showToast('⚠️ No se pudo eliminar ningún comprobante (sin permisos o sin conexión). No se hicieron cambios.');
+      showToast('⚠️ No se pudo eliminar ninguna factura/ticket (sin permisos o sin conexión). No se hicieron cambios.');
       return;
     }
 
@@ -1954,18 +1974,18 @@ export default function App() {
       userEmail: currentUser?.email,
       userName: currentUser?.name,
       action: 'EXPENSE_DELETE',
-      actionLabel: 'Eliminación en Lote de Comprobantes',
+      actionLabel: 'Eliminación en Lote de Facturas/Tickets',
       entityType: 'expense',
       entityId: 'batch-delete',
-      entityName: `${deletedIds.length} comprobantes`,
-      summary: `Se eliminaron ${deletedIds.length} comprobantes en lote.${failedIds.length > 0 ? ` ${failedIds.length} no pudieron eliminarse.` : ''}`,
+      entityName: `${deletedIds.length} facturas/tickets`,
+      summary: `Se eliminaron ${deletedIds.length} facturas/tickets en lote.${failedIds.length > 0 ? ` ${failedIds.length} no pudieron eliminarse.` : ''}`,
       metadata: { deletedIds, failedIds },
     });
 
     showToast(
       failedIds.length > 0
-        ? `⚠️ Se eliminaron ${deletedIds.length} comprobante(s); ${failedIds.length} no se pudieron eliminar (sin permisos o sin conexión).`
-        : `🗑️ ${deletedIds.length} comprobante(s) eliminados.`
+        ? `⚠️ Se eliminaron ${deletedIds.length} factura(s)/ticket(s); ${failedIds.length} no se pudieron eliminar (sin permisos o sin conexión).`
+        : `🗑️ ${deletedIds.length} factura(s)/ticket(s) eliminada(s).`
     );
   };
 
@@ -2078,11 +2098,11 @@ export default function App() {
           entityName: `${exp.vendor} (${formatCurrency(exp.amount)})`,
           summary: `Se revirtió el pago de "${exp.vendor}" a Pendiente.${
             reversalEmailOk ? ' Se envió email de aviso.' : ' No se pudo enviar el email de aviso.'
-          } Los comprobantes de transferencia y retención se enviaron a la papelera de Google Drive.`,
+          } El comprobante de pago y el certificado de retención se enviaron a la papelera de Google Drive.`,
         });
         showToast(
           reversalEmailOk
-            ? `ℹ️ Pago de "${exp.vendor}" revertido a Pendiente. Notificación enviada y comprobantes de Drive a la papelera.`
+            ? `ℹ️ Pago de "${exp.vendor}" revertido a Pendiente. Notificación enviada y documentos de pago de Drive a la papelera.`
             : `⚠️ Pago de "${exp.vendor}" revertido a Pendiente, pero no se pudo enviar el correo de aviso.`
         );
       } catch (err) {
@@ -2133,26 +2153,26 @@ export default function App() {
       actionLabel: 'Liquidación y Pago en Lote',
       entityType: 'expense',
       entityId: `batch-${Date.now()}`,
-      entityName: `${savedExpenses.length} comprobantes`,
-      summary: `Se liquidaron y pagaron ${savedExpenses.length} comprobantes en lote.${
+      entityName: `${savedExpenses.length} facturas/tickets`,
+      summary: `Se liquidaron y pagaron ${savedExpenses.length} facturas/tickets en lote.${
         emailsSentCount > 0 ? ` Se enviaron ${emailsSentCount} avisos por correo.` : ''
       }${emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''}${
-        failedCount > 0 ? ` ${failedCount} comprobante(s) no se pudieron registrar.` : ''
+        failedCount > 0 ? ` ${failedCount} factura(s)/ticket(s) no se pudieron registrar.` : ''
       }`,
     }).catch((err) => console.warn('Audit log error on batch payment:', err));
 
     if (failedCount > 0 || emailsFailed > 0 || alreadyPaid > 0) {
       showToast(
-        `⚠️ Se liquidaron ${savedExpenses.length} comprobante(s).${
-          alreadyPaid > 0 ? ` ${alreadyPaid} ya habían sido pagados por otra persona (no se repitieron).` : ''
+        `⚠️ Se liquidaron ${savedExpenses.length} factura(s)/ticket(s).${
+          alreadyPaid > 0 ? ` ${alreadyPaid} ya habían sido pagadas por otra persona (no se repitieron).` : ''
         }${failedCount > 0 ? ` ${failedCount} no se pudieron registrar (${SAVE_ERROR_HINT}).` : ''}${
           emailsFailed > 0 ? ` ${emailsFailed} correo(s) no se pudieron enviar.` : ''
         }`
       );
     } else if (emailsSentCount > 0) {
-      showToast(`🎉 Se liquidaron ${savedExpenses.length} comprobantes y se enviaron ${emailsSentCount} avisos por email.`);
+      showToast(`🎉 Se liquidaron ${savedExpenses.length} facturas/tickets y se enviaron ${emailsSentCount} avisos por email.`);
     } else {
-      showToast(`✅ Se marcaron ${savedExpenses.length} comprobantes como Reintegrados / Liquidados.`);
+      showToast(`✅ Se marcaron ${savedExpenses.length} facturas/tickets como Reintegradas / Liquidadas.`);
     }
   };
 
@@ -2201,7 +2221,7 @@ export default function App() {
         const total = group.items.reduce((sum, item) => sum + (item.amount || 0), 0);
         const subject = group.items.length === 1
           ? formatPaymentEmailSubject(group.items[0].vendor, group.items[0].amount, group.items[0].currency)
-          : `Reintegros Liquidados: ${group.items.length} comprobantes - Total ${formatCurrency(total)}`;
+          : `Reintegros Liquidados: ${group.items.length} facturas/tickets - Total ${formatCurrency(total)}`;
 
         const rows = group.items.map((it) => `<tr>
           <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px;">${escapeHtml(it.date)}</td>
@@ -2213,7 +2233,7 @@ export default function App() {
         const bodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
           <h2 style="color: #065f46; margin-top: 0;">Confirmación de Reintegro Liquidado</h2>
           <p>Hola <strong>${escapeHtml(group.name)}</strong>,</p>
-          <p>Te confirmamos que se han transferido y liquidado con éxito <strong>${group.items.length} comprobante(s)</strong> por un total de <strong>${formatCurrency(total)}</strong>:</p>
+          <p>Te confirmamos que se han transferido y liquidado con éxito <strong>${group.items.length} factura(s)/ticket(s)</strong> por un total de <strong>${formatCurrency(total)}</strong>:</p>
           <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
             <thead><tr style="background: #f8fafc;"><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Fecha</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proveedor</th><th style="padding: 6px 10px; text-align: left; font-size: 11px;">Proyecto</th><th style="padding: 6px 10px; text-align: right; font-size: 11px;">Importe</th></tr></thead>
             <tbody>${rows}</tbody>
@@ -2313,12 +2333,12 @@ export default function App() {
         const renamed = await renameExpenseFieldValue('project', oldName, sanitized.name);
         showToast(
           renamed.failed > 0
-            ? `⚠️ Centro de costos actualizado; ${renamed.failed} comprobante(s) no se pudieron renombrar.`
-            : `✅ Centro de costos "${sanitized.name}" (${sanitized.code}) actualizado en ${renamed.updated} comprobante(s).`
+            ? `⚠️ Centro de costos actualizado; ${renamed.failed} factura(s)/ticket(s) no se pudieron renombrar.`
+            : `✅ Centro de costos "${sanitized.name}" (${sanitized.code}) actualizado en ${renamed.updated} factura(s)/ticket(s).`
         );
       } catch (err) {
         console.error('Error renaming cost center in expenses:', err);
-        showToast(`⚠️ Centro de costos actualizado, pero no se pudo renombrar en los comprobantes (${SAVE_ERROR_HINT}).`);
+        showToast(`⚠️ Centro de costos actualizado, pero no se pudo renombrar en las facturas/tickets (${SAVE_ERROR_HINT}).`);
       }
       return;
     }
@@ -2424,10 +2444,10 @@ export default function App() {
     let renamedInfo = '';
     try {
       const renamed = await renameExpenseFieldValue('category', oldName, newName);
-      renamedInfo = renamed.failed > 0 ? ` (${renamed.failed} comprobante(s) no se pudieron actualizar)` : ` en ${renamed.updated} comprobante(s)`;
+      renamedInfo = renamed.failed > 0 ? ` (${renamed.failed} factura(s)/ticket(s) no se pudieron actualizar)` : ` en ${renamed.updated} factura(s)/ticket(s)`;
     } catch (err) {
       console.error('Error renaming category in expenses:', err);
-      renamedInfo = ' (no se pudo actualizar en los comprobantes)';
+      renamedInfo = ' (no se pudo actualizar en las facturas/tickets)';
     }
 
     await logAuditEvent({
@@ -2643,7 +2663,7 @@ export default function App() {
   ) => {
     const to = expense.submittedByEmail || '';
     if (!to) {
-      showToast('⚠️ Este comprobante no tiene el email de quien lo cargó: no se puede enviar el pedido.');
+      showToast('⚠️ Esta factura/ticket no tiene el email de quien la cargó: no se puede enviar el pedido.');
       return;
     }
     const recipientName = expense.submittedByName || 'Colaborador';
@@ -2659,7 +2679,7 @@ export default function App() {
         ? `<div style="font-family: Arial, sans-serif; max-width: 600px; color: #1e293b; line-height: 1.6;">
             <h2 style="color: #4f46e5; margin-bottom: 8px;">Solicitud de Datos Bancarios</h2>
             <p>Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
-            <p>Desde Administración y Finanzas estamos procesando tu reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(expense.project || 'General')}</strong>).</p>
+            <p>Desde Administración y Finanzas estamos procesando tu reintegro por <strong>${formatCurrency(expense.amount, expense.currency)}</strong> correspondiente a la factura/ticket de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(expense.project || 'General')}</strong>).</p>
             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
               <p style="margin: 0; font-size: 13px;">Por favor indícanos tus datos de transferencia (CBU/CVU, Alias, Banco y CUIT) para proceder a la liquidación del pago a la brevedad.</p>
             </div>
@@ -2779,8 +2799,8 @@ export default function App() {
           entityName: targetExpense ? `${targetExpense.vendor} (${formatCurrency(targetExpense.amount)})` : expenseId,
           summary:
             mode === 'request_bank_details'
-              ? `Se envió solicitud de datos bancarios para el comprobante de "${targetExpense?.vendor}".`
-              : `Se envió confirmación de pago y liquidación de comprobante para "${targetExpense?.vendor}".`,
+              ? `Se envió solicitud de datos bancarios para la factura/ticket de "${targetExpense?.vendor}".`
+              : `Se envió confirmación de pago y liquidación de factura/ticket para "${targetExpense?.vendor}".`,
         });
       } catch (err) {
         console.error('Error persisting email status update:', err);
@@ -2833,7 +2853,7 @@ export default function App() {
         entityName: `${timestamped.vendor} (${formatCurrency(timestamped.amount)})`,
         summary: `Se procesó y confirmó el pago del gasto de "${timestamped.vendor}" por ${formatCurrency(timestamped.amount, timestamped.currency)}.`,
       });
-      showToast(`✅ Pago y comprobante registrados exitosamente para ${timestamped.submittedByName || timestamped.vendor}`);
+      showToast(`✅ Pago y comprobante de pago registrados exitosamente para ${timestamped.submittedByName || timestamped.vendor}`);
     } catch (err) {
       console.warn('Audit log error on payment:', err);
     }
@@ -2883,8 +2903,8 @@ export default function App() {
     );
     if (notInDrive.length > 0) {
       const proceed = window.confirm(
-        `Tenés ${notInDrive.length} comprobante(s) cuyo archivo todavía no se subió a Google Drive ` +
-          `(${notInDrive.slice(0, 3).map((e) => e.vendor || 'Comprobante').join(', ')}${notInDrive.length > 3 ? '…' : ''}).\n\n` +
+        `Tenés ${notInDrive.length} factura(s)/ticket(s) cuyo archivo todavía no se subió a Google Drive ` +
+          `(${notInDrive.slice(0, 3).map((e) => e.vendor || 'Factura/ticket').join(', ')}${notInDrive.length > 3 ? '…' : ''}).\n\n` +
           'Si cerrás sesión, esos archivos se borran de este navegador y vas a tener que volver a adjuntarlos.\n\n' +
           '¿Cerrar sesión igual? (Cancelar para volver y usar "Reintentar")'
       );

@@ -324,7 +324,7 @@ export function AuditLogsView({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Historial centralizado de modificaciones en Centros de Costos, Proveedores, Comprobantes y Usuarios
+                Historial centralizado de modificaciones en Centros de Costos, Proveedores, Facturas/Tickets y Usuarios
               </p>
             </div>
           </div>
@@ -398,7 +398,7 @@ export function AuditLogsView({
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs col-span-2 sm:col-span-1">
           <div className="text-[11px] font-semibold text-indigo-600 flex items-center gap-1">
             <FileText className="w-3 h-3" />
-            <span>Comprobantes</span>
+            <span>Facturas/tickets</span>
           </div>
           <div className="text-xl font-black text-indigo-700 mt-0.5">{stats.expenses}</div>
         </div>
@@ -477,7 +477,7 @@ export function AuditLogsView({
               { id: 'ALL', label: 'Todos' },
               { id: 'cost_center', label: 'Centro de Costos' },
               { id: 'vendor', label: 'Proveedores' },
-              { id: 'expense', label: 'Comprobantes' },
+              { id: 'expense', label: 'Facturas/tickets' },
               { id: 'user', label: 'Usuarios / Roles' },
               { id: 'category', label: 'Categorías' },
               { id: 'system', label: 'Sistema' },
@@ -509,7 +509,7 @@ export function AuditLogsView({
               >
                 <option value="ALL">Todas las acciones</option>
                 <option value="EXPENSE_CREATE">📥 Cargas de Gastos</option>
-                <option value="EXPENSE_UPDATE">✏️ Edición de Comprobantes</option>
+                <option value="EXPENSE_UPDATE">✏️ Edición de Facturas/Tickets</option>
                 <option value="EXPENSE_PAYMENT">💳 Pagos y Reversiones</option>
                 <option value="EXPENSE_DELETE">🗑️ Eliminación de Gastos</option>
                 <option value="VENDOR_CREATE">🏢 Creación de Proveedores</option>
@@ -553,7 +553,7 @@ export function AuditLogsView({
             <h4 className="text-sm font-bold text-slate-800">No hay registros de auditoría que coincidan</h4>
             <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
               {logs.length === 0
-                ? 'El registro de cambios se encuentra vacío. Toda acción que realices en proveedores, centros de costos o comprobantes se irá guardando aquí.'
+                ? 'El registro de cambios se encuentra vacío. Toda acción que realices en proveedores, centros de costos o facturas/tickets se irá guardando aquí.'
                 : 'Intenta ajustando los filtros de búsqueda o el rango de fechas.'}
             </p>
           </div>

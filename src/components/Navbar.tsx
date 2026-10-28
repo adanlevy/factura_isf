@@ -82,7 +82,7 @@ export function Navbar({
                 </span>
               </div>
               <p className="text-xs text-slate-500 hidden sm:block">
-                Rendición de comprobantes y control de centros de costos
+                Rendición de facturas/tickets y control de centros de costos
               </p>
             </div>
           </div>

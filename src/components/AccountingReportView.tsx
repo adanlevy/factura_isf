@@ -115,7 +115,7 @@ export function AccountingReportView({ expenses, onImportJSON }: AccountingRepor
         const parsed = JSON.parse(event.target?.result as string);
         if (Array.isArray(parsed)) {
           onImportJSON(parsed);
-          alert(`Se importaron exitosamente ${parsed.length} comprobantes.`);
+          alert(`Se importaron exitosamente ${parsed.length} ${parsed.length === 1 ? 'factura/ticket' : 'facturas/tickets'}.`);
         }
       } catch {
         alert('Error al leer el archivo JSON.');
@@ -179,7 +179,7 @@ export function AccountingReportView({ expenses, onImportJSON }: AccountingRepor
         <div className="border-b border-slate-200 pb-6 flex flex-col sm:flex-row justify-between sm:items-end gap-4">
           <div>
             <span className="text-xs uppercase font-bold text-indigo-600 tracking-wider">
-              Informe de Gastos & Comprobantes
+              Informe de Gastos & Facturas/Tickets
             </span>
             <h2 className="text-2xl font-extrabold text-slate-900 mt-1">Rendición Contable Periódica</h2>
             <p className="text-xs text-slate-500 mt-1">
@@ -231,7 +231,7 @@ export function AccountingReportView({ expenses, onImportJSON }: AccountingRepor
         {/* Detailed Ledger Table */}
         <div className="space-y-3">
           <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-            Detalle de Comprobantes Asentados ({sortedExpenses.length})
+            Detalle de Facturas/Tickets Asentadas ({sortedExpenses.length})
           </h4>
 
           {/* Desktop Table View */}

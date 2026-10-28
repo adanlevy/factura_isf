@@ -78,8 +78,8 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
           <>
             <p className="text-slate-600">
               <strong>Factura ISF</strong> digitaliza la rendición de gastos de Ingeniería Sin Fronteras Argentina. El
-              equipo de terreno <strong>sube comprobantes</strong> (foto o archivo) y la <strong>Inteligencia
-              Artificial los lee</strong> y completa los datos solos. El equipo administrativo los gestiona y{' '}
+              equipo de terreno <strong>sube facturas/tickets</strong> (foto o archivo) y la <strong>Inteligencia
+              Artificial las lee</strong> y completa los datos sola. El equipo administrativo las gestiona y{' '}
               <strong>paga reintegros, paga a proveedores</strong> o deja asentados pagos con <strong>tarjeta
               corporativa o de débito</strong>.
             </p>
@@ -99,12 +99,13 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
         node: (
           <dl className="space-y-2">
             {[
-              ['Comprobante / Gasto', 'Cada factura, ticket o recibo cargado. Es la unidad básica del sistema.'],
+              ['Factura/ticket', 'El documento del gasto que se carga en la app (factura, ticket o recibo). Es la unidad básica del sistema.'],
+              ['Comprobante de pago', 'La constancia de la transferencia que hace Administración al pagar.'],
               ['Centro de Costos', 'El proyecto o rubro al que se imputa el gasto. Tiene una sigla (GPA, SEAP, GADM…) y una carpeta propia en Drive. Es obligatorio.'],
               ['Categoría', 'El tipo de gasto (Transporte, Alimentos y Viáticos, Honorarios…).'],
               ['Tipo de Pago', 'Cómo se pagó o se pagará el gasto. Hay 4, y definen si corresponde reintegro.'],
               ['Reintegro', 'Devolución de dinero a quien pagó de su bolsillo (vos u otra persona).'],
-              ['Estado', 'Situación del comprobante: Pendiente, Pagado, Pagado - Pend. Retención o Directo.'],
+              ['Estado', 'Situación de la factura/ticket: Pendiente, Pagado, Pagado - Pend. Retención o Directo.'],
               ['Datos de cuenta', 'CBU/CVU, Alias, Banco, CUIT y titular necesarios para transferir.'],
             ].map(([t, d]) => (
               <div key={t} className="flex flex-col sm:flex-row gap-1 sm:gap-3 border-b border-slate-100 pb-2">
@@ -124,7 +125,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <h4 className="font-bold text-slate-900 text-sm mb-1">👤 Colaborador / Rendidor</h4>
-                <p className="text-slate-600">Equipo de ingeniería y terreno. Solo ve la pestaña <strong>Mis Gastos</strong>. Carga comprobantes, ve/edita <strong>los suyos</strong> (si no están pagados) y elige su cuenta para reintegros.</p>
+                <p className="text-slate-600">Equipo de ingeniería y terreno. Solo ve la pestaña <strong>Mis Gastos</strong>. Carga facturas/tickets, ve/edita <strong>las suyas</strong> (si no están pagadas) y elige su cuenta para reintegros.</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <h4 className="font-bold text-slate-900 text-sm mb-1">🛡️ Administrador / Finanzas</h4>
@@ -146,7 +147,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
         node: (
           <>
             <ol className="list-decimal pl-5 space-y-1 text-slate-600">
-              <li>Abrí la app: aparece «Factura ISF · Sistema de Comprobantes».</li>
+              <li>Abrí la app: aparece «Factura ISF · Sistema de Gastos».</li>
               <li>Hacé clic en <strong>«Ingresar con cuenta de Google»</strong>.</li>
               <li>Elegí tu cuenta de Google institucional o habilitada.</li>
             </ol>
@@ -182,13 +183,13 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
       },
       {
         id: 'colaborador',
-        label: 'Cargar y ver comprobantes',
+        label: 'Cargar y ver facturas/tickets',
         icon: <Upload className="w-4 h-4" />,
         node: (
           <>
-            <h4 className="font-bold text-slate-900 text-sm">Cargar comprobantes con IA</h4>
+            <h4 className="font-bold text-slate-900 text-sm">Cargar facturas/tickets con IA</h4>
             <p className="text-slate-600">
-              Tocá <strong>«Cargar Comprobante»</strong> (o el botón flotante <span className="kbd">➕</span>). Podés
+              Tocá <strong>«Cargar Factura/Ticket»</strong> (o el botón flotante <span className="kbd">➕</span>). Podés
               elegir por explorador (se abre solo), por <strong>«Seleccionar archivos»</strong> o
               <strong> arrastrando</strong>. Acepta <strong>JPG, PNG y PDF</strong>, y varios a la vez. La IA (Google
               Gemini por defecto, o Claude si Administración lo eligió en Sistema) completa proveedor, monto, moneda, fecha, CUIT, N° de factura e ítems, y verifica si está a nombre
@@ -213,7 +214,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
                 </thead>
                 <tbody className="text-slate-600">
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🔄 Reintegro a mí</td><td className="p-2.5">Pagaste de tu bolsillo y pedís devolución.</td><td className="p-2.5">Sí (tu cuenta para reintegros)</td></tr>
-                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">👥 Reintegro a otra persona</td><td className="p-2.5">Pagó otra persona y vos cargás el comprobante.</td><td className="p-2.5">Sí (la cuenta de esa persona)</td></tr>
+                  <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">👥 Reintegro a otra persona</td><td className="p-2.5">Pagó otra persona y vos cargás la factura/ticket.</td><td className="p-2.5">Sí (la cuenta de esa persona)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🏢 Pago a Proveedor</td><td className="p-2.5">Se transfiere directo al proveedor.</td><td className="p-2.5">Sí (catálogo)</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">💳 Tarjeta Corporativa</td><td className="p-2.5">Se abonó con la tarjeta corporativa.</td><td className="p-2.5">No</td></tr>
                   <tr className="border-t border-slate-100"><td className="p-2.5 font-semibold">🏦 Tarjeta Débito Galicia</td><td className="p-2.5">Débito de la cuenta institucional Galicia.</td><td className="p-2.5">No</td></tr>
@@ -223,14 +224,14 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <p className="text-slate-600 text-xs">La IA no decide el tipo de pago: lo elegís vos. Si no elegís ninguno, se asume Tarjeta Corporativa.</p>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Mis Gastos: ver, buscar, editar</h4>
-            <p className="text-slate-600">Muestra <strong>solo tus comprobantes</strong>, con tu total arriba. Buscás por cualquier campo y ordenás por columna. Por fila: 👁 Ver · ✏️ Editar (si ya está pagado aparece un candado 🔒 y queda bloqueado) · 🗑 Eliminar. Estados:</p>
+            <p className="text-slate-600">Muestra <strong>solo tus facturas/tickets</strong>, con tu total arriba. Buscás por cualquier campo y ordenás por columna. Por fila: 👁 Ver · ✏️ Editar (si ya está pagada aparece un candado 🔒 y queda bloqueada) · 🗑 Eliminar. Estados:</p>
             <div className="flex flex-wrap gap-2">
               <Badge tone="pend">Pendiente</Badge>
               <Badge tone="paid">Pagado</Badge>
               <Badge tone="reten">Pagado - Pend. Retención</Badge>
               <Badge tone="direct">Directo</Badge>
             </div>
-            <p className="text-slate-600 mt-3">El visor de comprobante permite <strong>Descargar</strong>, <strong>Ver en Drive</strong> y <strong>Reemplazar</strong> el archivo (ej. una foto borrosa) sin alterar los datos contables.</p>
+            <p className="text-slate-600 mt-3">El visor de documentos permite <strong>Descargar</strong>, <strong>Ver en Drive</strong> y <strong>Reemplazar</strong> el archivo (ej. una foto borrosa) sin alterar los datos contables.</p>
           </>
         ),
       },
@@ -243,7 +244,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
           <>
             <p className="text-slate-600">La pestaña <strong>«Gestión Pagos»</strong> es el panel del equipo contable. Buscás por proveedor, solicitante, alias o CBU; filtrás por estado y por centro de costos. Los botones de estado dicen qué hacer:</p>
             <div className="flex flex-col gap-1.5 text-xs text-slate-600">
-              <div><Badge tone="paid">Pagar</Badge> — comprobante pendiente, abre el pago.</div>
+              <div><Badge tone="paid">Pagar</Badge> — factura/ticket pendiente, abre el pago.</div>
               <div><Badge tone="paid">Pagado</Badge> — liquidado (al pasar el mouse: <em>Revertir</em>).</div>
               <div><Badge tone="reten">Pend. Retención</Badge> — falta el certificado.</div>
               <div><Badge tone="direct">Directo</Badge> — pago institucional, sin acción.</div>
@@ -252,24 +253,24 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <h4 className="font-bold text-slate-900 text-sm mt-4">Pagar (individual)</h4>
             <ol className="list-decimal pl-5 space-y-1 text-slate-600">
               <li>«Pagar» abre el resumen con los datos bancarios del destinatario.</li>
-              <li>Adjuntá el <strong>comprobante de transferencia</strong> (opcional): PNG, JPG, PDF o <span className="kbd">Ctrl+V</span>.</li>
+              <li>Adjuntá el <strong>comprobante de pago</strong> (opcional): PNG, JPG, PDF o <span className="kbd">Ctrl+V</span>.</li>
               <li>Tildá <strong>«Aplica Retenciones»</strong> si corresponde (queda en <Badge tone="reten">Pend. Retención</Badge>).</li>
               <li><strong>«Confirmar Pago»</strong>: sube la constancia a la carpeta de <strong>Comprobantes de Pago y Retenciones</strong>, envía el correo al solicitante (con CC automático) y marca <Badge tone="paid">Pagado</Badge>.</li>
             </ol>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Pago en lote</h4>
-            <p className="text-slate-600">Con varias filas seleccionadas, «Pagar» agrupa los comprobantes <strong>por solicitante</strong> (cada uno recibe su correo con desglose). <strong>«Confirmar y Pagar (N)»</strong> marca todos como Pagados.</p>
+            <p className="text-slate-600">Con varias filas seleccionadas, «Pagar» agrupa las facturas/tickets <strong>por solicitante</strong> (cada uno recibe su correo con desglose). <strong>«Confirmar y Pagar (N)»</strong> marca todos como Pagados.</p>
             <Callout>
-              <strong>Constancia en Drive:</strong> igual que el pago individual, el pago en lote sube la constancia a la carpeta de Comprobantes de Pago y Retenciones. Se sube <strong>un solo archivo</strong> (una transferencia que reintegra varios comprobantes) vinculado a todos; si se revierte o elimina uno, el archivo se conserva mientras otro comprobante lo use.
+              <strong>Constancia en Drive:</strong> igual que el pago individual, el pago en lote sube la constancia a la carpeta de Comprobantes de Pago y Retenciones. Se sube <strong>un solo archivo</strong> (una transferencia que reintegra varias facturas/tickets) vinculado a todas; si se revierte o elimina una, el archivo se conserva mientras otra factura/ticket lo use.
             </Callout>
 
             <h4 className="font-bold text-slate-900 text-sm mt-4">Retenciones, reversión y más</h4>
             <ul className="list-disc pl-5 space-y-1 text-slate-600">
               <li><strong>Certificado de retenciones:</strong> al hacer clic en <Badge tone="reten">Pend. Retención</Badge> adjuntás el certificado AFIP/ARCA; se archiva en la carpeta de Comprobantes de Pago y Retenciones, se envía por correo y pasa a <Badge tone="paid">Pagado</Badge> definitivo.</li>
-              <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y manda a la papelera de Drive la constancia y el certificado (se pueden recuperar durante 30 días).</li>
+              <li><strong>Revertir un pago:</strong> vuelve a <Badge tone="pend">Pendiente</Badge>, envía aviso al solicitante y manda a la papelera de Drive el comprobante de pago y el certificado (se pueden recuperar durante 30 días).</li>
               <li><strong>Pedir datos bancarios:</strong> «Pedir Datos» envía un correo prearmado solicitando CBU/Alias.</li>
               <li><strong>Exportar CSV</strong> de lo seleccionado o filtrado.</li>
-              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus comprobantes pendientes; los pagados conservan los datos con que se pagaron. Los colaboradores dan de alta proveedores al instante y sus ediciones llegan como <strong>pedidos de cambio</strong> a «Pendientes de revisión», donde Administración aprueba, corrige o rechaza (la cuenta elegida queda igual en el comprobante del colaborador).</li>
+              <li><strong>Proveedores:</strong> catálogo oficial con cuentas; alta manual, con IA (Constancia de CUIT) o importación CSV. Alias/CBU duplicados prohibidos. Al editar un proveedor se actualizan sus facturas/tickets pendientes; las pagadas conservan los datos con que se pagaron. Los colaboradores dan de alta proveedores al instante y sus ediciones llegan como <strong>pedidos de cambio</strong> a «Pendientes de revisión», donde Administración aprueba, corrige o rechaza (la cuenta elegida queda igual en la factura/ticket del colaborador).</li>
               <li><strong>Centros de Costos:</strong> siglas + carpeta de Drive + emails en copia. Arriba se define aparte la <strong>carpeta única de Comprobantes de Pago y Retenciones</strong> (no es un centro de costos): ahí van todos los comprobantes de pago y certificados, sin importar el centro de costos. Si no está configurada, van a la carpeta del centro de costos.</li>
               <li><strong>Usuarios / Roles:</strong> la única fuente de acceso. Habilitar personas, asignar rol y CC global; alta con correo de bienvenida. No se puede quitar al último administrador.</li>
               <li><strong>Sistema y Log de Cambios:</strong> métricas de uso/costos y auditoría en tiempo real, campo a campo.</li>
@@ -288,7 +289,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
             <div className="grid sm:grid-cols-2 gap-3">
               {[
                 ['🤖 IA — Google Gemini', 'Lee facturas (OCR) y constancias de proveedores. Modelo gemini-3.7-flash con respaldo. ~US$0,75/millón de tokens de entrada y ~US$3,75/salida (incluye thinking tokens).'],
-                ['🧠 IA alternativa — Claude', 'Opcional, se elige en Sistema (Opus 5.5, Sonnet 5.5 o Haiku 5.5) para leer comprobantes y constancias. Requiere ANTHROPIC_API_KEY en el servidor; si falla o falta, sigue con Gemini. Costos por modelo en la tabla de Sistema.'],
+                ['🧠 IA alternativa — Claude', 'Opcional, se elige en Sistema (Opus 5.5, Sonnet 5.5 o Haiku 5.5) para leer facturas/tickets y constancias. Requiere ANTHROPIC_API_KEY en el servidor; si falla o falta, sigue con Gemini. Costos por modelo en la tabla de Sistema.'],
                 ['📁 Archivo — Google Drive', 'Cada centro de costos tiene su carpeta para facturas y tickets; los comprobantes de pago y certificados de retención van a una carpeta única aparte. Todo se sube en nombre de la cuenta institucional maestra: nadie necesita acceso propio a Drive.'],
                 ['✉️ Correos — Gmail API', 'Plantillas HTML institucionales. El CC automático combina usuarios «copiar en todo», emails del centro de costos y CC explícito.'],
                 ['☁️ Datos — Firestore', 'Centralizado y en tiempo real. Los archivos binarios nunca se guardan en Firestore, solo en Drive; en la base van los datos livianos y los enlaces.'],
@@ -333,12 +334,12 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
           <div className="space-y-2.5">
             {[
               ['No puedo iniciar sesión / «Acceso denegado»', 'Tu correo no está en la tabla de usuarios (también las cuentas @isf-argentina.org tienen que estar). Pedile a un administrador que te agregue en Usuarios / Roles.', false],
-              ['No puedo editar (aparece un candado)', 'El comprobante ya fue pagado y queda bloqueado. Administración puede revertir el pago y luego editarlo.', false],
+              ['No puedo editar (aparece un candado)', 'La factura/ticket ya fue pagada y queda bloqueada. Administración puede revertir el pago y luego editarla.', false],
               ['La IA no detectó monto o fecha', 'La fila queda marcada «Falta Monto o Fecha». Completalos a mano y guardá, o usá «Reintentar».', false],
-              ['Aviso «no es CUIT ISF»', 'El comprobante no figura a nombre de ISF. Verificá el destinatario; podés continuar con «Aceptar» si corresponde.', false],
-              ['El comprobante dice «Fallo Drive»', 'La subida a Drive falló. Usá «Reintentar» junto al estado en Mis Gastos; el dato contable ya quedó guardado. Si el archivo ya no está en el navegador, «Reemplazar» en el visor.', false],
+              ['Aviso «no es CUIT ISF»', 'La factura/ticket no figura a nombre de ISF. Verificá el destinatario; podés continuar con «Aceptar» si corresponde.', false],
+              ['La factura/ticket dice «Fallo Drive»', 'La subida a Drive falló. Usá «Reintentar» junto al estado en Mis Gastos; el dato contable ya quedó guardado. Si el archivo ya no está en el navegador, «Reemplazar» en el visor.', false],
               ['Necesito reintegrar y no tengo el CBU', 'Usá «Pedir Datos» en Gestión de Pagos para pedirlo por correo.', true],
-              ['¿Pagar muchos comprobantes juntos?', 'Seleccioná varias filas en Gestión de Pagos y usá «Pagar» (pago en lote).', true],
+              ['¿Pagar muchas facturas/tickets juntas?', 'Seleccioná varias filas en Gestión de Pagos y usá «Pagar» (pago en lote).', true],
               ['Aparece «Hay una versión nueva de la aplicación»', 'Se publicó una actualización. Guardá lo que estés cargando y tocá «Actualizar ahora» para recargar con la última versión. «Más tarde» oculta el aviso por 30 minutos.', false],
             ]
               .filter(([, , adminOnly]) => isAdmin || !adminOnly)
@@ -357,7 +358,7 @@ export function ManualModal({ isOpen, role, onClose }: ManualModalProps) {
         icon: <ListChecks className="w-4 h-4" />,
         node: (
           <>
-            <h4 className="font-bold text-slate-900 text-sm">Estados de un comprobante</h4>
+            <h4 className="font-bold text-slate-900 text-sm">Estados de una factura/ticket</h4>
             <div className="space-y-1.5 text-xs text-slate-600">
               <div className="flex gap-2 items-baseline"><Badge tone="pend">Pendiente</Badge><span>Falta liquidar el reintegro o el pago.</span></div>
               <div className="flex gap-2 items-baseline"><Badge tone="paid">Pagado</Badge><span>Reintegro o pago confirmado.</span></div>

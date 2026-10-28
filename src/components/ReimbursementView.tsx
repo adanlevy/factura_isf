@@ -119,7 +119,8 @@ export function ReimbursementView({
               {formatCurrency(totalPendingAmount)}
             </div>
             <p className="text-xs text-amber-700/80">
-              {pendingExpenses.length} comprobante(s) a reembolsar a colaboradores
+              {pendingExpenses.length}{' '}
+              {pendingExpenses.length === 1 ? 'factura/ticket a reembolsar' : 'facturas/tickets a reembolsar'} a colaboradores
             </p>
           </div>
         </div>
@@ -134,7 +135,8 @@ export function ReimbursementView({
               {formatCurrency(totalSettledAmount)}
             </div>
             <p className="text-xs text-emerald-700/80">
-              {settledExpenses.length} comprobante(s) ya liquidados y pagados
+              {settledExpenses.length}{' '}
+              {settledExpenses.length === 1 ? 'factura/ticket ya liquidada y pagada' : 'facturas/tickets ya liquidadas y pagadas'}
             </p>
           </div>
         </div>
@@ -293,7 +295,7 @@ export function ReimbursementView({
                     <button
                       onClick={() => onViewReceipt(exp)}
                       className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 hover:text-indigo-600 text-slate-600 transition cursor-pointer"
-                      title="Ver / abrir comprobante"
+                      title="Ver / abrir factura/ticket"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
@@ -341,7 +343,7 @@ export function ReimbursementView({
                 <RotateCcw className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-slate-900">¿Revertir comprobante a Pendiente?</h4>
+                <h4 className="text-sm font-bold text-slate-900">¿Revertir factura/ticket a Pendiente?</h4>
                 <p className="text-xs text-slate-500 mt-1">
                   Se reabrirá el reintegro de <strong>{revertTargetExpense.vendor}</strong> por <strong>{formatCurrency(revertTargetExpense.amount, revertTargetExpense.currency)}</strong>.
                 </p>

@@ -126,8 +126,8 @@ export function computeFirestoreStorage(
   const collections: FirestoreCollectionMetric[] = [
     {
       id: 'expenses',
-      name: 'expenses (Comprobantes)',
-      description: 'Facturas, comprobantes, metadatos OCR e imágenes de transferencias',
+      name: 'expenses (Facturas/tickets)',
+      description: 'Facturas/tickets, metadatos OCR y comprobantes de pago',
       documentCount: expenses.length,
       estimatedBytes: expensesBytes,
       estimatedKb: Number((expensesBytes / 1024).toFixed(2)),
