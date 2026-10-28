@@ -187,7 +187,7 @@ export function AuthProfileModal({
                       </span>
                     ) : (
                       <span>
-                        Todos los correos institucionales y comprobantes se centralizan en la cuenta maestra configurada en el servidor (OAuth / Service Account).
+                        Todos los correos institucionales y archivos se centralizan en la cuenta maestra configurada en el servidor (OAuth / Service Account).
                       </span>
                     )}
                   </div>
@@ -247,7 +247,7 @@ export function AuthProfileModal({
                   </p>
                 )}
                 <p className="text-[11px] text-slate-500">
-                  ¿Cambió tu CBU o alias? Editá la cuenta al cargar un comprobante y el cambio le llega a Administración para aprobar, o elegí otro registro.
+                  ¿Cambió tu CBU o alias? Editá la cuenta al cargar una factura/ticket y el cambio le llega a Administración para aprobar, o elegí otro registro.
                 </p>
                 <div className="flex justify-end gap-2 pt-0.5">
                   <button

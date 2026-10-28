@@ -171,7 +171,7 @@ export function VendorsView({
             Proveedores y Cuentas Bancarias
           </h2>
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-            Administra los datos fiscales, CUIT, CBU y Alias bancarios para liquidaciones directas y rendición de comprobantes.
+            Administra los datos fiscales, CUIT, CBU y Alias bancarios para liquidaciones directas y rendición de facturas/tickets.
           </p>
         </div>
 
@@ -227,7 +227,7 @@ export function VendorsView({
                   <option value="createdAt-desc">Fecha de Carga: Más recientes</option>
                   <option value="createdAt-asc">Fecha de Carga: Más antiguos</option>
                   <option value="totalAmount-desc">Mayor Facturación</option>
-                  <option value="count-desc">Más Comprobantes</option>
+                  <option value="count-desc">Más Facturas/Tickets</option>
                 </select>
               </div>
             </div>
@@ -355,14 +355,14 @@ export function VendorsView({
                 {/* Bottom Stats & Actions */}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px]">
                   <span className="text-slate-500 font-medium">
-                    {formatNumber(stats.count)} comp. ({formatCurrency(stats.totalAmount)})
+                    {formatNumber(stats.count)} {stats.count === 1 ? 'factura/ticket' : 'facturas/tickets'} ({formatCurrency(stats.totalAmount)})
                   </span>
 
                   <div className="flex items-center space-x-1">
                     <button
                       onClick={() => onViewVendorExpenses(vendor)}
                       className="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-indigo-50 hover:text-indigo-700 text-[11px] font-semibold text-slate-700 transition cursor-pointer flex items-center space-x-1"
-                      title="Ver todos los comprobantes de este proveedor"
+                      title="Ver todas las facturas/tickets de este proveedor"
                     >
                       <ExternalLink className="w-3 h-3" />
                       <span>Gastos</span>
@@ -469,7 +469,12 @@ export function VendorsView({
                 <div className="flex items-start space-x-2 text-amber-900 font-semibold">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <span>
-                    Este proveedor está asociado a <strong>{matchingExpensesForDelete.length} pago(s) / comprobante(s)</strong> registrados:
+                    Este proveedor está asociado a{' '}
+                    <strong>
+                      {matchingExpensesForDelete.length}{' '}
+                      {matchingExpensesForDelete.length === 1 ? 'factura/ticket registrada' : 'facturas/tickets registradas'}
+                    </strong>
+                    :
                   </span>
                 </div>
 
@@ -491,13 +496,19 @@ export function VendorsView({
                   ))}
                   {matchingExpensesForDelete.length > 10 && (
                     <p className="text-[10px] text-slate-400 pt-1 text-center italic">
-                      + {matchingExpensesForDelete.length - 10} comprobantes más
+                      + {matchingExpensesForDelete.length - 10}{' '}
+                      {matchingExpensesForDelete.length - 10 === 1 ? 'factura/ticket más' : 'facturas/tickets más'}
                     </p>
                   )}
                 </div>
 
                 <p className="text-[11px] text-amber-800 leading-relaxed">
-                  Si continúas, <strong>los datos de cuenta bancaria del proveedor se desvincularán de estos {matchingExpensesForDelete.length} comprobantes</strong>, conservando intacto el <em>Nombre / Factura</em> original del comprobante.
+                  Si continúas, <strong>los datos de cuenta bancaria del proveedor se desvincularán de{' '}
+                  {matchingExpensesForDelete.length === 1
+                    ? 'esta factura/ticket'
+                    : `estas ${matchingExpensesForDelete.length} facturas/tickets`}
+                  </strong>
+                  , conservando intacto el <em>Nombre / Factura</em> original de cada factura/ticket.
                 </p>
               </div>
             )}

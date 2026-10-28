@@ -298,7 +298,7 @@ export function BatchPaymentModal({
       setIsExecuting(false);
       setExecutionStep('');
       alert(
-        'No se registró ningún pago: los comprobantes ya habían sido pagados por otra persona, o no hay permisos / conexión. No se envió ningún correo.'
+        'No se registró ningún pago: las facturas/tickets ya habían sido pagadas por otra persona, o no hay permisos / conexión. No se envió ningún correo.'
       );
       return;
     }
@@ -339,11 +339,11 @@ export function BatchPaymentModal({
               firstExp.paymentType || firstExp.paymentMethod
             );
           } else if (allAreVendorPayments) {
-            emailSubject = `[Pagos] Proveedores Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+            emailSubject = `[Pagos] Proveedores Liquidados: ${group.expenses.length} facturas/tickets - Total ${formatCurrency(group.totalAmount)}`;
           } else if (allAreReimbursements) {
-            emailSubject = `[Pagos] Reintegros Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+            emailSubject = `[Pagos] Reintegros Liquidados: ${group.expenses.length} facturas/tickets - Total ${formatCurrency(group.totalAmount)}`;
           } else {
-            emailSubject = `[Pagos] Comprobantes Liquidados: ${group.expenses.length} comprobantes - Total ${formatCurrency(group.totalAmount)}`;
+            emailSubject = `[Pagos] Facturas/Tickets Liquidadas: ${group.expenses.length} facturas/tickets - Total ${formatCurrency(group.totalAmount)}`;
           }
 
           const headerTitle = allAreVendorPayments
@@ -389,8 +389,8 @@ export function BatchPaymentModal({
             <p style="font-size: 14px;">
               Te confirmamos que se ha(n) <strong>transferido y liquidado con éxito</strong> ${
                 isSingle
-                  ? `${descriptorText} por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu comprobante de <em>${escapeHtml(firstExp.vendor)}</em>.`
-                  : `<strong>${group.expenses.length} comprobantes</strong> por un total de <strong>${formatCurrency(group.totalAmount)}</strong>.`
+                  ? `${descriptorText} por <strong>${formatCurrency(group.totalAmount)}</strong> correspondiente a tu factura/ticket de <em>${escapeHtml(firstExp.vendor)}</em>.`
+                  : `<strong>${group.expenses.length} facturas/tickets</strong> por un total de <strong>${formatCurrency(group.totalAmount)}</strong>.`
               }
             </p>
 
@@ -434,7 +434,7 @@ export function BatchPaymentModal({
             ${
               paymentProofFileName
                 ? `<div style="background:#ecfdf5; border:1px solid #a7f3d0; padding:14px; border-radius:10px; margin:16px 0;">
-              <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Transferencia Bancaria Adjunto:</p>
+              <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Pago Adjunto:</p>
               <p style="margin:0; font-size:12px; color:#047857;">
                 Se adjunta la constancia de pago de la transferencia: <strong>${escapeHtml(paymentProofFileName)}</strong>.
               </p>
@@ -509,7 +509,7 @@ export function BatchPaymentModal({
             <div>
               <h2 className="text-base sm:text-lg font-bold">Liquidación y Pago en Lote</h2>
               <p className="text-xs text-emerald-100">
-                Pagar y notificar múltiples comprobantes seleccionados
+                Pagar y notificar múltiples facturas/tickets seleccionadas
               </p>
             </div>
           </div>
@@ -528,7 +528,7 @@ export function BatchPaymentModal({
           <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                Total a Liquidar ({expenses.length} comprobante{expenses.length !== 1 ? 's' : ''})
+                Total a Liquidar ({expenses.length} {expenses.length !== 1 ? 'facturas/tickets' : 'factura/ticket'})
               </span>
               <div className="text-2xl font-black text-emerald-700 tracking-tight mt-0.5">
                 {formatCurrency(totalAmount)}
@@ -560,7 +560,7 @@ export function BatchPaymentModal({
                   </span>
                 </span>
                 <p className="text-[11.5px] text-slate-500 mt-0.5">
-                  Cada solicitante recibirá un correo formal con el desglose de sus comprobantes pagados, datos bancarios y el comprobante adjunto.
+                  Cada solicitante recibirá un correo formal con el desglose de sus facturas/tickets pagadas, datos bancarios y el comprobante de pago adjunto.
                 </p>
               </div>
             </label>
@@ -584,7 +584,7 @@ export function BatchPaymentModal({
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10.5px] text-slate-500">
                           <span className="bg-slate-100 px-1.5 py-0.2 rounded font-medium text-slate-600">
-                            {g.expenses.length} comprobante{g.expenses.length !== 1 ? 's' : ''}
+                            {g.expenses.length} {g.expenses.length !== 1 ? 'facturas/tickets' : 'factura/ticket'}
                           </span>
                           {g.ccRecipients.length > 0 && (
                             <span className="text-slate-400 truncate" title={`CC: ${g.ccRecipients.join(', ')}`}>
@@ -607,7 +607,7 @@ export function BatchPaymentModal({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700">
-                Comprobante de Transferencia Bancaria (Opcional)
+                Comprobante de Pago (Opcional)
               </label>
               <span className="text-[10px] text-slate-400">
                 Se adjuntará a todos los correos y se guardará con los gastos
@@ -638,7 +638,7 @@ export function BatchPaymentModal({
                   }}
                   disabled={isExecuting}
                   className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
-                  title="Quitar comprobante"
+                  title="Quitar comprobante de pago"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -714,7 +714,7 @@ export function BatchPaymentModal({
           {/* Collapsible List of Expenses to be Paid */}
           <div className="space-y-2 pt-2 border-t border-slate-200">
             <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
-              Comprobantes en este lote ({expenses.length}):
+              Facturas/tickets en este lote ({expenses.length}):
             </span>
             <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
               {expenses.map((exp) => (

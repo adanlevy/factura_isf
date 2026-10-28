@@ -233,7 +233,7 @@ export function WithholdingCertificateModal({
           </div>
 
           <p style="font-size: 14px;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
-          <p style="font-size: 14px;">Te enviamos adjunto el <strong>Certificado de Retención Impositiva</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> por <strong>${formatCurrency(
+          <p style="font-size: 14px;">Te enviamos adjunto el <strong>Certificado de Retención Impositiva</strong> correspondiente a la factura/ticket de <em>${escapeHtml(expense.vendor)}</em> por <strong>${formatCurrency(
             expense.amount,
             expense.currency
           )}</strong> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>).</p>
@@ -353,7 +353,7 @@ export function WithholdingCertificateModal({
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[11px] text-slate-500 font-semibold">Monto del Comprobante</div>
+                <div className="text-[11px] text-slate-500 font-semibold">Monto de la Factura/Ticket</div>
                 <div className="text-lg font-extrabold text-slate-900">
                   {formatCurrency(expense.amount, expense.currency)}
                 </div>
@@ -541,7 +541,7 @@ export function WithholdingCertificateModal({
               <div>
                 <h4 className="text-sm font-bold text-slate-900">¿Revertir pago a Pendiente?</h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  Se revertirá el estado de pago del comprobante de <strong>{expense.vendor}</strong> ({formatCurrency(expense.amount, expense.currency)}) a pendiente.
+                  Se revertirá el estado de pago de la factura/ticket de <strong>{expense.vendor}</strong> ({formatCurrency(expense.amount, expense.currency)}) a pendiente.
                 </p>
               </div>
             </div>

@@ -26,8 +26,8 @@ interface SafePdfViewerProps {
 
 export function SafePdfViewer({
   url,
-  fileName = 'comprobante.pdf',
-  title = 'Comprobante PDF',
+  fileName = 'documento.pdf',
+  title = 'Documento PDF',
   className = '',
   heightClass = 'h-80',
 }: SafePdfViewerProps) {

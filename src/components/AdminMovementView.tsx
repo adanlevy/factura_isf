@@ -203,7 +203,7 @@ export function AdminMovementView({
           cuitCuil: expense.cuit || '',
           accountHolder: expense.vendor.trim(),
         },
-        notes: `Guardado desde comprobante ${expense.invoiceNumber || expense.date}`,
+        notes: `Guardado desde factura/ticket ${expense.invoiceNumber || expense.date}`,
       });
       setVendorSavedToast(`Proveedor "${expense.vendor}" guardado en el catálogo.`);
     }
@@ -375,7 +375,7 @@ export function AdminMovementView({
       .filter((e) => e.reimbursementStatus === 'PENDING')
       .map((e) => e.id);
     if (pendingSelectedIds.length === 0) {
-      setBatchSettleWarning('Ninguno de los comprobantes seleccionados está en estado pendiente de pago.');
+      setBatchSettleWarning('Ninguna de las facturas/tickets seleccionadas está en estado pendiente de pago.');
       return;
     }
     setBatchSettleWarning(null);
@@ -473,14 +473,14 @@ export function AdminMovementView({
               <button
                 onClick={handleOpenBatchSettleModal}
                 className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition cursor-pointer"
-                title="Pagar comprobantes seleccionados"
+                title="Pagar facturas/tickets seleccionadas"
               >
                 Pagar
               </button>
               <button
                 onClick={() => setShowBatchDeleteModal(true)}
                 className="px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold transition cursor-pointer flex items-center space-x-1"
-                title="Eliminar comprobantes seleccionados"
+                title="Eliminar facturas/tickets seleccionadas"
               >
                 <Trash2 className="w-3.5 h-3.5 mr-1 text-rose-600" />
                 <span>Eliminar</span>
@@ -523,7 +523,7 @@ export function AdminMovementView({
                 </button>
               )}
             </span>
-            <span className="text-slate-500">Incluye comprobantes con su nombre, su CUIT o pagados a su cuenta.</span>
+            <span className="text-slate-500">Incluye facturas/tickets con su nombre, su CUIT o pagadas a su cuenta.</span>
           </div>
         )}
         {/* Search */}
@@ -543,7 +543,7 @@ export function AdminMovementView({
           value={activePeriod}
           onChange={(e) => handlePeriodChange(e.target.value)}
           className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-          title="Filtrar por fecha del comprobante"
+          title="Filtrar por fecha de la factura/ticket"
         >
           <option value="all">Todos los períodos</option>
           <option value="30days">Últimos 30 días</option>
@@ -689,7 +689,7 @@ export function AdminMovementView({
               {filteredExpenses.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="px-6 py-12 text-center text-slate-400">
-                    No se encontraron comprobantes con los filtros seleccionados.
+                    No se encontraron facturas/tickets con los filtros seleccionados.
                   </td>
                 </tr>
               ) : (
@@ -983,7 +983,7 @@ export function AdminMovementView({
                           <button
                             onClick={() => onViewReceipt(expense)}
                             className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                            title="Ver / abrir comprobante"
+                            title="Ver / abrir documentos"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
@@ -1000,7 +1000,7 @@ export function AdminMovementView({
                             <button
                               onClick={() => setExpenseToDelete(expense)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                              title="Eliminar comprobante"
+                              title="Eliminar factura/ticket"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1021,7 +1021,7 @@ export function AdminMovementView({
         {filteredExpenses.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
             <Receipt className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-            <p className="font-semibold text-slate-700 text-sm">No se encontraron comprobantes</p>
+            <p className="font-semibold text-slate-700 text-sm">No se encontraron facturas/tickets</p>
             <p className="text-xs text-slate-400 mt-1">Prueba cambiando los filtros o el término de búsqueda.</p>
           </div>
         ) : (
@@ -1239,7 +1239,7 @@ export function AdminMovementView({
                   <button
                     onClick={() => onViewReceipt(expense)}
                     className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 text-xs font-semibold inline-flex items-center gap-1 bg-white cursor-pointer"
-                    title="Ver / abrir comprobante"
+                    title="Ver / abrir documentos"
                   >
                     <Eye className="w-3.5 h-3.5" />
                     <span>Ver Doc</span>
@@ -1277,7 +1277,7 @@ export function AdminMovementView({
       <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
         <div className="flex items-center space-x-2">
           <span className="font-medium">
-            <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> comprobantes
+            <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{expenses.length}</strong> facturas/tickets
             {hasMoreToShow && <span className="text-slate-400"> · mostrando {visibleExpenses.length}, bajá para ver más</span>}
           </span>
           <span className="text-slate-300 hidden sm:inline">•</span>
@@ -1295,7 +1295,7 @@ export function AdminMovementView({
                 value={queryLimit}
                 onChange={(e) => onLimitChange(Number(e.target.value))}
                 className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-                title="Comprobantes a consultar de la base central"
+                title="Facturas/tickets a consultar de la base central"
               >
                 <option value={50}>50</option>
                 <option value={100}>100</option>
@@ -1336,7 +1336,7 @@ export function AdminMovementView({
             </div>
 
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">¿Eliminar comprobante?</h3>
+              <h3 className="text-base font-extrabold text-slate-900">¿Eliminar factura/ticket?</h3>
               <p className="text-xs text-slate-500 mt-1">
                 Esta acción eliminará el registro contable de forma definitiva del sistema.
               </p>
@@ -1386,7 +1386,7 @@ export function AdminMovementView({
                 onClick={handleConfirmSingleDelete}
                 className="px-4.5 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition active:scale-95 cursor-pointer"
               >
-                Eliminar Comprobante
+                Eliminar Factura/Ticket
               </button>
             </div>
           </div>
@@ -1411,10 +1411,10 @@ export function AdminMovementView({
 
             <div>
               <h3 className="text-base font-extrabold text-slate-900">
-                ¿Eliminar {selectedIds.length} comprobante(s)?
+                ¿Eliminar {selectedIds.length} factura(s)/ticket(s)?
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Se eliminarán de forma permanente todos los comprobantes seleccionados por un monto acumulado de{' '}
+                Se eliminarán de forma permanente todas las facturas/tickets seleccionadas por un monto acumulado de{' '}
                 <strong className="text-slate-900 font-bold">{formatCurrency(selectedTotalAmount)}</strong>.
               </p>
             </div>
@@ -1473,7 +1473,7 @@ export function AdminMovementView({
               <div className="space-y-1">
                 <h3 className="text-base font-bold text-slate-900">¿Revertir pago a estado Pendiente?</h3>
                 <p className="text-xs text-slate-500">
-                  Esta acción deshará la liquidación del comprobante y restablecerá su estado a pendiente de pago.
+                  Esta acción deshará la liquidación de la factura/ticket y restablecerá su estado a pendiente de pago.
                 </p>
               </div>
             </div>
@@ -1500,7 +1500,7 @@ export function AdminMovementView({
             </div>
 
             <p className="text-[11.5px] text-amber-800 bg-amber-50/80 p-2.5 rounded-xl border border-amber-200/80 leading-relaxed">
-              ⚠️ Se enviará un aviso de reversión por correo y se removerá el comprobante de transferencia bancaria asociado en Google Drive si corresponde.
+              ⚠️ Se enviará un aviso de reversión por correo y se removerá el comprobante de pago asociado en Google Drive si corresponde.
             </p>
 
             <div className="flex items-center justify-end space-x-2 pt-2">

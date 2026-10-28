@@ -169,7 +169,7 @@ function PaymentsFolderSettings({ driveSettings, onSave }: PaymentsFolderSetting
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
               Sin configurar: por ahora los comprobantes de pago y certificados de retención se guardan en la carpeta
-              del centro de costos de cada comprobante.
+              del centro de costos de cada factura/ticket.
             </span>
           </div>
         )

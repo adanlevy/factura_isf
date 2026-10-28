@@ -279,11 +279,11 @@ export function PaymentProcessModal({
       ? `Te confirmamos que el pago a proveedor por <strong>${formatCurrency(
           expense.amount,
           expense.currency
-        )}</strong> correspondiente al comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y ejecutado con éxito</strong>.`
+        )}</strong> correspondiente a la factura/ticket de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y ejecutado con éxito</strong>.`
       : `Te confirmamos que el reintegro por <strong>${formatCurrency(
           expense.amount,
           expense.currency
-        )}</strong> correspondiente a tu comprobante de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.`;
+        )}</strong> correspondiente a tu factura/ticket de <em>${escapeHtml(expense.vendor)}</em> (Centro de Costos: <strong>${escapeHtml(sigla)} - ${escapeHtml(expense.project)}</strong>) ha sido <strong>transferido y liquidado con éxito</strong>.`;
 
     const emailBodyHtml = `<div style="font-family: Arial, sans-serif; color: #1e293b; line-height: 1.6; max-width: 600px; margin: 0 auto; background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
       <div style="border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px;">
@@ -311,7 +311,7 @@ export function PaymentProcessModal({
       ${
         paymentProofFileName
           ? `<div style="background:#ecfdf5; border:1px solid #a7f3d0; padding:14px; border-radius:10px; margin:16px 0;">
-        <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Transferencia Adjunto:</p>
+        <p style="margin:0 0 4px; font-weight:bold; color:#065f46; font-size:13px;">📎 Comprobante de Pago Adjunto:</p>
         <p style="margin:0; font-size:12px; color:#047857;">
           Se adjunta la constancia de transferencia bancaria: <strong>${escapeHtml(paymentProofFileName)}</strong>.
         </p>
@@ -380,7 +380,7 @@ export function PaymentProcessModal({
       onNotify?.(
         recipientEmail
           ? `⚠️ Pago registrado, pero no se pudo enviar el correo a ${recipientEmail}${emailError ? `: ${emailError}` : '.'}`
-          : '⚠️ Pago registrado. No se envió correo: el comprobante no tiene el email de quien lo cargó.'
+          : '⚠️ Pago registrado. No se envió correo: la factura/ticket no tiene el email de quien la cargó.'
       );
     }
     onClose();
@@ -399,7 +399,7 @@ export function PaymentProcessModal({
               </div>
               <div>
                 <h3 className="font-extrabold text-base text-white tracking-tight">
-                  Pagar Comprobante y Liquidar Reintegro
+                  Pagar Factura/Ticket y Liquidar Reintegro
                 </h3>
                 <p className="text-xs text-slate-300">
                   {expense.vendor} • {formatCurrency(expense.amount, expense.currency)}
@@ -475,8 +475,8 @@ export function PaymentProcessModal({
                 {catalogMismatch && (
                   <p className="pl-6 text-[11px] text-amber-800 font-semibold">
                     ⚠️ El catálogo de proveedores tiene otra cuenta para este proveedor
-                    ({[catalogMismatch.alias, catalogMismatch.cbuCvu].filter(Boolean).join(' · ')}). Se va a usar la del
-                    comprobante; si no es la correcta, editá el comprobante antes de pagar.
+                    ({[catalogMismatch.alias, catalogMismatch.cbuCvu].filter(Boolean).join(' · ')}). Se va a usar la de la
+                    factura/ticket; si no es la correcta, editá la factura/ticket antes de pagar.
                   </p>
                 )}
               </div>
@@ -484,7 +484,7 @@ export function PaymentProcessModal({
               <div className="p-3.5 bg-amber-50 border border-amber-200/90 rounded-2xl text-xs space-y-1">
                 <div className="font-bold text-amber-900 flex items-center">
                   <AlertTriangle className="w-4 h-4 mr-1.5 text-amber-600 shrink-0" />
-                  <span>Comprobante sin datos bancarios registrados</span>
+                  <span>Factura/ticket sin datos bancarios registrados</span>
                 </div>
                 <p className="text-amber-800 text-[11px] pl-5.5">
                   Puedes confirmar la liquidación directamente si se realizó el pago en efectivo o por otro canal.
@@ -502,7 +502,7 @@ export function PaymentProcessModal({
                   <div>
                     <div className="flex items-center gap-2">
                       <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                        CARGAR COMPROBANTE DE PAGO / TRANSFERENCIA
+                        CARGAR COMPROBANTE DE PAGO
                       </h4>
                       <span className="px-2 py-0.5 rounded text-[9.5px] font-bold bg-slate-800 text-emerald-400 border border-emerald-500/30">
                         OPCIONAL
@@ -558,7 +558,7 @@ export function PaymentProcessModal({
                       <Upload className="w-5 h-5" />
                     </div>
                     <div className="text-xs">
-                      <strong className="text-white font-semibold">Haz clic para seleccionar comprobante</strong> o arrastra el archivo aquí
+                      <strong className="text-white font-semibold">Haz clic para seleccionar el comprobante de pago</strong> o arrastra el archivo aquí
                     </div>
                     <div className="text-[11px] text-slate-400 flex items-center gap-2">
                       <span>PNG, JPG, PDF</span>
@@ -578,7 +578,7 @@ export function PaymentProcessModal({
                       <div className="w-11 h-11 rounded-lg bg-slate-700 overflow-hidden shrink-0 border border-slate-600">
                         <img
                           src={paymentProofBase64}
-                          alt="Preview Comprobante"
+                          alt="Vista previa del comprobante de pago"
                           className="w-full h-full object-cover"
                         />
                       </div>
@@ -589,7 +589,7 @@ export function PaymentProcessModal({
                         <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                       </div>
                       <div className="text-[11px] text-emerald-300 font-medium">
-                        Comprobante cargado • Se adjuntará al correo de notificación y quedará archivado
+                        Comprobante de pago cargado • Se adjuntará al correo de notificación y quedará archivado
                       </div>
                     </div>
                   </div>
@@ -619,7 +619,7 @@ export function PaymentProcessModal({
                         setPaymentProofFileType(null);
                       }}
                       className="p-2 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 transition cursor-pointer"
-                      title="Quitar comprobante"
+                      title="Quitar comprobante de pago"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -653,7 +653,7 @@ export function PaymentProcessModal({
                     )}
                   </div>
                   <p className="text-[11.5px] text-slate-600 mt-0.5 leading-relaxed">
-                    Si está marcado, el comprobante se registrará como <strong className="text-amber-800 font-semibold">Pagado - Pend. Retención</strong> (naranja). Podrás adjuntar el Certificado de Retenciones en los próximos días desde Gestión Pagos para pasar a estado Pagado definitivo y notificar al solicitante.
+                    Si está marcado, la factura/ticket se registrará como <strong className="text-amber-800 font-semibold">Pagado - Pend. Retención</strong> (naranja). Podrás adjuntar el Certificado de Retenciones en los próximos días desde Gestión Pagos para pasar a estado Pagado definitivo y notificar al solicitante.
                   </p>
                 </div>
               </label>
@@ -713,7 +713,7 @@ export function PaymentProcessModal({
             </div>
             <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 min-h-[300px]">
               {paymentProofFileType === 'application/pdf' ? (
-                <SafePdfViewer url={paymentProofBase64} fileName={paymentProofFileName || 'comprobante.pdf'} />
+                <SafePdfViewer url={paymentProofBase64} fileName={paymentProofFileName || 'comprobante_pago.pdf'} />
               ) : (
                 <img
                   src={paymentProofBase64}

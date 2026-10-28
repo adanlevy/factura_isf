@@ -463,7 +463,7 @@ export function AccountSelector({
         isOpen={isNewVendorModalOpen}
         existingVendors={vendors}
         title="Nueva cuenta bancaria / Proveedor"
-        subtitle="Se guardará en proveedores y se asignará al comprobante"
+        subtitle="Se guardará en proveedores y se asignará a la factura/ticket"
         suggestedName={vendorName}
         suggestedCuit={cuit}
         initialData={{
@@ -517,7 +517,7 @@ export function AccountSelector({
             : null
         }
         title="Editar datos de cuenta bancaria"
-        subtitle="Modificar datos bancarios asignados a este comprobante"
+        subtitle="Modificar datos bancarios asignados a esta factura/ticket"
         initialData={{
           id: matchedVendor?.id || '',
           name: bankDetails?.accountHolder || vendorName || '',

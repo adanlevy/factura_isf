@@ -102,10 +102,10 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
         <div>
           <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
             <Bot className="w-5 h-5 text-indigo-600" />
-            Motor de IA para leer comprobantes
+            Motor de IA para leer facturas/tickets
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Se usa al cargar comprobantes y al leer constancias de proveedores. Activo ahora: <strong>{activeLabel}</strong>.
+            Se usa al cargar facturas/tickets y al leer constancias de proveedores. Activo ahora: <strong>{activeLabel}</strong>.
           </p>
         </div>
       </div>
@@ -161,7 +161,7 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1 leading-snug">{m.description}</p>
                   <p className="text-[10.5px] font-mono text-indigo-700 mt-1.5">
-                    US$ {formatNumber(m.inputPerMTok, 2)} in / US$ {formatNumber(m.outputPerMTok, 2)} out × 1M · ≈ {usd(estimateCostPerReceipt(m))} por comprobante
+                    US$ {formatNumber(m.inputPerMTok, 2)} in / US$ {formatNumber(m.outputPerMTok, 2)} out × 1M · ≈ {usd(estimateCostPerReceipt(m))} por factura/ticket
                   </p>
                 </button>
               );
@@ -238,8 +238,8 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
                 <th className="text-left px-3 py-2">Modelo</th>
                 <th className="text-right px-3 py-2">Entrada</th>
                 <th className="text-right px-3 py-2">Salida</th>
-                <th className="text-right px-3 py-2">≈ Por comprobante</th>
-                <th className="text-right px-3 py-2">≈ 100 comprobantes</th>
+                <th className="text-right px-3 py-2">≈ Por factura/ticket</th>
+                <th className="text-right px-3 py-2">≈ 100 facturas/tickets</th>
               </tr>
             </thead>
             <tbody>
@@ -273,7 +273,7 @@ export function AiEngineSettingsCard({ settings }: AiEngineSettingsCardProps) {
           </table>
         </div>
         <p className="text-[11px] text-slate-500 leading-relaxed">
-          Estimación con un comprobante típico (foto o PDF de 1 página): ~{formatNumber(TYPICAL_RECEIPT_TOKENS.input)} tokens de
+          Estimación con una factura/ticket típica (foto o PDF de 1 página): ~{formatNumber(TYPICAL_RECEIPT_TOKENS.input)} tokens de
           entrada y ~{formatNumber(TYPICAL_RECEIPT_TOKENS.output)} de salida. Debajo de cada costo en dólares figura su equivalente en
           pesos, con el dólar oficial del Banco Nación (venta) a $ {formatNumber(exchangeRate.rate, 0, 2)}
           {exchangeRate.isFallback ? ' (valor de respaldo: no se pudo consultar la cotización del día)' : ` del ${formatExchangeRateDate(exchangeRate)}`}

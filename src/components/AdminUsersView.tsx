@@ -243,7 +243,7 @@ export function AdminUsersView({
             <label htmlFor="new-user-cc-all" className="text-xs text-slate-800 cursor-pointer select-none">
               <span className="font-bold text-indigo-950 block">Poner en copia en emails salientes</span>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Si se marca, se enviará copia (CC) a este usuario en todo correo saliente generado por la plataforma (resúmenes de comprobantes, solicitudes bancarias, confirmaciones de pago y certificados).
+                Si se marca, se enviará copia (CC) a este usuario en todo correo saliente generado por la plataforma (resúmenes de facturas/tickets, solicitudes bancarias, confirmaciones de pago y certificados).
               </span>
             </label>
           </div>
@@ -284,7 +284,7 @@ export function AdminUsersView({
             <strong>Solo pueden entrar las personas de esta tabla</strong> (no hay accesos fijos ni automáticos por dominio). Quitar a alguien le quita el acceso.
             Cuando alguien ingresa con su cuenta de Google, la aplicación consulta esta lista en tiempo real.
             Los usuarios con rol <strong>Administrador</strong> tienen acceso completo a la pestaña de <em>Gestión de Pagos, Proveedores, Categorías, Centros de Costo</em> y a este panel.
-            Los usuarios con rol <strong>Colaborador</strong> acceden exclusivamente a cargar sus comprobantes y ver el estado de sus reintegros.
+            Los usuarios con rol <strong>Colaborador</strong> acceden exclusivamente a cargar sus facturas/tickets y ver el estado de sus reintegros.
           </p>
         </div>
       </div>

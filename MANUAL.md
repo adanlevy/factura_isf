@@ -1,6 +1,6 @@
 # Manual de Funcionamiento — Factura ISF
 
-**Sistema de Rendición de Comprobantes y Gestión de Pagos**
+**Sistema de Rendición de Gastos y Gestión de Pagos**
 Ingeniería Sin Fronteras Argentina (CUIT 30‑71254928‑5)
 
 > Versión de la aplicación al momento de este manual: **v2.5.9** (compilación 2026.09.11).
@@ -16,11 +16,11 @@ Ingeniería Sin Fronteras Argentina (CUIT 30‑71254928‑5)
 4. [Ingreso al sistema (login)](#4-ingreso-al-sistema-login)
 5. [Mi perfil y cuenta para reintegros](#5-mi-perfil-y-cuenta-para-reintegros)
 6. [Guía para el Colaborador / Rendidor](#6-guía-para-el-colaborador--rendidor)
-   - 6.1 [Cargar comprobantes con IA](#61-cargar-comprobantes-con-ia)
+   - 6.1 [Cargar facturas/tickets con IA](#61-cargar-facturastickets-con-ia)
    - 6.2 [Los tipos de pago](#62-los-tipos-de-pago)
    - 6.3 [Centro de costos y categoría](#63-centro-de-costos-y-categoría)
    - 6.4 [Mis Gastos: ver, buscar, editar](#64-mis-gastos-ver-buscar-editar-y-eliminar)
-   - 6.5 [Ver y reemplazar un comprobante](#65-ver-y-reemplazar-un-comprobante)
+   - 6.5 [Ver y reemplazar una factura/ticket](#65-ver-y-reemplazar-una-facturaticket)
    - 6.6 [Correos automáticos que vas a recibir](#66-correos-automáticos-que-vas-a-recibir)
 7. [Guía para Administración y Finanzas](#7-guía-para-administración-y-finanzas)
    - 7.1 [Gestión de Pagos](#71-gestión-de-pagos)
@@ -46,8 +46,8 @@ Ingeniería Sin Fronteras Argentina (CUIT 30‑71254928‑5)
 
 **Factura ISF** es una aplicación web para digitalizar la rendición de gastos de Ingeniería Sin Fronteras Argentina. Resuelve dos necesidades:
 
-- **Para el equipo de terreno / colaboradores:** subir comprobantes (facturas, tickets, recibos) sacándoles una foto o adjuntando el archivo. La aplicación **lee el comprobante con Inteligencia Artificial** y completa los datos automáticamente (proveedor, monto, fecha, CUIT, N° de factura).
-- **Para el equipo administrativo / de finanzas:** administrar todos esos comprobantes y **pagar reintegros, pagar a proveedores, o dejar asentados pagos con tarjeta corporativa o de débito**, con avisos por correo, archivo automático en Google Drive y trazabilidad completa.
+- **Para el equipo de terreno / colaboradores:** subir facturas/tickets (también recibos) sacándoles una foto o adjuntando el archivo. La aplicación **lee la factura/ticket con Inteligencia Artificial** y completa los datos automáticamente (proveedor, monto, fecha, CUIT, N° de factura).
+- **Para el equipo administrativo / de finanzas:** administrar todas esas facturas/tickets y **pagar reintegros, pagar a proveedores, o dejar asentados pagos con tarjeta corporativa o de débito**, con avisos por correo, archivo automático en Google Drive y trazabilidad completa.
 
 Todos los datos se guardan en **la nube (Firebase Firestore) de forma centralizada y compartida**: lo que carga una persona lo ven todas en tiempo real, en cualquier dispositivo. Las imágenes y archivos se archivan automáticamente en **Google Drive**, ordenados por centro de costos.
 
@@ -57,14 +57,19 @@ La aplicación funciona en el navegador (computadora o celular). En el celular a
 
 ## 2. Conceptos clave (glosario rápido)
 
+En la app se usan dos términos distintos que conviene no confundir:
+- **Factura/ticket:** el documento del gasto que se carga en la app.
+- **Comprobante de pago:** la constancia de la transferencia que hace Administración al pagar.
+
 | Concepto | Qué significa |
 |---|---|
-| **Comprobante / Gasto** | Cada factura, ticket o recibo cargado. Es la unidad básica del sistema. |
+| **Gasto (factura/ticket)** | Cada factura, ticket o recibo cargado, con sus datos. Es la unidad básica del sistema. |
+| **Comprobante de pago** | La constancia de la transferencia que adjunta Administración al pagar un gasto. |
 | **Centro de Costos** | El proyecto o rubro al que se imputa el gasto (ej. *Gastos Proyectos de Agua*, *SEAP*, *Gastos de Administración*). Cada uno tiene una **sigla** (ej. `GPA`, `SEAP`, `GADM`) y una **carpeta propia en Google Drive**. Es **obligatorio** asignarlo. |
 | **Categoría** | El tipo de gasto (ej. *Transporte*, *Alimentos y Viáticos*, *Honorarios*). |
 | **Tipo de Pago** | Cómo se pagó o se va a pagar el gasto. Hay 4 (ver §6.2). Define si corresponde reintegro. |
 | **Reintegro** | Devolución de dinero a un colaborador que pagó de su bolsillo. |
-| **Estado** | Situación del comprobante: *Pendiente*, *Pagado*, *Pagado - Pend. Retención* o *Directo*. |
+| **Estado** | Situación de la factura/ticket: *Pendiente*, *Pagado*, *Pagado - Pend. Retención* o *Directo*. |
 | **Proveedor** | Empresa o persona a la que se le paga. Existe un **catálogo de proveedores** con sus datos bancarios. |
 | **Datos de cuenta** | CBU/CVU, Alias, Banco, CUIT y titular necesarios para transferir. |
 | **Retenciones** | Retenciones impositivas (AFIP/ARCA) que a veces deben practicarse al pagar; requieren un **certificado**. |
@@ -77,8 +82,8 @@ Existen **dos perfiles**. El perfil se determina automáticamente según el corr
 
 ### 👤 Colaborador / Rendidor (`user`)
 Es el equipo de ingeniería y terreno. Puede:
-- Cargar comprobantes.
-- Ver, buscar y editar **sus propios** comprobantes en *Mis Gastos* (mientras no estén pagados).
+- Cargar facturas/tickets.
+- Ver, buscar y editar **sus propias** facturas/tickets en *Mis Gastos* (mientras no estén pagadas).
 - Ver y editar su perfil y datos bancarios.
 
 Solo ve la pestaña **Mis Gastos**.
@@ -99,7 +104,7 @@ Un usuario administrador puede alternar entre "vista Administrador" y "vista Col
 
 ## 4. Ingreso al sistema (login)
 
-1. Abrí la aplicación. Aparece la pantalla **"Factura ISF — Ingeniería Sin Fronteras Argentina · Sistema de Comprobantes"**.
+1. Abrí la aplicación. Aparece la pantalla **"Factura ISF — Ingeniería Sin Fronteras Argentina · Sistema de Gastos"**.
 2. Hacé clic en **"Ingresar con cuenta de Google"**.
 3. Elegí tu cuenta de Google institucional o habilitada.
 
@@ -119,8 +124,8 @@ Hacé clic en tu **nombre/avatar** (arriba a la derecha) para abrir tu perfil.
 - **Identidad de Google (solo lectura):** *Nombre y Apellido* y *Correo Electrónico* vienen de Google y no se editan manualmente.
 - **Mi cuenta para reintegros:** el perfil **no guarda datos bancarios sueltos**. Se asocia un **registro del listado de proveedores** (tu nombre con tu CBU/alias), que es la cuenta a la que se transfieren tus «Reintegro a mí».
   - **Elegir / Cambiar:** abre un buscador del listado de proveedores (por nombre, CUIT, alias o CBU). Si tu registro no existe, lo creás ahí mismo. Antes de asociarlo se pide confirmación (*"¿Estás seguro de que esta es tu cuenta?"*).
-  - **Primera vez:** si todavía no elegiste tu cuenta, la primera vez que cargues un comprobante como **«Reintegro a mí»** se abre ese buscador; al confirmar, queda asociada a tu perfil para los próximos. Si cancelás, el comprobante vuelve al tipo de pago anterior.
-  - **¿Cambió tu CBU o alias?** Elegí otro registro, o editá la cuenta al cargar un comprobante: el cambio le llega a Administración como **pedido de cambio** para aprobar (ver Proveedores).
+  - **Primera vez:** si todavía no elegiste tu cuenta, la primera vez que cargues una factura/ticket como **«Reintegro a mí»** se abre ese buscador; al confirmar, queda asociada a tu perfil para las próximas. Si cancelás, la factura/ticket vuelve al tipo de pago anterior.
+  - **¿Cambió tu CBU o alias?** Elegí otro registro, o editá la cuenta al cargar una factura/ticket: el cambio le llega a Administración como **pedido de cambio** para aprobar (ver Proveedores).
   - Si tenías datos bancarios cargados en el perfil con la versión anterior, el buscador te sugiere el registro que coincide (o los usa para crear el tuyo) y, al asociarlo, esos datos sueltos se borran.
 
 Desde este panel también podés **cerrar sesión / cambiar de cuenta** ("Desconectar cuenta").
@@ -129,9 +134,9 @@ Desde este panel también podés **cerrar sesión / cambiar de cuenta** ("Descon
 
 ## 6. Guía para el Colaborador / Rendidor
 
-### 6.1 Cargar comprobantes con IA
+### 6.1 Cargar facturas/tickets con IA
 
-Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕** en el celular). Se abre la ventana **"Carga de Comprobantes — Extracción con IA"**.
+Para cargar un gasto, tocá **"Cargar Factura/Ticket"** (o el botón flotante **➕** en el celular). Se abre la ventana **"Carga de Facturas/Tickets — Extracción con IA"**.
 
 **Formas de cargar:**
 - Al abrirse, **se abre solo el explorador de archivos** para que elijas rápido.
@@ -140,30 +145,30 @@ Para cargar un gasto, tocá **"Cargar Comprobante"** (o el botón flotante **➕
 
 > En el celular, al elegir archivo el sistema operativo suele ofrecer la cámara como una opción más del diálogo. La aplicación no tiene un botón de cámara ni de grabación de voz propios.
 
-**Qué hace la IA automáticamente:** cada archivo aparece como una fila con una miniatura y el cartel **"Analizando IA…"**. La Inteligencia Artificial (**Google Gemini** por defecto, o **Claude** si Administración lo eligió en Sistema) **lee el comprobante** y completa:
+**Qué hace la IA automáticamente:** cada archivo aparece como una fila con una miniatura y el cartel **"Analizando IA…"**. La Inteligencia Artificial (**Google Gemini** por defecto, o **Claude** si Administración lo eligió en Sistema) **lee la factura/ticket** y completa:
 - **Proveedor / comercio**
 - **Monto** (la app opera solo en **pesos argentinos, ARS**)
 - **Fecha**
 - **CUIT** del emisor
 - **N° de factura / ticket**
 - **Ítems** (detalle de renglones, si figuran)
-- Verifica si el comprobante está **emitido a nombre de ISF** (CUIT 30‑71254928‑5).
+- Verifica si la factura/ticket está **emitida a nombre de ISF** (CUIT 30‑71254928‑5).
 
-**Si el comprobante no está a nombre de ISF**, aparece un aviso: *"Atención: Titular del Comprobante — La factura no parece estar a nombre de Ingeniería Sin Fronteras"*, mostrando a quién figura, y podés **Cancelar carga** o **Aceptar** y continuar igual.
+**Si la factura/ticket no está a nombre de ISF**, aparece un aviso: *"Atención: Titular de la Factura/Ticket — La factura no parece estar a nombre de Ingeniería Sin Fronteras"*, mostrando a quién figura, y podés **Cancelar carga** o **Aceptar** y continuar igual.
 
 **Qué tenés que completar o revisar vos:**
 - Verificar/corregir **Monto** y **Fecha** (son obligatorios; si la IA no los detecta con certeza, la fila queda marcada como *"Falta Monto o Fecha"* y hay que completarlos a mano).
 - Elegir el **Centro de Costos** (obligatorio).
-- Si la **fecha del comprobante** es de hace más de 6 meses o está en el futuro, la app pide confirmarla (suele ser un año mal leído por la IA).
+- Si la **fecha de la factura/ticket** es de hace más de 6 meses o está en el futuro, la app pide confirmarla (suele ser un año mal leído por la IA).
 - Elegir el **Tipo de pago** (ver §6.2). **Es obligatorio**: sin tipo de pago no se puede guardar.
 - Completar **datos de cuenta** si corresponde (reintegro o pago a proveedor).
 - Notas contables si querés.
 
-**Guardar:** botón verde de guardar en cada fila, o **"Guardar todos los listos (N)"** cuando hay varios listos. Al guardar, el comprobante:
+**Guardar:** botón verde de guardar en cada fila, o **"Guardar todos los listos (N)"** cuando hay varios listos. Al guardar, la factura/ticket:
 - Se registra en la nube y **se sube automáticamente a Google Drive**, a la carpeta del centro de costos.
 - Se dispara un **correo de confirmación** al que lo cargó, con el resumen.
 
-Cuando se guarda el último comprobante de la cola, **la ventana de carga se cierra sola** y aparece el aviso de que quedó registrado. Si quedan comprobantes incompletos sin guardar, la ventana sigue abierta para completarlos.
+Cuando se guarda la última factura/ticket de la cola, **la ventana de carga se cierra sola** y aparece el aviso de que quedó registrada. Si quedan facturas/tickets incompletas sin guardar, la ventana sigue abierta para completarlos.
 
 ### 6.2 Los tipos de pago
 
@@ -172,49 +177,49 @@ El tipo de pago define **cómo se pagó** y **si corresponde reintegro**. Es de 
 | Tipo | Cuándo usarlo | ¿Requiere datos bancarios? | Estado inicial |
 |---|---|---|---|
 | **🔄 Reintegro a mí** | Pagaste con **fondos propios** y pedís que te lo devuelvan. | **Sí** — tu cuenta para reintegros (el registro de proveedor asociado a tu perfil). | Pendiente de reintegro |
-| **👥 Reintegro a otra persona** | Pagó **otra persona** con fondos propios (por ejemplo, un voluntario) y vos cargás el comprobante. | **Sí** — la cuenta de esa persona: se elige del catálogo o se carga con **"Nueva cuenta"**. **No** se completa con la tuya. | Pendiente de reintegro |
+| **👥 Reintegro a otra persona** | Pagó **otra persona** con fondos propios (por ejemplo, un voluntario) y vos cargás la factura/ticket. | **Sí** — la cuenta de esa persona: se elige del catálogo o se carga con **"Nueva cuenta"**. **No** se completa con la tuya. | Pendiente de reintegro |
 | **🏢 Pago a Proveedor** | Se le va a **transferir directamente al proveedor**. | **Sí** — datos de la cuenta del proveedor (se eligen del catálogo). | Pendiente de pago |
 | **💳 Tarjeta Corporativa** | Se **abonó con la tarjeta corporativa** de la organización. | No | Directo (no requiere reintegro) |
 | **🏦 Tarjeta Débito Galicia** | Se **debitó de la cuenta institucional del Banco Galicia**. | No | Directo (no requiere reintegro) |
 
 - En **Reintegro a mí**, la cuenta es el registro de proveedor asociado a tu perfil (al editar, botón **"Usar mi cuenta"**). Si todavía no tenés uno asociado, la app te pide elegirlo la primera vez. Un reintegro no se puede guardar sin una cuenta a la que transferir.
-- En **Reintegro a otra persona**, no se ofrece tu cuenta: hay que elegir o cargar la de la persona (CBU/CVU o alias), si no, no deja guardar. Los avisos de pago te llegan a vos, que cargaste el comprobante.
+- En **Reintegro a otra persona**, no se ofrece tu cuenta: hay que elegir o cargar la de la persona (CBU/CVU o alias), si no, no deja guardar. Los avisos de pago te llegan a vos, que cargaste la factura/ticket.
 - En **Pago a Proveedor**, elegís el proveedor del **catálogo oficial** y sus datos (CBU, alias, CUIT, titular) se completan solos y quedan en modo lectura.
 - La IA **no** decide el tipo de pago: lo elegís vos, y es obligatorio. **Reintegro** y **Pago a Proveedor** quedan *Pendientes* de pago; las tarjetas quedan como *Directo*.
 - Un gasto cargado como **tarjeta** no se puede convertir después en Reintegro o Pago a Proveedor desde la edición del colaborador: lo corrige Administración.
 
 ### 6.3 Centro de costos y categoría
 
-- **Centro de Costos (obligatorio):** la aplicación **sugiere** uno automáticamente según tu historial de uso, y el desplegable está agrupado en **"⭐ Frecuentes"** y **"📁 Todos los Centros (A‑Z)"**. Podés cambiarlo. Cada centro de costos tiene una sigla y una carpeta de Drive asociadas.
-- **Categoría:** en la carga masiva de comprobantes la categoría se guarda como *General*. La **categoría específica** (ej. *Transporte, Combustible y Peajes*) se puede asignar/ajustar desde la **edición del comprobante** (§6.4), donde también está disponible para el equipo administrativo.
+- **Centro de Costos (obligatorio):** la aplicación **sugiere** uno automáticamente según tu historial de uso, y el desplegable está agrupado en **"⭐ Frecuentes"** y **"📁 Todos los Centros (A‑Z)"**. Podés cambiarlo. Cada centro de costos tiene una sigla y una carpeta de Drive asociadas. Si después lo corregís desde la edición, el archivo en Drive se mueve solo a la carpeta del nuevo centro y se renombra con la nueva sigla (§8.2).
+- **Categoría:** en la carga masiva de facturas/tickets la categoría se guarda como *General*. La **categoría específica** (ej. *Transporte, Combustible y Peajes*) se puede asignar/ajustar desde la **edición de la factura/ticket** (§6.4), donde también está disponible para el equipo administrativo.
 
 ### 6.4 Mis Gastos: ver, buscar, editar y eliminar
 
-La pestaña **"Mis Gastos"** muestra **todos tus comprobantes** (los cargados con tu email), sin importar cuántos haya cargado el resto de la organización. Arriba ves tu total: *"Comprobantes de {vos}: {cantidad} • Monto acumulado: {total}"*.
+La pestaña **"Mis Gastos"** muestra **todas tus facturas/tickets** (las cargadas con tu email), sin importar cuántas haya cargado el resto de la organización. Arriba ves tu total: *"Facturas/tickets de {vos}: {cantidad} • Monto acumulado: {total}"*.
 
 - **Buscar:** caja de búsqueda por proveedor, centro de costos, CUIT, notas, N° de factura, monto, alias/CBU, etc.
 - **Ordenar:** hacé clic en el encabezado de cualquier columna (Fecha Carga, Fecha Doc., Nombre/Factura, Centro de Costos, Monto, Estado…).
 - **Columnas:** Fecha de carga, Fecha del documento, Nombre/Factura, Centro de Costos (con acceso a la carpeta de Drive y estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
 - **Estados posibles:** **Pendiente** (ámbar), **Pagado** (verde), **Pagado - Pend. Retención** (naranja) o **Directo** (gris, pagos institucionales que no requieren reintegro).
 - **Acciones por fila:**
-  - 👁 **Ver comprobante** — abre el visor.
-  - ✏️ **Editar** — abre la edición. **Si el comprobante ya está pagado, aparece un candado 🔒 y no se puede editar** (queda bloqueado).
+  - 👁 **Ver / abrir documentos** — abre el visor (factura/ticket, comprobante de pago y certificado, si los hay).
+  - ✏️ **Editar** — abre la edición. **Si la factura/ticket ya está pagada, aparece un candado 🔒 y no se puede editar** (queda bloqueada).
   - 🗑 **Eliminar** — pide confirmación (lo borra tanto de *Mis Gastos* como de *Gestión de Pagos*).
 
-### 6.5 Ver y reemplazar un comprobante
+### 6.5 Ver y reemplazar una factura/ticket
 
-El **visor de comprobante** muestra la imagen o PDF y todos los datos: Monto, Centro de Costos, Solicitante, Categoría, Forma de Pago, Estado, datos de transferencia (con botón **Copiar**), notas e ítems de la factura.
+El **visor de documentos** muestra la imagen o PDF y todos los datos: Monto, Centro de Costos, Solicitante, Categoría, Forma de Pago, Estado, datos de transferencia (con botón **Copiar**), notas e ítems de la factura.
 
-Tiene **pestañas** según lo que exista: *Factura / Ticket Original*, *Comprobante de Pago* y *Certificado de Retención*.
+Tiene **pestañas** según lo que exista: *Factura/Ticket Original*, *Comprobante de Pago* y *Certificado de Retención*.
 
 Desde el visor podés **Descargar**, **Ver en Drive** y **Reemplazar** la foto/archivo. **Reemplazar** cambia el archivo (por ejemplo, una foto borrosa por una nítida) **sin alterar los datos contables**, y actualiza también la copia en Google Drive. Una vez **pagado**, el archivo queda como evidencia contable: **solo Administración** puede reemplazarlo.
 
-Los enlaces a Drive de un comprobante solo se abren si son enlaces de Google (`https://…google.com`); cualquier otro enlace se ignora por seguridad.
+Los enlaces a Drive de una factura/ticket solo se abren si son enlaces de Google (`https://…google.com`); cualquier otro enlace se ignora por seguridad.
 
 ### 6.6 Correos automáticos que vas a recibir
 
-El sistema te envía correos automáticamente (a la cuenta con la que cargaste el comprobante):
-- **Confirmación de carga** de tu comprobante o de un lote (resumen con tabla y total).
+El sistema te envía correos automáticamente (a la cuenta con la que cargaste la factura/ticket):
+- **Confirmación de carga** de tu factura/ticket o de un lote (resumen con tabla y total).
 - **Solicitud de datos bancarios**, si Administración necesita tu CBU/Alias para reintegrarte.
 - **Confirmación de pago / reintegro liquidado**, cuando te pagan.
 - **Reversión**, si un pago se revirtió a pendiente.
@@ -228,7 +233,7 @@ El sistema te envía correos automáticamente (a la cuenta con la que cargaste e
 
 ### 7.1 Gestión de Pagos
 
-La pestaña **"Gestión Pagos"** es el panel central del equipo contable. Es una tabla (o tarjetas en el celular) con todos los comprobantes.
+La pestaña **"Gestión Pagos"** es el panel central del equipo contable. Es una tabla (o tarjetas en el celular) con todas las facturas/tickets.
 
 - **Buscar:** *"Buscar por proveedor, solicitante, alias, CBU…"* (busca en prácticamente todos los campos, incluidos los bancarios).
 - **Filtrar por estado:** Todos, **Pendientes de Reintegro / Pago**, **Pagado - Pendiente Retención**, **Pendientes Sin Datos Bancarios**, **Ya Reintegrados / Pagados**, **Pago Institucional Directo**.
@@ -236,7 +241,7 @@ La pestaña **"Gestión Pagos"** es el panel central del equipo contable. Es una
 - **Columnas:** Fecha Carga, Fecha Doc., Enviado por, Nombre/Factura, Centro de Costos (con enlace a la carpeta de Drive y estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
 
 **Los botones de estado dicen qué hacer:**
-- **"Pagar"** (verde) — comprobante pendiente: abre el proceso de pago.
+- **"Pagar"** (verde) — factura/ticket pendiente: abre el proceso de pago.
 - **"Pagado"** (verde) — ya liquidado; al pasar el mouse ofrece **"Revertir"**.
 - **"Pagado - Pend. Retención"** (naranja) — pagado pero falta subir el certificado de retención; al hacer clic se abre la carga del certificado.
 - **"Directo"** (gris) — pago institucional que no requiere acción.
@@ -252,82 +257,82 @@ Cuando un reintegro está pendiente y **no tiene CBU/Alias**, en la columna *Dat
 
 ### 7.3 Pagar un reintegro o proveedor (individual)
 
-Con **"Pagar"** se abre **"Pagar Comprobante y Liquidar Reintegro"**:
+Con **"Pagar"** se abre **"Pagar Factura/Ticket y Liquidar Reintegro"**:
 
-1. **Resumen** del comprobante (proveedor, monto, centro de costos, solicitante).
+1. **Resumen** de la factura/ticket (proveedor, monto, centro de costos, solicitante).
 2. **Datos bancarios** del destinatario (o aviso de que no hay, para pagos en efectivo/otro canal).
-3. **Cargar comprobante de pago / transferencia (opcional):** adjuntá la constancia (PNG, JPG, PDF **o pegá una captura con Ctrl+V**). Se puede previsualizar, reemplazar o quitar.
-4. **"Aplica Retenciones"** (opcional): si lo tildás, el comprobante quedará como **"Pagado - Pend. Retención"** (naranja) hasta que subas el certificado.
+3. **Cargar comprobante de pago (opcional):** adjuntá la constancia de la transferencia (PNG, JPG, PDF **o pegá una captura con Ctrl+V**). Se puede previsualizar, reemplazar o quitar.
+4. **"Aplica Retenciones"** (opcional): si lo tildás, la factura/ticket quedará como **"Pagado - Pend. Retención"** (naranja) hasta que subas el certificado.
 5. **"Confirmar Pago"**. Al confirmar, el sistema:
-   - Sube el comprobante de transferencia a la **carpeta de Comprobantes de Pago y Retenciones** (ver §7.9). Si esa carpeta no está configurada, lo sube a la carpeta del centro de costos.
-   - Marca el comprobante como **Pagado / Reintegrado** con su fecha.
+   - Sube el comprobante de pago a la **carpeta de Comprobantes de Pago y Retenciones** (ver §7.9). Si esa carpeta no está configurada, lo sube a la carpeta del centro de costos.
+   - Marca la factura/ticket como **Pagada / Reintegrada** con su fecha.
    - Recién entonces **envía un correo de confirmación** al solicitante (con copia automática — ver §8.3), con los datos de la transferencia y la constancia adjunta. Si el pago no se pudo registrar, **no sale ningún correo**; si el correo falla, el pago queda registrado y la app avisa que no se envió.
-   - Elegir **"Pagado"** desde *Editar comprobante* ya no lo marca pagado directamente: guarda los cambios y abre esta misma ventana de pago.
+   - Elegir **"Pagado"** desde *Editar factura/ticket* ya no la marca pagada directamente: guarda los cambios y abre esta misma ventana de pago.
 
-> **Pagos simultáneos:** antes de abrir *Pagar* y al confirmar, la app verifica con la base que el comprobante siga pendiente. Si otra persona lo pagó mientras tanto, no se registra de nuevo ni se envía otro correo.
+> **Pagos simultáneos:** antes de abrir *Pagar* y al confirmar, la app verifica con la base que la factura/ticket siga pendiente. Si otra persona la pagó mientras tanto, no se registra de nuevo ni se envía otro correo.
 >
-> **Datos bancarios:** la columna *Datos de Cuenta*, la ventana de pago y el correo muestran siempre la **cuenta guardada en el comprobante** (la que se paga). Si el catálogo de proveedores tiene otra cuenta para ese proveedor, aparece **"⚠️ Distinta al catálogo"** para revisarlo antes de pagar.
+> **Datos bancarios:** la columna *Datos de Cuenta*, la ventana de pago y el correo muestran siempre la **cuenta guardada en la factura/ticket** (la que se paga). Si el catálogo de proveedores tiene otra cuenta para ese proveedor, aparece **"⚠️ Distinta al catálogo"** para revisarlo antes de pagar.
 
 ### 7.4 Pago en lote
 
 Con varias filas seleccionadas y **"Pagar"** se abre **"Liquidación y Pago en Lote"**:
-- Muestra el **total a liquidar** y agrupa los comprobantes **por solicitante** (cada uno recibe su propio correo con el desglose).
+- Muestra el **total a liquidar** y agrupa las facturas/tickets **por solicitante** (cada uno recibe su propio correo con el desglose).
 - **"Enviar aviso de liquidación por email a los solicitantes"** (recomendado, activado por defecto) con la lista de destinatarios.
-- Podés adjuntar **un único comprobante de transferencia** que se envía en todos los correos.
+- Podés adjuntar **un único comprobante de pago** que se envía en todos los correos.
 - Opción **"Aplica retenciones"**.
-- Solo incluye comprobantes **pendientes**: los gastos con tarjeta corporativa o débito (que no se reintegran) quedan afuera aunque estén seleccionados.
+- Solo incluye facturas/tickets **pendientes**: los gastos con tarjeta corporativa o débito (que no se reintegran) quedan afuera aunque estén seleccionados.
 - El pago se registra **antes** de enviar los correos: si no se pudo registrar, no se avisa a nadie.
 - **"Confirmar y Pagar (N)"** marca todos como Pagados y envía los correos.
 
-> **Constancia en Drive:** igual que el pago individual, el pago **en lote** sube la constancia a la **carpeta de Comprobantes de Pago y Retenciones** (§7.9). Como el lote se usa para **una única transferencia que reintegra varios comprobantes**, se sube **un solo archivo** (nombre `SIGLA-Solicitante-AAAAMMDD-Total-ComprobantePago-Lote-…`) y queda vinculado a todos los comprobantes del lote. Si después se revierte o elimina uno de ellos, el archivo **se conserva** mientras algún otro comprobante lo siga usando.
+> **Constancia en Drive:** igual que el pago individual, el pago **en lote** sube la constancia a la **carpeta de Comprobantes de Pago y Retenciones** (§7.9). Como el lote se usa para **una única transferencia que reintegra varias facturas/tickets**, se sube **un solo archivo** (nombre `SIGLA-Solicitante-AAAAMMDD-Total-ComprobantePago-Lote-…`) y queda vinculado a todas las facturas/tickets del lote. Si después se revierte o elimina una de ellas, el archivo **se conserva** mientras alguna otra factura/ticket lo siga usando.
 
 ### 7.5 Retenciones: certificado de retenciones
 
 Cuando un pago se marcó con **"Aplica Retenciones"**, queda en estado **"Pagado - Pend. Retención"** (naranja). Al hacer clic en ese estado se abre **"Cargar Certificado de Retenciones"**:
 - Adjuntá el **certificado (AFIP/ARCA)** en PDF o imagen (click, arrastrar o Ctrl+V).
-- **"Guardar Certificado"**: lo archiva en Drive (en la **carpeta de Comprobantes de Pago y Retenciones**, o en la del centro de costos si aquella no está configurada), **envía el certificado por correo** al solicitante y pasa el comprobante a **"Pagado"** (verde) definitivo.
+- **"Guardar Certificado"**: lo archiva en Drive (en la **carpeta de Comprobantes de Pago y Retenciones**, o en la del centro de costos si aquella no está configurada), **envía el certificado por correo** al solicitante y pasa la factura/ticket a **"Pagado"** (verde) definitivo.
 - Desde acá también podés **"Revertir Pago a Pendiente"**.
 
 ### 7.6 Revertir un pago
 
-Un comprobante ya pagado puede volver a **Pendiente** (botón **"Revertir"** al pasar el mouse sobre *"Pagado"*, o desde el certificado). La reversión:
+Una factura/ticket ya pagada puede volver a **Pendiente** (botón **"Revertir"** al pasar el mouse sobre *"Pagado"*, o desde el certificado). La reversión:
 - Pide confirmación (**"Sí, revertir pago"**).
 - **Envía un correo de aviso** de reversión al solicitante.
-- **Manda a la papelera de Google Drive** la constancia de transferencia y el certificado de retención asociados (si existían). Se pueden recuperar desde la papelera durante 30 días. Si la constancia es compartida por un pago en lote, se conserva mientras otro comprobante la use.
+- **Manda a la papelera de Google Drive** el comprobante de pago y el certificado de retención asociados (si existían). Se pueden recuperar desde la papelera durante 30 días. Si el comprobante de pago es compartido por un pago en lote, se conserva mientras otra factura/ticket lo use.
 - Queda registrada en el Log de Cambios.
 
 ### 7.7 Exportar CSV
 
-En *Gestión de Pagos*, **"Exportar CSV"** descarga los comprobantes seleccionados (o todos los filtrados) a una planilla, ideal para conciliaciones y contabilidad. Los textos que empiezan con `=`, `+`, `-` o `@` se exportan con un apóstrofo adelante para que Excel no los ejecute como fórmula.
+En *Gestión de Pagos*, **"Exportar CSV"** descarga las facturas/tickets seleccionadas (o todas las filtradas) a una planilla, ideal para conciliaciones y contabilidad. Los textos que empiezan con `=`, `+`, `-` o `@` se exportan con un apóstrofo adelante para que Excel no los ejecute como fórmula.
 
-*Gestión de Pagos* muestra **todos los comprobantes**, ordenados por **fecha de carga** (los más nuevos arriba), **sin filtros por defecto**. Se van mostrando a medida que bajás (scroll), así que para llegar a uno de hace meses solo hay que seguir bajando. Período, estado, centro de costos y búsqueda filtran **solo si los elegís**; el período se aplica sobre la fecha del comprobante. *"Seleccionar todos"* selecciona solo los que están a la vista.
+*Gestión de Pagos* muestra **todas las facturas/tickets**, ordenadas por **fecha de carga** (las más nuevas arriba), **sin filtros por defecto**. Se van mostrando a medida que bajás (scroll), así que para llegar a una de hace meses solo hay que seguir bajando. Período, estado, centro de costos y búsqueda filtran **solo si los elegís**; el período se aplica sobre la fecha de la factura/ticket. *"Seleccionar todos"* selecciona solo las que están a la vista.
 
 ### 7.8 Proveedores
 
 La pestaña **"Proveedores"** es el **catálogo oficial** con sus **cuentas bancarias**, que alimenta la opción *Pago a Proveedor*.
 
 - **Tarjetas de estadística:** cantidad de proveedores y facturación total registrada.
-- **Buscar / Ordenar:** por nombre, CUIT, email, alias o CBU; orden alfabético, por fecha, por facturación o por cantidad de comprobantes.
+- **Buscar / Ordenar:** por nombre, CUIT, email, alias o CBU; orden alfabético, por fecha, por facturación o por cantidad de facturas/tickets.
 - **Nuevo Proveedor** (formulario): *Nombre o Razón Social* (obligatorio), *CUIT/CUIL*, **datos bancarios** (Alias, CBU/CVU, Banco, Tipo de Cuenta; cuentas en pesos) y observaciones.
-  - **Lectura con IA:** se puede adjuntar una *Constancia de CUIT* o comprobante bancario (PDF/imagen o Ctrl+V) y la IA completa los campos.
+  - **Lectura con IA:** se puede adjuntar una *Constancia de CUIT* o una constancia bancaria (PDF/imagen o Ctrl+V) y la IA completa los campos.
   - **Controles:** alias y CBU/CVU **duplicados están prohibidos**; un CUIT duplicado se permite solo tildando una confirmación.
 - **Importar CSV:** pegá filas desde Google Sheets/Excel o subí un archivo `.csv/.tsv`. Detecta columnas y duplicados y muestra una previsualización antes de importar.
 - **Ver gastos de un proveedor:** botón **"Gastos"** lleva a *Gestión de Pagos* filtrado por ese proveedor.
-- **Editar:** los cambios de nombre, CUIT o cuenta se copian a los comprobantes **pendientes** de ese proveedor. Los comprobantes **ya pagados** conservan los datos con los que se pagaron.
+- **Editar:** los cambios de nombre, CUIT o cuenta se copian a las facturas/tickets **pendientes** de ese proveedor. Las facturas/tickets **ya pagadas** conservan los datos con los que se pagaron.
 - **Pedidos de cambio (colaboradores proponen, Administración aprueba):**
-  - Un colaborador puede **dar de alta** un proveedor al instante (también desde la carga de un comprobante, con *"Nueva cuenta"*). El alta ya se puede usar y aparece en **Pendientes de revisión** como *"Alta nueva para revisar"*.
-  - Si un colaborador **edita** un proveedor existente (por ejemplo, otra cuenta bancaria), el cambio **no se aplica al catálogo**: se envía como **pedido** con un comentario opcional. La cuenta elegida **queda igual en su comprobante**, así que nunca se frena la carga. Si vuelve a editar el mismo proveedor, se actualiza su mismo pedido. En la lista de cuentas el proveedor muestra *"⏳ Cambio pendiente"*.
-  - **Administración** ve un número en la pestaña **Proveedores** y la sección **"Pendientes de revisión"**: cada pedido muestra quién lo hizo, cuándo, el comentario y solo lo que cambia (*antes → pedido*; los cambios de CBU/alias en rojo). Botones: **Aprobar** (aplica solo lo pedido y actualiza los comprobantes pendientes de ese proveedor), **Editar y aprobar** (corregir antes de aplicar) y **Rechazar** (con motivo; en un alta nueva se puede eliminar también el proveedor). Si el proveedor cambió después del pedido, la tarjeta lo avisa.
+  - Un colaborador puede **dar de alta** un proveedor al instante (también desde la carga de una factura/ticket, con *"Nueva cuenta"*). El alta ya se puede usar y aparece en **Pendientes de revisión** como *"Alta nueva para revisar"*.
+  - Si un colaborador **edita** un proveedor existente (por ejemplo, otra cuenta bancaria), el cambio **no se aplica al catálogo**: se envía como **pedido** con un comentario opcional. La cuenta elegida **queda igual en su factura/ticket**, así que nunca se frena la carga. Si vuelve a editar el mismo proveedor, se actualiza su mismo pedido. En la lista de cuentas el proveedor muestra *"⏳ Cambio pendiente"*.
+  - **Administración** ve un número en la pestaña **Proveedores** y la sección **"Pendientes de revisión"**: cada pedido muestra quién lo hizo, cuándo, el comentario y solo lo que cambia (*antes → pedido*; los cambios de CBU/alias en rojo). Botones: **Aprobar** (aplica solo lo pedido y actualiza las facturas/tickets pendientes de ese proveedor), **Editar y aprobar** (corregir antes de aplicar) y **Rechazar** (con motivo; en un alta nueva se puede eliminar también el proveedor). Si el proveedor cambió después del pedido, la tarjeta lo avisa.
   - **Correos:** cuando un pedido cambia **CBU o alias**, les llega un aviso a los administradores. Quien hizo el pedido recibe un correo cuando se aprueba o se rechaza (con el motivo).
   - Todo queda en el **Log de Cambios** (pedido, aprobado, rechazado).
-- **Eliminar:** si el proveedor tiene comprobantes pendientes vinculados, la aplicación **desvincula los datos de cuenta** de esos comprobantes pero **conserva el nombre/factura** (los pagados no se modifican).
+- **Eliminar:** si el proveedor tiene facturas/tickets pendientes vinculadas, la aplicación **desvincula los datos de cuenta** de esas facturas/tickets pero **conserva el nombre/factura** (las pagadas no se modifican).
 
 ### 7.9 Centros de Costos
 
 La pestaña **"Centro de Costos"** gestiona las **siglas** y su vínculo con **carpetas de Google Drive**.
 - **Nuevo Centro de Costos:** *Sigla* (mayúsculas, hasta 8 caracteres), *Nombre* (obligatorio), *Link de Google Drive* (pegás la URL de la carpeta y el nombre se detecta solo) y *Emails en copia* (las personas que se ponen en CC de todo correo relacionado con ese centro de costos).
 - **Tabla:** Sigla (clic para copiar), Nombre, Emails en Copia, Carpeta/Link de Drive y acciones (editar en línea / eliminar).
-- **Renombrar** un centro de costos (o una categoría) lo actualiza en **todos** los comprobantes de la base, no solo en los que se ven en pantalla.
+- **Renombrar** un centro de costos (o una categoría) lo actualiza en **todas** las facturas/tickets de la base, no solo en las que se ven en pantalla.
 - **Carpeta de Comprobantes de Pago y Retenciones** (recuadro arriba de todo, *no es un centro de costos*): acá se define **una única carpeta de Drive** donde van **todos** los comprobantes de pago y certificados de retención, sin importar el centro de costos del gasto. Pegás el link de la carpeta (el nombre se detecta solo), **"Guardar"**; se puede **"Cambiar carpeta"** o **"Quitar"**. Solo los administradores pueden modificarla. Mientras no esté configurada, esos archivos van a la carpeta del centro de costos. Cambiarla **no mueve** los archivos ya subidos.
 
 > Los **totales por centro de costos** no se muestran en esta pestaña; se obtienen exportando o filtrando en *Gestión de Pagos*.
@@ -351,14 +356,14 @@ La pestaña **"Usuarios / Roles"** administra quién puede entrar y con qué per
 La pestaña **"Sistema"** es el tablero operativo (uso y costos), con actualización automática cada 30 segundos.
 - **KPIs:** espacio ocupado en Firestore (sobre 1 GB), gasto de APIs del mes actual y anterior, y la variación intermensual.
 - **Espacio Firestore:** cuánto pesa cada colección de datos. (Las imágenes pesadas viven en Drive, no en Firestore.)
-- **Motor de IA para leer comprobantes:** elegí **Google Gemini** (por defecto) o **Anthropic Claude** y, en Claude, el modelo: **Opus 5.5** (el más capaz), **Sonnet 5.5** (equilibrio) o **Haiku 5.5** (el más económico). Se aplica a la carga de comprobantes y a la lectura de constancias de proveedores, y se guarda con **"Guardar motor de IA"**. Incluye la **tabla de costos** de cada modelo (por millón de tokens y estimado por comprobante, en USD y ARS). Si Claude no responde o falta su clave en el servidor, la lectura **sigue automáticamente con Gemini** y queda anotado en el registro de llamadas.
+- **Motor de IA para leer facturas/tickets:** elegí **Google Gemini** (por defecto) o **Anthropic Claude** y, en Claude, el modelo: **Opus 5.5** (el más capaz), **Sonnet 5.5** (equilibrio) o **Haiku 5.5** (el más económico). Se aplica a la carga de facturas/tickets y a la lectura de constancias de proveedores, y se guarda con **"Guardar motor de IA"**. Incluye la **tabla de costos** de cada modelo (por millón de tokens y estimado por factura/ticket, en USD y ARS). Si Claude no responde o falta su clave en el servidor, la lectura **sigue automáticamente con Gemini** y queda anotado en el registro de llamadas.
 - **Consumo de APIs:** costos de **Gemini (IA/OCR)**, **Claude (OCR)**, **Google Drive**, **Gmail** y **Firestore**, con conversión USD→ARS.
 - **Estado de servicios:** salud de cada integración (Operativo / Configurado).
 - **Auditoría de llamadas:** registro cronológico de cada llamada a las APIs (con opción de limpiar logs).
 
 ### 7.12 Log de Cambios y Auditoría
 
-La pestaña **"Log de Cambios"** registra **en tiempo real** todo lo que se crea, modifica o elimina en Centros de Costos, Proveedores, Comprobantes, Categorías y Usuarios.
+La pestaña **"Log de Cambios"** registra **en tiempo real** todo lo que se crea, modifica o elimina en Centros de Costos, Proveedores, Facturas/tickets, Categorías y Usuarios.
 - **Contadores rápidos** (total de eventos, hoy, por módulo).
 - **Filtros:** búsqueda, período (Hoy / 7 / 30 días / Todos) y por módulo.
 - **Detalle campo a campo:** cada evento se puede expandir para ver el **valor anterior → valor nuevo**.
@@ -379,7 +384,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Costos registrados:** ~US$ 0,75 por millón de tokens de entrada y ~US$ 3,75 por millón de salida. Cada operación queda registrada para el tablero de costos (conversión a pesos con el dólar oficial del Banco Nación, venta, que el servidor consulta solo en fuentes públicas y renueva cada 3 horas).
 
 ### 8.1b Claude (Anthropic) como motor alternativo de lectura
-- Opcional: se elige en **Sistema → Motor de IA para leer comprobantes**. Usa las mismas instrucciones y el mismo esquema que Gemini, con respuesta JSON estructurada.
+- Opcional: se elige en **Sistema → Motor de IA para leer facturas/tickets**. Usa las mismas instrucciones y el mismo esquema que Gemini, con respuesta JSON estructurada.
 - **Clave:** el servidor necesita la variable de entorno `ANTHROPIC_API_KEY` (clave de la consola de Anthropic, con facturación propia). Sin ella, la lectura sigue con Gemini.
 - **Formatos:** JPG, PNG, WebP, GIF y PDF. Las fotos HEIC se leen con Gemini.
 - **Costos (USD por millón de tokens, entrada / salida):** Opus 5.5 $4 / $20 · Sonnet 5.5 $2 / $10 · Haiku 5.5 $0,10 / $0,50. Cada lectura registra su costo real en Sistema.
@@ -388,6 +393,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - Cada **centro de costos** tiene su **carpeta propia** en Drive, donde se archivan las **facturas y tickets**.
 - Los **comprobantes de pago** y **certificados de retención** van todos a una **carpeta aparte** ("Comprobantes de Pago y Retenciones"), configurada en la pestaña Centro de Costos (§7.9).
 - **Nomenclatura de archivos:** `SIGLA-Nombre Solicitante-AAAAMMDD-Monto.ext` (ej. `GPA-Juan Perez-20260514-15400.pdf`). Los comprobantes de pago llevan el sufijo `-ComprobantePago-` y los certificados `-CertificadoRetencion-`.
+- **Al editar una factura/ticket ya subida:** si cambia algo que forma el nombre del archivo (centro de costos, fecha o monto), el archivo de Drive se **renombra**; y si cambia el centro de costos, además se **mueve a la carpeta del nuevo centro**. Es el mismo archivo (conserva su enlace), no una copia. Si Drive no responde, los cambios se guardan igual y la app avisa que el archivo quedó como estaba.
 - Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (la del *refresh token* guardado en el servidor). Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
 
 ### 8.3 Correos (Gmail API)
@@ -396,7 +402,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 
 ### 8.4 Base de datos (Firestore)
 - **Centralizada y compartida:** todos ven el mismo conjunto de datos, **sincronizado en tiempo real** entre dispositivos.
-- **Colecciones:** `expenses` (comprobantes), `vendors` (proveedores), `cost_centers`, `categories`, `app_users` (usuarios y roles), `user_preferences`, `audit_logs`, `api_usage_logs`, `system_health`.
+- **Colecciones:** `expenses` (facturas/tickets), `vendors` (proveedores), `cost_centers`, `categories`, `app_users` (usuarios y roles), `user_preferences`, `audit_logs`, `api_usage_logs`, `system_health`.
 - **Las imágenes/archivos binarios nunca se guardan en Firestore**, solo en Drive; en Firestore quedan los datos livianos y los enlaces.
 
 ### 8.5 Autenticación
@@ -414,7 +420,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Correos institucionales:** salen de la cuenta central. Un **colaborador** solo puede enviar a su propia cuenta, a usuarios de la tabla de usuarios y a los emails en copia de los centros de costos. Los correos a proveedores u otros externos los envía **Administración**. Hay un límite de envíos por hora por usuario.
 - **Archivos en Google Drive:** el servidor solo modifica archivos que estén en las **carpetas registradas** (centros de costos y carpeta de Comprobantes de Pago y Retenciones). Un colaborador solo puede reemplazar o quitar archivos que subió él mismo. Nada se borra definitivamente: los archivos reemplazados o quitados van a la **papelera de Drive**.
 - **Reglas de Firestore:** `firestore.rules` restringe cada colección por rol (Colaborador / Admin) y se publica desde la consola de Firebase (pestaña *Security*).
-- **Cerrar sesión borra los datos de este navegador:** comprobantes, archivos cacheados, usuarios y la caché de la base. Los datos bancarios de tu perfil se guardan en tus preferencias privadas y se recuperan al volver a entrar. Útil en computadoras compartidas.
+- **Cerrar sesión borra los datos de este navegador:** facturas/tickets, archivos cacheados, usuarios y la caché de la base. Los datos bancarios de tu perfil se guardan en tus preferencias privadas y se recuperan al volver a entrar. Útil en computadoras compartidas.
 - **Documentos legales:** desde el pie de página se accede a la **Política de Privacidad** y a los **Términos y Condiciones**. Contacto institucional: `admin@isf-argentina.org`.
 
 ---
@@ -424,16 +430,16 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 **No puedo iniciar sesión / "Acceso denegado".**
 Tu correo no está habilitado. Pedile a un administrador que te agregue en *Usuarios / Roles*.
 
-**Cargué un comprobante pero no puedo editarlo (aparece un candado).**
-Ya fue pagado. Los comprobantes pagados quedan bloqueados. Si hay que corregirlo, Administración puede **revertir el pago** a pendiente y luego editarlo.
+**Cargué una factura/ticket pero no puedo editarla (aparece un candado).**
+Ya fue pagada. Las facturas/tickets pagadas quedan bloqueadas. Si hay que corregirla, Administración puede **revertir el pago** a pendiente y luego editarla.
 
 **La IA no detectó el monto o la fecha.**
 La fila queda marcada como *"Falta Monto o Fecha"*. Completá esos campos a mano en la tabla y guardá. Podés usar **"Reintentar"** para reanalizar.
 
 **Salió un aviso de que la factura "no es CUIT ISF".**
-El comprobante no figura a nombre de Ingeniería Sin Fronteras. Verificá el destinatario; podés continuar igual con **"Aceptar"** si corresponde.
+La factura/ticket no figura a nombre de Ingeniería Sin Fronteras. Verificá el destinatario; podés continuar igual con **"Aceptar"** si corresponde.
 
-**El comprobante dice "Fallo Drive".**
+**La factura/ticket dice "Fallo Drive".**
 La subida a Google Drive falló (o quedó *"Subida trabada"*). Usá **"Reintentar"** junto al estado, en *Mis Gastos*. El dato contable ya quedó guardado igual. Si el archivo ya no está en ese navegador, usá **"Reemplazar"** en el visor para volver a adjuntarlo. Al **cerrar sesión** con subidas pendientes, la app avisa antes, porque esos archivos se borran del navegador.
 
 **¿Dónde quedan archivadas las fotos de las facturas?**
@@ -442,7 +448,7 @@ En la **carpeta de Google Drive del centro de costos** correspondiente, con nomb
 **Necesito reintegrar a alguien pero no tengo su CBU.**
 Usá **"Pedir Datos"** en *Gestión de Pagos* para enviarle el pedido por correo.
 
-**¿Puedo pagar muchos comprobantes juntos?**
+**¿Puedo pagar muchas facturas/tickets juntas?**
 Sí: seleccioná varias filas en *Gestión de Pagos* y usá **"Pagar"** (pago en lote).
 
 ---
@@ -456,7 +462,7 @@ Materiales de Construcción e Instalación · Herramientas y Equipamiento · Tra
 `ALSE` Alquileres y Servicios Sedes · `CAHO`/`CAMA` Campaña Vía Pública · `CAPA` Capacitación Staff · `CAPO` Caranchi Pozo · `UNLAM` Curso UNLaM · `UTNBA` Curso UTN · `COES` Complejo Esperanza · `GADM` Gastos de Administración · `DIFU` Gastos de Difusión · `GAEV` Gastos Eventos · `GOFI` Gastos Oficina · `GTOR` Gastos Organización · `GAPL` Gastos Plataformas · `GPA` Gastos Proyectos de Agua · `GPMS` Gastos Proyectos (Materiales y Servicios) · `GRAM` Gramilla‑Herrera · `HONO` Honorarios · `AURO` Isauro‑La Boca · `ETER` Libertad Eterna‑Tigre · `MOEV` Movilidad Eventos · `SEAP` SEAP Crece desde Abajo · `SEPAU` Seguros y Patentes Autos · `SECO` Seminario Co Diseño · `SEAA` Service y Arreglos Autos · `SECC` Servicios para Call · `TELE` Teléfono · `VIPR` Viajes a Proyectos · `VIAT` Viáticos Staff · `PACO` Paso Grande y Copo · `U47` U47 Espacio para las Infancias.
 *(El catálogo real se administra desde la pestaña Centro de Costos.)*
 
-### 11.3 Estados de un comprobante
+### 11.3 Estados de una factura/ticket
 - **Pendiente** — falta liquidar el reintegro o el pago al proveedor.
 - **Pagado** — reintegro/pago confirmado.
 - **Pagado - Pend. Retención** — pagado, falta subir el certificado de retención.

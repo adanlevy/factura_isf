@@ -93,7 +93,7 @@ export function CategoriesView({
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Categorías Contables</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Plan de cuentas para clasificar comprobantes y deducciones impositivas ({categories.length} categorías).
+            Plan de cuentas para clasificar facturas/tickets y deducciones impositivas ({categories.length} categorías).
           </p>
         </div>
 
@@ -140,7 +140,7 @@ export function CategoriesView({
             <thead className="bg-slate-50/80 text-slate-500 font-semibold uppercase text-[11px] tracking-wider border-b border-slate-100">
               <tr>
                 <th className="px-5 py-3.5">Nombre de Categoría</th>
-                <th className="px-5 py-3.5 text-center">Comprobantes</th>
+                <th className="px-5 py-3.5 text-center">Facturas/tickets</th>
                 <th className="px-5 py-3.5 text-right">Total Acumulado</th>
                 <th className="px-5 py-3.5 text-right">Acciones</th>
               </tr>
@@ -243,7 +243,8 @@ export function CategoriesView({
               </p>
               {categoryStats[categoryToDelete]?.count > 0 && (
                 <div className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200 mt-2 text-left">
-                  ⚠️ <strong>Atención:</strong> Hay {categoryStats[categoryToDelete].count} comprobante(s) asignados a esta categoría.
+                  ⚠️ <strong>Atención:</strong> Hay {categoryStats[categoryToDelete].count}{' '}
+                  {categoryStats[categoryToDelete].count === 1 ? 'factura/ticket asignada' : 'facturas/tickets asignadas'} a esta categoría.
                 </div>
               )}
             </div>

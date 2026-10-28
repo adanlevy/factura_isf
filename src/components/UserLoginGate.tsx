@@ -190,7 +190,7 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white">Factura ISF</h1>
           <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto">
-            Ingeniería Sin Fronteras Argentina · Sistema de Comprobantes
+            Ingeniería Sin Fronteras Argentina · Sistema de Gastos
           </p>
         </div>
 
@@ -233,7 +233,7 @@ export function UserLoginGate({ onLogin }: UserLoginGateProps) {
           <div className="space-y-5">
             <div className="text-center space-y-2">
               <p className="text-xs text-slate-600 leading-relaxed">
-                Inicia sesión con tu cuenta corporativa o institucional de Google habilitada para registrar y gestionar tus comprobantes.
+                Inicia sesión con tu cuenta corporativa o institucional de Google habilitada para registrar y gestionar tus facturas/tickets.
               </p>
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
                 <CheckCircle className="w-3.5 h-3.5 text-indigo-600 shrink-0" />

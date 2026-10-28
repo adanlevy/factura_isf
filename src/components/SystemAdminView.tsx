@@ -549,7 +549,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
             <div className="bg-slate-50 border-t border-slate-100 p-4 text-xs text-slate-500 flex items-start space-x-2.5">
               <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                <strong>Optimización de Almacenamiento:</strong> Los archivos binarios pesados (imágenes de facturas, constancias PDF y comprobantes de transferencias) se suben y resguardan en <strong>Google Drive</strong> dentro de carpetas organizadas por Centro de Costos, manteniendo en Firestore únicamente los metadatos estructurados y URLs, lo que permite un ahorro drástico de espacio y costos de base de datos.
+                <strong>Optimización de Almacenamiento:</strong> Los archivos binarios pesados (imágenes de facturas/tickets, constancias PDF y comprobantes de pago) se suben y resguardan en <strong>Google Drive</strong> dentro de carpetas organizadas por Centro de Costos, manteniendo en Firestore únicamente los metadatos estructurados y URLs, lo que permite un ahorro drástico de espacio y costos de base de datos.
               </div>
             </div>
           </div>
@@ -715,7 +715,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      {apiUsage.currentMonth.byService.google_drive?.calls || 0} subidas de comprobantes
+                      {apiUsage.currentMonth.byService.google_drive?.calls || 0} subidas de archivos
                     </div>
                     <div className="text-[10px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 mt-1.5 inline-block font-mono">
                       Cuota estándar sin cargo

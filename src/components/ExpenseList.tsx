@@ -283,7 +283,7 @@ export function ExpenseList({
             <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Mis Gastos</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Comprobantes de <strong className="text-slate-800">{currentUser?.name || currentUser?.email || 'tu usuario'}</strong>: <strong className="text-slate-800">{filteredExpenses.length}</strong> • Monto acumulado: <strong className="text-slate-800">{formatCurrency(totalAmount, 'ARS')}</strong>
+            Facturas/tickets de <strong className="text-slate-800">{currentUser?.name || currentUser?.email || 'tu usuario'}</strong>: <strong className="text-slate-800">{filteredExpenses.length}</strong> • Monto acumulado: <strong className="text-slate-800">{formatCurrency(totalAmount, 'ARS')}</strong>
           </p>
         </div>
 
@@ -293,7 +293,7 @@ export function ExpenseList({
             value={activePeriod}
             onChange={(e) => handlePeriodSelect(e.target.value)}
             className="px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:bg-white focus:outline-none cursor-pointer"
-            title="Filtrar por fecha del comprobante"
+            title="Filtrar por fecha de la factura/ticket"
           >
             <option value="all">Todos los períodos</option>
             <option value="30days">Últimos 30 días</option>
@@ -343,7 +343,7 @@ export function ExpenseList({
             className="inline-flex items-center justify-center px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-xs transition active:scale-95 cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4 mr-1.5" />
-            <span>Cargar Comprobante</span>
+            <span>Cargar Factura/Ticket</span>
           </button>
         </div>
       </div>
@@ -371,7 +371,7 @@ export function ExpenseList({
                   <td colSpan={9} className="px-6 py-16 text-center text-slate-400">
                     <Receipt className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     <p className="font-semibold text-slate-700 text-sm">
-                      {searchTerm ? 'No se encontraron comprobantes con ese criterio' : 'No hay comprobantes cargados'}
+                      {searchTerm ? 'No se encontraron facturas/tickets con ese criterio' : 'No hay facturas/tickets cargadas'}
                     </p>
                     <p className="text-xs text-slate-400 mt-1">Utiliza el botón superior para subir una factura o ticket.</p>
                   </td>
@@ -528,7 +528,7 @@ export function ExpenseList({
                           <button
                             onClick={() => onViewReceipt(expense)}
                             className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                            title="Ver / abrir comprobante"
+                            title="Ver / abrir documentos"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
@@ -538,14 +538,14 @@ export function ExpenseList({
                             <button
                               onClick={() => onEditExpense(expense)}
                               className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
-                              title="Editar comprobante"
+                              title="Editar factura/ticket"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                           ) : (
                             <span
                               className="inline-block p-1.5 text-slate-300 cursor-not-allowed"
-                              title="Comprobante ya pagado (Bloqueado para edición)"
+                              title="Factura/ticket ya pagada (Bloqueada para edición)"
                             >
                               <Lock className="w-3.5 h-3.5" />
                             </span>
@@ -556,7 +556,7 @@ export function ExpenseList({
                             <button
                               onClick={() => setExpenseToDelete(expense)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
-                              title="Eliminar comprobante"
+                              title="Eliminar factura/ticket"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -578,7 +578,7 @@ export function ExpenseList({
           <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
             <Receipt className="w-8 h-8 mx-auto text-slate-300 mb-2" />
             <p className="font-semibold text-slate-700 text-sm">
-              {searchTerm ? 'No se encontraron comprobantes' : 'No hay comprobantes cargados'}
+              {searchTerm ? 'No se encontraron facturas/tickets' : 'No hay facturas/tickets cargadas'}
             </p>
             <p className="text-xs text-slate-400 mt-1">Utiliza el botón superior para subir una factura o ticket.</p>
           </div>
@@ -663,7 +663,7 @@ export function ExpenseList({
                       <button
                         onClick={() => onViewReceipt(expense)}
                         className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg border border-slate-200 bg-white cursor-pointer"
-                        title="Ver / abrir comprobante"
+                        title="Ver / abrir documentos"
                       >
                         <Eye className="w-3.5 h-3.5" />
                       </button>
@@ -686,7 +686,7 @@ export function ExpenseList({
                         <button
                           onClick={() => setExpenseToDelete(expense)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-200 bg-white"
-                          title="Eliminar comprobante"
+                          title="Eliminar factura/ticket"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -763,7 +763,7 @@ export function ExpenseList({
       <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
         <div className="flex items-center space-x-2">
           <span className="font-medium">
-            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{userExpenses.length}</strong> comprobantes propios cargados
+            Mostrando <strong className="text-slate-900">{filteredExpenses.length}</strong> de <strong className="text-slate-900">{userExpenses.length}</strong> facturas/tickets propias cargadas
           </span>
           <span className="text-slate-300 hidden sm:inline">•</span>
           <span className="text-slate-400 text-[11px] hidden sm:inline">
@@ -780,7 +780,7 @@ export function ExpenseList({
                 value={queryLimit}
                 onChange={(e) => onLimitChange(Number(e.target.value))}
                 className="bg-transparent text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-                title="Comprobantes a consultar de la base central"
+                title="Facturas/tickets a consultar de la base central"
               >
                 <option value={50}>50</option>
                 <option value={100}>100</option>
@@ -812,7 +812,7 @@ export function ExpenseList({
               <Trash2 className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">¿Eliminar Comprobante?</h3>
+              <h3 className="text-base font-bold text-slate-900">¿Eliminar Factura/Ticket?</h3>
               <p className="text-xs text-slate-500 mt-1">
                 Se eliminará el gasto de <strong className="text-slate-700">{expenseToDelete.vendor}</strong> por{' '}
                 <strong className="text-slate-900">{formatCurrency(expenseToDelete.amount, expenseToDelete.currency)}</strong> tanto de Mis Gastos como de Gestión de Pagos.

@@ -49,7 +49,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
             <p className="text-sm font-bold text-slate-800">Algo falló en esta ventana</p>
             <p className="text-xs text-slate-500">
-              Tus comprobantes ya guardados no se perdieron. Cerrá la ventana y volvé a intentarlo.
+              Tus facturas/tickets ya guardadas no se perdieron. Cerrá la ventana y volvé a intentarlo.
             </p>
             <p className="text-[10px] text-slate-400 font-mono break-words">{detail}</p>
             <button

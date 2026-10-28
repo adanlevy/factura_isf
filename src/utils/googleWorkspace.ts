@@ -440,6 +440,89 @@ export async function replaceReceiptInGoogleDrive(params: {
   }
 }
 
+/** Carpeta de Drive de un centro de costos (ID), si está configurada */
+function costCenterFolderId(costCenter?: CostCenter): string | null {
+  return costCenter?.driveFolderId || extractDriveFolderId(costCenter?.driveUrl) || null;
+}
+
+/** Extensión del archivo ya subido (".pdf", ".jpg"…), para conservarla al renombrar */
+function driveFileExtension(fileName?: string): string {
+  const match = /\.([a-z0-9]{2,5})$/i.exec(fileName || '');
+  return match ? `.${match[1].toLowerCase()}` : '';
+}
+
+/**
+ * Al editar una factura/ticket ya subida a Drive: si cambió el centro de costos, la fecha, el monto
+ * o la persona que la cargó, el archivo tiene que llamarse distinto y, si cambió el centro de costos,
+ * estar en la carpeta del nuevo. Esta función mueve y renombra el MISMO archivo (no lo vuelve a subir).
+ *
+ * Devuelve los datos de Drive actualizados para guardar en el gasto, o `unchanged` si no hacía falta.
+ */
+export async function relocateReceiptInGoogleDrive(params: {
+  previous: Expense;
+  updated: Expense;
+  costCenters: CostCenter[];
+}): Promise<
+  | { status: 'unchanged' | 'no-file' }
+  | { status: 'success'; moved: boolean; renamed: boolean; fields: Partial<Expense> }
+  | { status: 'error'; error: string }
+> {
+  const { previous, updated, costCenters } = params;
+  const fileId = previous.driveFileId || extractDriveFileId(previous.driveUploadedUrl) || undefined;
+  const oldFileName = previous.driveUploadedFileName;
+  if (!fileId && !oldFileName) return { status: 'no-file' };
+
+  const findCc = (project?: string) =>
+    costCenters.find((c) => c.name.toLowerCase() === (project || '').trim().toLowerCase());
+  const oldCc = findCc(previous.project);
+  const newCc = findCc(updated.project);
+
+  const extension = driveFileExtension(oldFileName) || driveFileExtension(previous.receiptFileName) || '.pdf';
+  const newFileName = `${generateDriveFileName(updated, newCc ? [newCc] : [])}${extension}`;
+  const oldFolderId = costCenterFolderId(oldCc);
+  const newFolderId = costCenterFolderId(newCc);
+  const folderChanged = Boolean(newFolderId && newFolderId !== oldFolderId);
+
+  if (newFileName === oldFileName && !folderChanged) return { status: 'unchanged' };
+
+  try {
+    const response = await authFetch('/api/drive/relocate-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expenseId: previous.id,
+        fileId,
+        oldFileName,
+        oldFolderId: oldFolderId || undefined,
+        newFileName,
+        newFolderId: newFolderId || undefined,
+        newFolderName: newCc?.driveFolder || updated.project,
+        accessToken: getStoredWorkspaceToken(),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      if (response.status === 401 || data.isAuthError) saveStoredWorkspaceToken(null);
+      return { status: 'error', error: data.error || 'No se pudo actualizar el archivo en Google Drive.' };
+    }
+    if (data.apiLog) syncApiLogToCloud(data.apiLog).catch(() => {});
+
+    const fields: Partial<Expense> = {
+      driveFileId: data.fileId || fileId,
+      driveUploadedFileName: data.fileName || newFileName,
+      driveUploadedUrl: data.webViewLink || previous.driveUploadedUrl,
+      driveUploadStatus: 'SUCCESS',
+    };
+    if (data.moved) {
+      fields.driveFolderTarget = newCc?.driveFolder || `${updated.project || 'General'}`;
+      if (newCc?.driveUrl) fields.driveFolderUrl = newCc.driveUrl;
+    }
+    return { status: 'success', moved: Boolean(data.moved), renamed: Boolean(data.renamed), fields };
+  } catch (err: any) {
+    return { status: 'error', error: err?.message || 'Error de red al comunicarse con Google Drive.' };
+  }
+}
+
 import { resolveEmailCcRecipients } from './emailCc';
 
 /**
@@ -661,7 +744,7 @@ export async function sendReceiptUploadConfirmationEmail(params: {
 }> {
   const { expenses, currentUser, customRecipientEmail, costCenters, appUsers, explicitCc, accessToken } = params;
   if (!expenses || expenses.length === 0) {
-    return { success: false, error: 'No hay comprobantes para notificar.' };
+    return { success: false, error: 'No hay facturas/tickets para notificar.' };
   }
 
   // Determine recipient email and submitter name
@@ -691,8 +774,8 @@ export async function sendReceiptUploadConfirmationEmail(params: {
 
   const subject =
     count === 1
-      ? `[ISF Finanzas] Comprobante cargado: ${firstExpense.vendor || 'Gasto'} (${formatCurrency(firstExpense.amount || 0, firstExpense.currency)})`
-      : `[ISF Finanzas] Resumen de ${count} comprobantes cargados (${formattedTotal})`;
+      ? `[ISF Finanzas] Factura/ticket cargada: ${firstExpense.vendor || 'Gasto'} (${formatCurrency(firstExpense.amount || 0, firstExpense.currency)})`
+      : `[ISF Finanzas] Resumen de ${count} facturas/tickets cargadas (${formattedTotal})`;
 
   // Build rows HTML
   const rowsHtml = expenses
@@ -778,19 +861,19 @@ export async function sendReceiptUploadConfirmationEmail(params: {
           <div class="header">
             <div class="badge">Gestión de Gastos</div>
             <h1 style="margin: 0; font-size: 20px; font-weight: 700; color: #ffffff;">Ingeniería Sin Fronteras Argentina</h1>
-            <p style="margin: 6px 0 0 0; font-size: 13px; color: #94a3b8;">Confirmación de Comprobantes Registrados</p>
+            <p style="margin: 6px 0 0 0; font-size: 13px; color: #94a3b8;">Confirmación de Facturas/Tickets Registradas</p>
           </div>
 
           <div class="content">
             <p style="font-size: 15px; margin-top: 0;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
             <p style="font-size: 14px; line-height: 1.5; color: #334155;">
-              Te confirmamos que se ${count === 1 ? 'ha registrado exitosamente tu comprobante' : `han registrado exitosamente tus <strong>${count} comprobantes</strong>`} en el sistema de rendiciones de ISF Argentina.
+              Te confirmamos que se ${count === 1 ? 'ha registrado exitosamente tu factura/ticket' : `han registrado exitosamente tus <strong>${count} facturas/tickets</strong>`} en el sistema de rendiciones de ISF Argentina.
             </p>
 
             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin: 18px 0;">
               <table style="width: 100%; border: none;">
                 <tr>
-                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Cantidad de Comprobantes:</td>
+                  <td style="padding: 4px 0; font-size: 13px; color: #64748b;">Cantidad de Facturas/Tickets:</td>
                   <td style="padding: 4px 0; font-size: 13px; font-weight: 700; color: #0f172a; text-align: right;">${count}</td>
                 </tr>
                 <tr>
@@ -833,7 +916,7 @@ export async function sendReceiptUploadConfirmationEmail(params: {
                   (e.reimbursable && e.paymentType !== 'PAGO_PROVEEDOR')
               )
                 ? `<div style="background-color: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; padding: 12px 14px; font-size: 12px; color: #92400e; margin-top: 15px;">
-                    ℹ️ <strong>Atención Reintegros:</strong> Los comprobantes marcados como reintegro fueron derivados automáticamente a Tesorería / Administración para su correspondiente revisión y liquidación.
+                    ℹ️ <strong>Atención Reintegros:</strong> Las facturas/tickets marcadas como reintegro fueron derivadas automáticamente a Tesorería / Administración para su correspondiente revisión y liquidación.
                   </div>`
                 : ''
             }
@@ -845,19 +928,19 @@ export async function sendReceiptUploadConfirmationEmail(params: {
                   e.paymentMethod === 'Pago a proveedor'
               )
                 ? `<div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 14px; font-size: 12px; color: #1e40af; margin-top: 15px;">
-                    ℹ️ <strong>Atención Pagos a Proveedores:</strong> Los comprobantes marcados como pago a proveedor fueron registrados en el circuito de pagos a proveedores de Administración y Finanzas.
+                    ℹ️ <strong>Atención Pagos a Proveedores:</strong> Las facturas/tickets marcadas como pago a proveedor fueron registradas en el circuito de pagos a proveedores de Administración y Finanzas.
                   </div>`
                 : ''
             }
 
             <p style="font-size: 13px; color: #64748b; margin-top: 24px; line-height: 1.5;">
-              Puedes acceder a la plataforma para consultar el estado de tus rendiciones y comprobantes en cualquier momento.
+              Puedes acceder a la plataforma para consultar el estado de tus rendiciones y facturas/tickets en cualquier momento.
             </p>
           </div>
 
           <div class="footer">
             <strong>Ingeniería Sin Fronteras Argentina</strong> — Área de Administración, Finanzas y Tesorería<br>
-            Este es un correo automático de notificación de carga de comprobantes.
+            Este es un correo automático de notificación de carga de facturas/tickets.
           </div>
         </div>
       </body>
@@ -927,7 +1010,7 @@ function simpleEmailHtml(title: string, badge: string, inner: string): string {
       <div style="padding:24px;font-size:14px;color:#334155;">${inner}
         ${appUrl ? `<p style="margin-top:20px;"><a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 18px;border-radius:10px;">Abrir la aplicación</a></p>` : ''}
       </div>
-      <div style="background:#f8fafc;padding:16px 24px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;text-align:center;">Ingeniería Sin Fronteras Argentina · Sistema de Comprobantes</div>
+      <div style="background:#f8fafc;padding:16px 24px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;text-align:center;">Ingeniería Sin Fronteras Argentina · Sistema de Gastos</div>
     </div>
   </body></html>`;
 }
@@ -969,7 +1052,7 @@ export async function sendVendorChangeResolutionEmail(params: {
     <p style="margin-top:0;">${what} fue <strong style="color:${approved ? '#047857' : '#b91c1c'};">${approved ? 'aprobado' : 'rechazado'}</strong> por ${escapeHtml(resolvedBy.name || resolvedBy.email)}.</p>
     ${note ? `<p style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-size:13px;">💬 ${escapeHtml(note)}</p>` : ''}
     ${!isNew && request.changedFields.length > 0 ? vendorChangesTableHtml(request) : ''}
-    ${approved ? '' : '<p style="font-size:13px;margin-top:16px;">Tus comprobantes no se modificaron. Si hace falta, consultá con Administración.</p>'}`;
+    ${approved ? '' : '<p style="font-size:13px;margin-top:16px;">Tus facturas/tickets no se modificaron. Si hace falta, consultá con Administración.</p>'}`;
   return sendGmailMessage({
     to: request.requestedByEmail,
     subject: `[ISF Finanzas] ${approved ? 'Aprobado' : 'Rechazado'}: ${isNew ? 'alta' : 'cambio'} del proveedor ${request.vendorName}`,
@@ -1005,7 +1088,7 @@ export async function notifyBankDetailsChange(params: {
       ? 'Perfil de Colaborador'
       : targetType === 'vendor'
       ? 'Proveedor'
-      : 'Rendición / Comprobante';
+      : 'Rendición (Factura/Ticket)';
 
   const subject = `[ISF Finanzas] Notificación: Cambio/Alta de Datos Bancarios de ${targetName}`;
 
@@ -1053,7 +1136,7 @@ export async function notifyBankDetailsChange(params: {
             </table>
           </div>
           <div class="footer">
-            Ingeniería Sin Fronteras Argentina · Sistema de Comprobantes<br>
+            Ingeniería Sin Fronteras Argentina · Sistema de Gastos<br>
             Notificación automática enviada a la Administración.
           </div>
         </div>
@@ -1090,7 +1173,7 @@ export async function sendPaymentReversalEmail(params: {
 
   const recipientEmail = expense.submittedByEmail || currentUser?.email || '';
   if (!recipientEmail) {
-    return { success: false, error: 'El comprobante no tiene el email de quien lo cargó.' };
+    return { success: false, error: 'La factura/ticket no tiene el email de quien la cargó.' };
   }
 
   const recipientName =
@@ -1113,7 +1196,7 @@ export async function sendPaymentReversalEmail(params: {
     : escapeHtml(expense.project || 'General');
 
   const formattedAmount = formatCurrency(expense.amount || 0, expense.currency);
-  const subject = `[ISF Finanzas] Reversión de Pago: ${expense.vendor || 'Comprobante'} (${formattedAmount})`;
+  const subject = `[ISF Finanzas] Reversión de Pago: ${expense.vendor || 'Factura/ticket'} (${formattedAmount})`;
 
   const dateFormatted = formatDate(expense.date);
   const revertedByName = currentUser?.name || currentUser?.email || 'Administración';
@@ -1149,18 +1232,18 @@ export async function sendPaymentReversalEmail(params: {
               Hola <strong>${escapeHtml(recipientName)}</strong>,
             </p>
             <p style="font-size: 13.5px; color: #334155; line-height: 1.5;">
-              Te informamos que se ha <strong>revertido el registro de pago</strong> correspondiente al comprobante de <strong>${escapeHtml(expense.vendor || 'Proveedor')}</strong> por <strong>${formattedAmount}</strong>.
+              Te informamos que se ha <strong>revertido el registro de pago</strong> correspondiente a la factura/ticket de <strong>${escapeHtml(expense.vendor || 'Proveedor')}</strong> por <strong>${formattedAmount}</strong>.
             </p>
             <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; font-size: 12.5px; color: #92400e; margin: 16px 0;">
-              ⚠️ <strong>Estado actual:</strong> El comprobante ha regresado al estado <strong>Pendiente de Pago</strong> en la plataforma para su debida revisión, ajuste o posterior liquidación.
+              ⚠️ <strong>Estado actual:</strong> La factura/ticket ha regresado al estado <strong>Pendiente de Pago</strong> en la plataforma para su debida revisión, ajuste o posterior liquidación.
               ${reversalReason ? `<div style="margin-top: 6px; font-size: 12px;"><strong>Motivo indicado:</strong> ${escapeHtml(reversalReason)}</div>` : ''}
             </div>
 
-            <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-top: 14px;">Detalles del Comprobante Revertido:</div>
+            <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-top: 14px;">Detalles de la factura/ticket (pago revertido):</div>
             <table class="data-table">
               <tr><td class="label">Proveedor:</td><td class="val">${escapeHtml(expense.vendor || '-')}</td></tr>
-              ${expense.invoiceNumber ? `<tr><td class="label">N° Comprobante:</td><td class="val">${escapeHtml(expense.invoiceNumber)}</td></tr>` : ''}
-              <tr><td class="label">Fecha Comprobante:</td><td class="val">${dateFormatted}</td></tr>
+              ${expense.invoiceNumber ? `<tr><td class="label">N° Factura/Ticket:</td><td class="val">${escapeHtml(expense.invoiceNumber)}</td></tr>` : ''}
+              <tr><td class="label">Fecha Factura/Ticket:</td><td class="val">${dateFormatted}</td></tr>
               <tr><td class="label">Centro de Costos:</td><td class="val">${centerLabel}</td></tr>
               <tr><td class="label">Categoría:</td><td class="val">${escapeHtml(expense.category || '-')}</td></tr>
               <tr><td class="label">Monto:</td><td class="val" style="color: #0f172a; font-size: 13.5px;">${formattedAmount}</td></tr>
@@ -1170,12 +1253,12 @@ export async function sendPaymentReversalEmail(params: {
             </table>
 
             <p style="font-size: 12px; color: #64748b; margin-top: 20px; line-height: 1.5;">
-              ℹ️ Los comprobantes de transferencia y certificados de retención que se hubieran subido previamente para este pago han sido eliminados de Google Drive y del sistema.
+              ℹ️ Los comprobantes de pago y certificados de retención que se hubieran subido previamente para este pago han sido eliminados de Google Drive y del sistema.
             </p>
           </div>
           <div class="footer">
             <strong>Ingeniería Sin Fronteras Argentina</strong> — Área de Administración, Finanzas y Tesorería<br>
-            Este es un correo automático generado por el sistema de gestión de comprobantes.
+            Este es un correo automático generado por el sistema de gestión de gastos.
           </div>
         </div>
       </body>
@@ -1291,7 +1374,7 @@ export async function sendNewUserWelcomeEmail(params: {
             <p style="margin-top: 0; font-size: 15px;">Hola <strong>${escapeHtml(recipientName)}</strong>,</p>
             
             <p>
-              Te damos la bienvenida al sistema digital de comprobantes y rendición de gastos de <strong>Ingeniería Sin Fronteras Argentina</strong>. Tu cuenta ha sido habilitada con el perfil de <strong>${roleLabel}</strong>.
+              Te damos la bienvenida al sistema digital de facturas/tickets y rendición de gastos de <strong>Ingeniería Sin Fronteras Argentina</strong>. Tu cuenta ha sido habilitada con el perfil de <strong>${roleLabel}</strong>.
             </p>
 
             <div class="feature-box">
@@ -1300,14 +1383,14 @@ export async function sendNewUserWelcomeEmail(params: {
               <div class="feature-item">
                 <span class="feature-icon">📄</span>
                 <div>
-                  <strong>Carga inteligente de comprobantes:</strong> Puedes arrastrar o fotografiar tus facturas y tickets (imágenes o PDF). El lector con inteligencia artificial extraerá de forma automática el proveedor, CUIT, fecha y monto.
+                  <strong>Carga inteligente de facturas/tickets:</strong> Puedes arrastrar o fotografiar tus facturas y tickets (imágenes o PDF). El lector con inteligencia artificial extraerá de forma automática el proveedor, CUIT, fecha y monto.
                 </div>
               </div>
 
               <div class="feature-item">
                 <span class="feature-icon">📁</span>
                 <div>
-                  <strong>Centro de Costos & Google Drive:</strong> Asigna cada comprobante a su proyecto correspondiente. Los archivos se ordenan y guardan automáticamente en las carpetas de Google Drive de ISF con la nomenclatura estandarizada.
+                  <strong>Centro de Costos & Google Drive:</strong> Asigna cada factura/ticket a su proyecto correspondiente. Los archivos se ordenan y guardan automáticamente en las carpetas de Google Drive de ISF con la nomenclatura estandarizada.
                 </div>
               </div>
 
@@ -1321,7 +1404,7 @@ export async function sendNewUserWelcomeEmail(params: {
               <div class="feature-item" style="margin-bottom: 0;">
                 <span class="feature-icon">📊</span>
                 <div>
-                  <strong>Seguimiento en vivo:</strong> Consulta en todo momento el estado de tus comprobantes, fechas de pago y notas contables.
+                  <strong>Seguimiento en vivo:</strong> Consulta en todo momento el estado de tus facturas/tickets, fechas de pago y notas contables.
                 </div>
               </div>
             </div>

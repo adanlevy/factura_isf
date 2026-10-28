@@ -239,7 +239,7 @@ export function ReceiptViewerModal({
             <div>
               <h3 className="font-bold text-sm sm:text-base text-white">{expense.vendor}</h3>
               <span className="text-xs text-slate-400">
-                {expense.invoiceNumber ? `Comprobante N° ${expense.invoiceNumber}` : 'Ticket'} • {formatDate(expense.date)}
+                {expense.invoiceNumber ? `Factura/ticket N° ${expense.invoiceNumber}` : 'Ticket'} • {formatDate(expense.date)}
               </span>
             </div>
           </div>
@@ -299,7 +299,7 @@ export function ReceiptViewerModal({
               }`}
             >
               <Receipt className="w-3.5 h-3.5" />
-              <span>Factura / Ticket Original</span>
+              <span>Factura/Ticket Original</span>
             </button>
 
             {hasPaymentProof && (
@@ -557,7 +557,7 @@ export function ReceiptViewerModal({
                       className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5 mr-1.5" />
-                      <span>Cargar Comprobante</span>
+                      <span>Cargar Comprobante de Pago</span>
                     </button>
                   )}
                 </div>
@@ -570,7 +570,7 @@ export function ReceiptViewerModal({
                     <SafePdfViewer
                       url={displayReceiptUrl}
                       fileName={standardizedFileName}
-                      title={`Comprobante ${expense.vendor}`}
+                      title={`Factura/Ticket: ${expense.vendor}`}
                       heightClass="h-80"
                     />
                   </div>
@@ -617,7 +617,7 @@ export function ReceiptViewerModal({
                 <div className="w-full h-80 rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-100 mb-4">
                   <iframe
                     src={driveReceiptPreviewUrl}
-                    title={`Comprobante / Factura: ${expense.vendor}`}
+                    title={`Factura/Ticket: ${expense.vendor}`}
                     className="w-full h-full border-0"
                     allow="autoplay"
                   />
@@ -657,7 +657,7 @@ export function ReceiptViewerModal({
                   <ExternalLink className="w-7 h-7" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-800 text-sm">Comprobante en Google Drive</h4>
+                  <h4 className="font-bold text-slate-800 text-sm">Factura/Ticket en Google Drive</h4>
                   <p className="text-xs text-slate-500 max-w-xs mt-1 leading-relaxed">
                     El archivo digital está archivado de forma segura en Google Drive y los datos contables están registrados en la base de datos.
                   </p>
@@ -687,7 +687,7 @@ export function ReceiptViewerModal({
             ) : (
               <div className="text-center text-slate-400 space-y-3 p-6 flex flex-col items-center justify-center">
                 <Receipt className="w-12 h-12 mx-auto" />
-                <p className="text-xs">No se adjuntó imagen para este comprobante.</p>
+                <p className="text-xs">No se adjuntó imagen para esta factura/ticket.</p>
                 {onReplaceReceipt && (
                   <button
                     type="button"
