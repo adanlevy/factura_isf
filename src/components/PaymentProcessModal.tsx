@@ -85,23 +85,7 @@ export function PaymentProcessModal({
     : undefined;
 
   const sigla = matchedCc?.code || expense?.project?.slice(0, 4).toUpperCase() || 'ISF';
-  const folderName = matchedCc?.driveFolder || `${expense?.project || 'General'} 2026`;
-  const folderUrl =
-    matchedCc?.driveUrl ||
-    `https://drive.google.com/drive/search?q=${encodeURIComponent(folderName)}`;
-
-  // Extension detection for original invoice
-  let fileExt = 'png';
-  if (expense?.receiptFileName?.toLowerCase().endsWith('.svg')) fileExt = 'svg';
-  else if (expense?.receiptFileName?.toLowerCase().endsWith('.pdf')) fileExt = 'pdf';
-  else if (
-    expense?.receiptFileName?.toLowerCase().endsWith('.jpg') ||
-    expense?.receiptFileName?.toLowerCase().endsWith('.jpeg')
-  )
-    fileExt = 'jpg';
-
   const standardizedBaseName = expense ? generateDriveFileName(expense, costCenters) : 'ISF-Comprobante';
-  const normalizedFileName = `${standardizedBaseName}.${fileExt}`;
 
   const recipientEmail = expense?.submittedByEmail || '';
   const recipientName = expense?.submittedByName || 'Colaborador / Solicitante';
@@ -233,11 +217,8 @@ export function PaymentProcessModal({
       paymentProofFileName: paymentProofFileName || expense.paymentProofFileName,
       paymentProofAt: paymentProofBase64 ? timestamp : expense.paymentProofAt,
       paymentProofDriveUrl: finalPaymentProofUrl || expense.paymentProofDriveUrl,
-      driveUploadedFileName: expense.driveUploadedFileName || normalizedFileName,
-      driveFolderTarget: expense.driveFolderTarget || folderName,
-      driveUploadedUrl: expense.driveUploadedUrl || folderUrl,
-      driveUploadStatus: expense.driveUploadStatus || 'SUCCESS',
-      driveUploadedAt: expense.driveUploadedAt || timestamp,
+      // Los datos de Drive de la factura/ticket no se tocan al pagar: si no estaba subida, sigue
+      // figurando así (antes se completaban con la carpeta y quedaba como "subida" sin estarlo)
     };
 
     const saved = await onPaymentCompleted(updatedExpense);

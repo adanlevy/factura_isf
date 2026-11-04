@@ -1191,6 +1191,15 @@ export default function App() {
     }
   };
 
+  // Se encontró en Drive el archivo de una factura/ticket vieja (sin ID guardado): se guarda el enlace
+  // para que el ícono de Drive abra directamente el archivo la próxima vez
+  const handleReceiptDriveFileResolved = async (expenseId: string, fields: Partial<Expense>) => {
+    const changes = { ...fields, driveUploadStatus: 'SUCCESS' as const };
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, ...changes } : e)));
+    setViewingReceiptExpense((v) => (v && v.id === expenseId ? { ...v, ...changes } : v));
+    await patchCentralExpenses([{ id: expenseId, changes }]);
+  };
+
   const handleViewVendorExpenses = (vendor: Vendor) => {
     setVendorExpensesFilter(vendor);
     setActiveTab('admin_movements');
@@ -1245,6 +1254,7 @@ export default function App() {
           driveFolderTarget: res.folderName,
           driveUploadedUrl: res.webViewLink || expenseToUpload.driveUploadedUrl,
           driveUploadedAt: new Date().toISOString(),
+          ...(res.fileId ? { driveFileId: res.fileId } : {}),
         };
         setExpenses((prev) =>
           prev.map((e) => (e.id === expenseToUpload.id ? { ...e, ...pickExpenseFields(updatedObj, DRIVE_RECEIPT_FIELDS) } : e))
@@ -1343,6 +1353,7 @@ export default function App() {
               driveFolderTarget: res.folderName,
               driveUploadedUrl: res.webViewLink || newExpense.driveUploadedUrl,
               driveUploadedAt: new Date().toISOString(),
+              ...(res.fileId ? { driveFileId: res.fileId } : {}),
             };
             setExpenses((prev) =>
               prev.map((e) =>
@@ -1487,6 +1498,7 @@ export default function App() {
                 driveFolderTarget: res.folderName,
                 driveUploadedUrl: res.webViewLink || exp.driveUploadedUrl,
                 driveUploadedAt: new Date().toISOString(),
+                ...(res.fileId ? { driveFileId: res.fileId } : {}),
               };
               setExpenses((prev) =>
                 prev.map((e) =>
@@ -2990,6 +3002,7 @@ export default function App() {
             <ExpenseList
               expenses={expenses}
               costCenters={costCenters}
+              onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
               vendors={vendors}
               currentUser={currentUser}
               onEditExpense={(exp) => setEditingExpense(exp)}
@@ -3007,6 +3020,7 @@ export default function App() {
               <AdminMovementView
                 expenses={expenses}
                 costCenters={costCenters}
+                onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
                 vendors={vendors}
                 appUsers={appUsers}
                 currentUser={currentUser}
@@ -3211,6 +3225,7 @@ export default function App() {
             : undefined
         }
         onOpenWithholdingModal={currentUser.role === 'admin' ? (exp) => setWithholdingModalExpense(exp) : undefined}
+        onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
       />
 
       <WithholdingCertificateModal

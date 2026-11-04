@@ -199,7 +199,7 @@ La pestaña **"Mis Gastos"** muestra **todas tus facturas/tickets** (las cargada
 
 - **Buscar:** caja de búsqueda por proveedor, centro de costos, CUIT, notas, N° de factura, monto, alias/CBU, etc.
 - **Ordenar:** hacé clic en el encabezado de cualquier columna (Fecha Carga, Fecha Doc., Nombre/Factura, Centro de Costos, Monto, Estado…).
-- **Columnas:** Fecha de carga, Fecha del documento, Nombre/Factura, Centro de Costos (con acceso a la carpeta de Drive y estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
+- **Columnas:** Fecha de carga, Fecha del documento, Nombre/Factura, Centro de Costos (con el ícono de Drive, que abre el archivo de la factura/ticket, y el estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
 - **Estados posibles:** **Pendiente** (ámbar), **Pagado** (verde), **Pagado - Pend. Retención** (naranja) o **Directo** (gris, pagos institucionales que no requieren reintegro).
 - **Acciones por fila:**
   - 👁 **Ver / abrir documentos** — abre el visor (factura/ticket, comprobante de pago y certificado, si los hay).
@@ -238,7 +238,7 @@ La pestaña **"Gestión Pagos"** es el panel central del equipo contable. Es una
 - **Buscar:** *"Buscar por proveedor, solicitante, alias, CBU…"* (busca en prácticamente todos los campos, incluidos los bancarios).
 - **Filtrar por estado:** Todos, **Pendientes de Reintegro / Pago**, **Pagado - Pendiente Retención**, **Pendientes Sin Datos Bancarios**, **Ya Reintegrados / Pagados**, **Pago Institucional Directo**.
 - **Filtrar por centro de costos** (con un grupo de "Más Utilizados").
-- **Columnas:** Fecha Carga, Fecha Doc., Enviado por, Nombre/Factura, Centro de Costos (con enlace a la carpeta de Drive y estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
+- **Columnas:** Fecha Carga, Fecha Doc., Enviado por, Nombre/Factura, Centro de Costos (con el ícono de Drive, que abre el archivo de la factura/ticket —gris si todavía no está en Drive—, y el estado de subida), Monto, **Estado**, Datos de Cuenta, Notas Contables y Acciones.
 
 **Los botones de estado dicen qué hacer:**
 - **"Pagar"** (verde) — factura/ticket pendiente: abre el proceso de pago.

@@ -3227,6 +3227,79 @@ async function trashReplacedDriveFiles(
   }
 }
 
+// Archivos que comparten la marca expenseId pero no son la factura/ticket del gasto
+const NON_RECEIPT_FILE_MARKERS = ["-ComprobantePago-", "-CertificadoRetencion-"];
+const isReceiptFileName = (name?: string) => {
+  const n = String(name || "");
+  return !n.startsWith("LOTE-") && !NON_RECEIPT_FILE_MARKERS.some((m) => n.includes(m));
+};
+
+// Busca el archivo de la factura/ticket de un gasto cuando el registro no guardó su ID (registros
+// viejos): primero por la marca expenseId que se graba al subir, después por el nombre del archivo.
+// Solo devuelve archivos en carpetas de la app y, para un Colaborador, los que subió él mismo.
+app.post(
+  "/api/drive/find-receipt",
+  authenticateFirebaseUser,
+  rateLimit("drive-find", { user: 300, admin: 3000 }, 60 * 60 * 1000),
+  async (req, res) => {
+  try {
+    const { expenseId, fileName, folderId, accessToken } = req.body || {};
+    const cleanExpenseId = typeof expenseId === "string" ? expenseId.trim().slice(0, 80) : "";
+    const cleanName = typeof fileName === "string" && fileName.trim().length <= 250 ? fileName.trim() : "";
+    if (!cleanExpenseId && !cleanName) {
+      return res.status(400).json({ success: false, error: "Se requiere el ID del gasto o el nombre del archivo." });
+    }
+
+    const centralAuth = await getCentralizedGoogleAccessToken();
+    const token = centralAuth?.token || accessToken;
+    if (!token) {
+      return res.status(401).json({ success: false, error: "No hay credenciales de Google Drive disponibles." });
+    }
+    const directory = await loadAppDirectory(req);
+    if (!directory) {
+      return res.status(503).json({ success: false, error: "No se pudo verificar las carpetas de la app." });
+    }
+
+    type Found = { id: string; name: string; parents?: string[]; appProperties?: Record<string, string> };
+    const candidates: Found[] = [];
+    if (cleanExpenseId) {
+      const query = `appProperties has { key='expenseId' and value='${escapeDriveQueryValue(cleanExpenseId)}' } and trashed = false`;
+      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        query
+      )}&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=20&fields=files(id,name,parents,appProperties)`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) {
+        const data = (await r.json()) as any;
+        const files: Found[] = Array.isArray(data.files) ? data.files : [];
+        // Si se conoce el nombre, va primero el que coincide
+        files.sort((a, b) => Number(b.name === cleanName) - Number(a.name === cleanName));
+        candidates.push(...files.filter((f) => isReceiptFileName(f.name)));
+      }
+    }
+    if (cleanName) {
+      const byName = await findDriveFilesByName(token, cleanName, { folderId: isValidDriveId(folderId) ? folderId : undefined });
+      // Con varios del mismo nombre solo sirve si uno es de este gasto (o si hay uno solo)
+      const own = byName.filter((f) => f.appProperties?.expenseId === cleanExpenseId);
+      candidates.push(...(own.length > 0 ? own : byName.length === 1 ? byName : []));
+    }
+
+    for (const file of candidates) {
+      if (await authorizeDriveFileTrash(req, token, file, directory)) {
+        return res.json({
+          success: true,
+          fileId: file.id,
+          fileName: file.name,
+          webViewLink: `https://drive.google.com/file/d/${file.id}/view`,
+        });
+      }
+    }
+    return res.status(404).json({ success: false, notFound: true, error: "No se encontró la factura/ticket en Google Drive." });
+  } catch (error: any) {
+    console.error("Error in drive find-receipt:", error);
+    return res.status(500).json({ success: false, error: "Error al buscar el archivo en Google Drive." });
+  }
+});
+
 // Renombra y/o mueve un archivo ya subido (al editar la factura/ticket: otro centro de costos,
 // fecha, monto…). No vuelve a subir el archivo: cambia el nombre y la carpeta del mismo archivo,
 // así se conservan su ID, su enlace y su historial. Mismos permisos que mandarlo a la papelera:
