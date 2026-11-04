@@ -47,7 +47,7 @@ import {
 import { createVendorExpenseMatcher } from '../utils/vendorMatching';
 import { BatchPaymentModal } from './BatchPaymentModal';
 import { getSmartSortedOptions, sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
-import { GoogleDriveLinkButton } from './GoogleDriveIcon';
+import { ReceiptDriveLink } from './ReceiptDriveLink';
 import { AccountDetailsDisplay } from './AccountDetailsDisplay';
 
 interface AdminMovementViewProps {
@@ -80,6 +80,8 @@ interface AdminMovementViewProps {
   /** Proveedor elegido con el botón "Gastos": se muestran solo sus comprobantes */
   vendorFilter?: Vendor | null;
   onClearVendorFilter?: () => void;
+  /** Se encontró en Drive el archivo de una factura/ticket vieja: guardar su enlace */
+  onReceiptDriveFileResolved?: (expenseId: string, fields: Partial<Expense>) => void;
   // Server-side query filtering & pagination props
   queryPeriod?: string;
   onPeriodChange?: (period: string) => void;
@@ -117,6 +119,7 @@ export function AdminMovementView({
   onOpenWithholdingModal,
   vendorFilter = null,
   onClearVendorFilter,
+  onReceiptDriveFileResolved,
   queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
@@ -811,12 +814,10 @@ export function AdminMovementView({
                           <span className="text-xs font-bold text-slate-800 truncate">
                             {expense.project}
                           </span>
-                          <GoogleDriveLinkButton
-                            driveUrl={expense.driveUploadedUrl || matchedCc?.driveUrl}
-                            driveFolder={expense.driveFolderTarget || matchedCc?.driveFolder || expense.project}
-                            size="xs"
-                            iconOnly={true}
-                            title={`Abrir carpeta de ${expense.project} en Google Drive`}
+                          <ReceiptDriveLink
+                            expense={expense}
+                            costCenters={costCenters}
+                            onFileResolved={onReceiptDriveFileResolved}
                           />
                         </div>
 
@@ -1199,12 +1200,10 @@ export function AdminMovementView({
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Centro de Costos</span>
                     <div className="flex items-center gap-1 mt-0.5 truncate">
                       <span className="font-bold text-slate-800 truncate text-[11px]">{expense.project}</span>
-                      <GoogleDriveLinkButton
-                        driveUrl={expense.driveUploadedUrl || matchedCc?.driveUrl}
-                        driveFolder={expense.driveFolderTarget || matchedCc?.driveFolder || expense.project}
-                        size="xs"
-                        iconOnly={true}
-                        title={`Abrir carpeta de ${expense.project} en Google Drive`}
+                      <ReceiptDriveLink
+                        expense={expense}
+                        costCenters={costCenters}
+                        onFileResolved={onReceiptDriveFileResolved}
                       />
                     </div>
                   </div>

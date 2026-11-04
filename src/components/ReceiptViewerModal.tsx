@@ -19,6 +19,8 @@ import {
 import { Expense, CostCenter } from '../types';
 import { formatCurrency, formatDate, generateDriveFileName, formatTransferDetails, getGoogleDrivePreviewUrl, safeExternalUrl } from '../utils/helpers';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
+import { ReceiptDriveButton } from './ReceiptDriveLink';
+import { getReceiptDriveFileUrl } from '../utils/googleWorkspace';
 import { SafePdfViewer } from './SafePdfViewer';
 import {
   getCachedReceiptFile,
@@ -34,6 +36,8 @@ interface ReceiptViewerModalProps {
   onUploadToDrive?: (expense: Expense) => void;
   onReplaceReceipt?: (expense: Expense) => void;
   onOpenWithholdingModal?: (expense: Expense) => void;
+  /** Se encontró en Drive el archivo de una factura/ticket vieja: guardar su enlace */
+  onReceiptDriveFileResolved?: (expenseId: string, fields: Partial<Expense>) => void;
 }
 
 export function ReceiptViewerModal({
@@ -44,6 +48,7 @@ export function ReceiptViewerModal({
   onUploadToDrive,
   onReplaceReceipt,
   onOpenWithholdingModal,
+  onReceiptDriveFileResolved,
 }: ReceiptViewerModalProps) {
   // Los enlaces guardados en el comprobante se abren solo si son https de Google (Drive / Docs)
   const expense = useMemo(
@@ -51,7 +56,8 @@ export function ReceiptViewerModal({
       rawExpense
         ? {
             ...rawExpense,
-            driveUploadedUrl: safeExternalUrl(rawExpense.driveUploadedUrl),
+            // Solo el enlace al ARCHIVO de la factura/ticket (si lo guardado es una carpeta, no se usa)
+            driveUploadedUrl: getReceiptDriveFileUrl(rawExpense) || undefined,
             paymentProofDriveUrl: safeExternalUrl(rawExpense.paymentProofDriveUrl),
             withholdingCertificateDriveUrl: safeExternalUrl(rawExpense.withholdingCertificateDriveUrl),
             driveFolderUrl: safeExternalUrl(rawExpense.driveFolderUrl),
@@ -218,8 +224,8 @@ export function ReceiptViewerModal({
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } else if (expense.driveUploadedUrl || driveUrl) {
-      window.open(expense.driveUploadedUrl || safeExternalUrl(driveUrl), '_blank', 'noopener,noreferrer');
+    } else if (expense.driveUploadedUrl) {
+      window.open(expense.driveUploadedUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -630,15 +636,17 @@ export function ReceiptViewerModal({
                     <Download className="w-3.5 h-3.5 mr-1.5" />
                     <span>Descargar</span>
                   </button>
-                  <a
-                    href={expense.driveUploadedUrl || expense.driveFolderUrl || driveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                    <span>Ver en Drive</span>
-                  </a>
+                  {expense.driveUploadedUrl && (
+                    <a
+                      href={expense.driveUploadedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
+                      <span>Ver en Drive</span>
+                    </a>
+                  )}
                   {onReplaceReceipt && (
                     <button
                       type="button"
@@ -659,19 +667,16 @@ export function ReceiptViewerModal({
                 <div>
                   <h4 className="font-bold text-slate-800 text-sm">Factura/Ticket en Google Drive</h4>
                   <p className="text-xs text-slate-500 max-w-xs mt-1 leading-relaxed">
-                    El archivo digital está archivado de forma segura en Google Drive y los datos contables están registrados en la base de datos.
+                    El archivo no está en este navegador: se abre desde Google Drive. Los datos contables están registrados en la base de datos.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  <a
-                    href={driveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                    <span>Ver en Drive</span>
-                  </a>
+                  <ReceiptDriveButton
+                    expense={expense}
+                    costCenters={costCenters}
+                    folderUrl={driveFolderUrl}
+                    onFileResolved={onReceiptDriveFileResolved}
+                  />
                   {onReplaceReceipt && (
                     <button
                       type="button"

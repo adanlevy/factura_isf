@@ -440,6 +440,52 @@ export async function replaceReceiptInGoogleDrive(params: {
   }
 }
 
+/**
+ * Enlace directo al ARCHIVO de la factura/ticket en Drive (nunca a la carpeta).
+ * Devuelve null si el gasto no tiene guardado el archivo (o lo guardado es una carpeta).
+ */
+export function getReceiptDriveFileUrl(expense: Pick<Expense, 'driveFileId' | 'driveUploadedUrl'>): string | null {
+  const fileId = expense.driveFileId || extractDriveFileId(expense.driveUploadedUrl);
+  return fileId ? `https://drive.google.com/file/d/${fileId}/view` : null;
+}
+
+/** ¿Hay indicios de que la factura/ticket se subió a Drive aunque no tengamos el enlace al archivo? */
+export function receiptMayBeInDrive(expense: Expense): boolean {
+  return Boolean(expense.driveUploadedFileName || expense.driveUploadStatus === 'SUCCESS' || expense.driveUploadedUrl);
+}
+
+/**
+ * Busca en Drive el archivo de la factura/ticket de un gasto que no tiene guardado su ID
+ * (registros viejos). Devuelve los datos para guardar en el gasto, o null si no se encontró.
+ */
+export async function findReceiptInGoogleDrive(
+  expense: Expense,
+  costCenters: CostCenter[] = []
+): Promise<Pick<Expense, 'driveFileId' | 'driveUploadedUrl' | 'driveUploadedFileName'> | null> {
+  const cc = costCenters.find((c) => c.name.toLowerCase() === (expense.project || '').trim().toLowerCase());
+  try {
+    const response = await authFetch('/api/drive/find-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expenseId: expense.id,
+        fileName: expense.driveUploadedFileName,
+        folderId: costCenterFolderId(cc) || undefined,
+        accessToken: getStoredWorkspaceToken(),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success || !data.fileId) return null;
+    return {
+      driveFileId: data.fileId,
+      driveUploadedUrl: data.webViewLink || `https://drive.google.com/file/d/${data.fileId}/view`,
+      driveUploadedFileName: data.fileName || expense.driveUploadedFileName,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Carpeta de Drive de un centro de costos (ID), si está configurada */
 function costCenterFolderId(costCenter?: CostCenter): string | null {
   return costCenter?.driveFolderId || extractDriveFolderId(costCenter?.driveUrl) || null;

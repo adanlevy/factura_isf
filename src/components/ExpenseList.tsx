@@ -23,7 +23,7 @@ import {
 import { Expense, CostCenter, UserProfile, Vendor } from '../types';
 import { formatCurrency, formatDate, formatUploadDateTime, matchesSearch } from '../utils/helpers';
 import { sortExpenses, ExpenseSortField, ExpenseSortConfig, SortDirection } from '../utils/sorting';
-import { GoogleDriveLinkButton } from './GoogleDriveIcon';
+import { ReceiptDriveLink } from './ReceiptDriveLink';
 import { AccountDetailsDisplay } from './AccountDetailsDisplay';
 
 interface ExpenseListProps {
@@ -38,6 +38,8 @@ interface ExpenseListProps {
   onReplaceReceipt?: (expense: Expense) => void;
   /** Reintentar la subida a Drive de un comprobante propio */
   onRetryDriveUpload?: (expense: Expense) => void;
+  /** Se encontró en Drive el archivo de una factura/ticket vieja: guardar su enlace */
+  onReceiptDriveFileResolved?: (expenseId: string, fields: Partial<Expense>) => void;
   // Server-side query filtering & pagination
   queryPeriod?: string;
   onPeriodChange?: (period: string) => void;
@@ -114,6 +116,7 @@ export function ExpenseList({
   onDeleteExpense,
   onReplaceReceipt,
   onRetryDriveUpload,
+  onReceiptDriveFileResolved,
   queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
@@ -449,12 +452,10 @@ export function ExpenseList({
                           <span className="truncate font-bold text-slate-800 text-xs">
                             {expense.project}
                           </span>
-                          <GoogleDriveLinkButton
-                            driveUrl={expense.driveUploadedUrl || matchedCc?.driveUrl}
-                            driveFolder={expense.driveFolderTarget || matchedCc?.driveFolder || expense.project}
-                            size="xs"
-                            iconOnly={true}
-                            title={`Abrir carpeta de ${expense.project} en Google Drive`}
+                          <ReceiptDriveLink
+                            expense={expense}
+                            costCenters={costCenters}
+                            onFileResolved={onReceiptDriveFileResolved}
                           />
                         </div>
                         <div className="mt-0.5">
@@ -730,12 +731,10 @@ export function ExpenseList({
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Centro de Costos</span>
                     <div className="flex items-center gap-1 mt-0.5 truncate">
                       <span className="font-bold text-slate-800 truncate text-[11px]">{expense.project}</span>
-                      <GoogleDriveLinkButton
-                        driveUrl={expense.driveUploadedUrl || matchedCc?.driveUrl}
-                        driveFolder={expense.driveFolderTarget || matchedCc?.driveFolder || expense.project}
-                        size="xs"
-                        iconOnly={true}
-                        title={`Abrir carpeta de ${expense.project} en Google Drive`}
+                      <ReceiptDriveLink
+                        expense={expense}
+                        costCenters={costCenters}
+                        onFileResolved={onReceiptDriveFileResolved}
                       />
                       <DriveStatusBadge expense={expense} onRetry={onRetryDriveUpload} />
                     </div>
