@@ -7,5 +7,7 @@ coverage/
 .env*
 !.env.example
 
-# Datos locales del servidor (espejo/caché por instancia): no se versionan
-data/
+# Datos locales del servidor (espejo/caché por instancia): no se versionan.
+# Solo la carpeta data/ de la raíz: sin la barra inicial también ignoraba src/data/ (catálogo inicial
+# y FacturaIcon) y AI Studio no la traía al hacer pull, por eso fallaba la compilación.
+/data/
