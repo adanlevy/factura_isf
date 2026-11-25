@@ -3206,7 +3206,10 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
 
           // La factura/ticket queda registrada en el gasto aunque el navegador ya no esté
           // (no se espera: la respuesta sale ya y el registro sigue en segundo plano)
+          // Se chequea que el archivo realmente quedó en Drive antes de darlo por bueno
+          const driveFileStatus = await checkDriveFileExists(effectiveAccessToken, String(driveData.id));
           if (recordOnExpense === true && typeof expenseId === "string" && driveData.id) {
+            const replacedFileId = isValidDriveId(oldFileId) ? oldFileId : undefined;
             void recordReceiptUploadOnExpense(
               req,
               expenseId,
@@ -3218,8 +3221,20 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
                 driveUploadedUrl: `https://drive.google.com/file/d/${driveData.id}/view`,
                 driveUploadedAt: new Date().toISOString(),
               },
-              isValidDriveId(oldFileId) ? oldFileId : undefined
-            ).then((ok) => ok && console.log(`[DRIVE RECORD] Subida registrada en el gasto ${expenseId}`));
+              replacedFileId
+            ).then(async (ok) => {
+              if (!ok) return;
+              console.log(`[DRIVE RECORD] Subida registrada en el gasto ${expenseId}`);
+              // El estado verificado va aparte: si las reglas publicadas todavía no conocen estos
+              // campos, no se pierde el registro principal
+              if (driveFileStatus !== "ERROR") {
+                await recordReceiptUploadOnExpense(req, expenseId, {
+                  driveFileId: String(driveData.id),
+                  driveFileStatus,
+                  driveFileCheckedAt: new Date().toISOString(),
+                });
+              }
+            });
           }
 
           return res.json({
@@ -3231,6 +3246,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
             folderName: folderName,
             folderUrl: driveData.webViewLink || folderUrl,
             webViewLink: driveData.webViewLink,
+            driveFileStatus,
             message: `Archivo "${fileName}" subido exitosamente a Google Drive.`,
           });
         } else {
@@ -3319,6 +3335,64 @@ async function trashReplacedDriveFiles(
   }
 }
 
+type DriveReceiptFile = { id: string; name: string; parents?: string[]; appProperties?: Record<string, string> };
+
+/**
+ * Busca el archivo de la factura/ticket de un gasto: por la marca expenseId que se graba al subir
+ * y, si no aparece, por el nombre del archivo. Devuelve el primero que la persona puede ver.
+ */
+async function searchReceiptFile(
+  req: express.Request,
+  token: string,
+  directory: AppDirectory,
+  opts: { expenseId?: string; fileName?: string; folderId?: unknown }
+): Promise<DriveReceiptFile | null> {
+  const cleanExpenseId = opts.expenseId || "";
+  const cleanName = opts.fileName || "";
+  const candidates: DriveReceiptFile[] = [];
+  if (cleanExpenseId) {
+    const query = `appProperties has { key='expenseId' and value='${escapeDriveQueryValue(cleanExpenseId)}' } and trashed = false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+      query
+    )}&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=20&fields=files(id,name,parents,appProperties)`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (r.ok) {
+      const data = (await r.json()) as any;
+      const files: DriveReceiptFile[] = Array.isArray(data.files) ? data.files : [];
+      // Si se conoce el nombre, va primero el que coincide
+      files.sort((a, b) => Number(b.name === cleanName) - Number(a.name === cleanName));
+      candidates.push(...files.filter((f) => isReceiptFileName(f.name)));
+    }
+  }
+  if (cleanName) {
+    const byName = await findDriveFilesByName(token, cleanName, { folderId: isValidDriveId(opts.folderId) ? opts.folderId : undefined });
+    // Con varios del mismo nombre solo sirve si uno es de este gasto (o si hay uno solo)
+    const own = byName.filter((f) => f.appProperties?.expenseId === cleanExpenseId);
+    candidates.push(...(own.length > 0 ? own : byName.length === 1 ? byName : []));
+  }
+  for (const file of candidates) {
+    if (await authorizeDriveFileTrash(req, token, file, directory)) return file;
+  }
+  return null;
+}
+
+/** ¿El archivo existe en Drive y no está en la papelera? 'ERROR' si Drive no respondió (no se sabe) */
+async function checkDriveFileExists(token: string, fileId: string): Promise<"OK" | "MISSING" | "ERROR"> {
+  if (!isValidDriveId(fileId)) return "MISSING";
+  try {
+    const r = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (r.status === 404) return "MISSING";
+    if (!r.ok) return "ERROR";
+    const meta = (await r.json()) as any;
+    return meta.trashed ? "MISSING" : "OK";
+  } catch {
+    return "ERROR";
+  }
+}
+
 // Archivos que comparten la marca expenseId pero no son la factura/ticket del gasto
 const NON_RECEIPT_FILE_MARKERS = ["-ComprobantePago-", "-CertificadoRetencion-"];
 const isReceiptFileName = (name?: string) => {
@@ -3352,43 +3426,80 @@ app.post(
       return res.status(503).json({ success: false, error: "No se pudo verificar las carpetas de la app." });
     }
 
-    type Found = { id: string; name: string; parents?: string[]; appProperties?: Record<string, string> };
-    const candidates: Found[] = [];
-    if (cleanExpenseId) {
-      const query = `appProperties has { key='expenseId' and value='${escapeDriveQueryValue(cleanExpenseId)}' } and trashed = false`;
-      const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        query
-      )}&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=20&fields=files(id,name,parents,appProperties)`;
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (r.ok) {
-        const data = (await r.json()) as any;
-        const files: Found[] = Array.isArray(data.files) ? data.files : [];
-        // Si se conoce el nombre, va primero el que coincide
-        files.sort((a, b) => Number(b.name === cleanName) - Number(a.name === cleanName));
-        candidates.push(...files.filter((f) => isReceiptFileName(f.name)));
-      }
-    }
-    if (cleanName) {
-      const byName = await findDriveFilesByName(token, cleanName, { folderId: isValidDriveId(folderId) ? folderId : undefined });
-      // Con varios del mismo nombre solo sirve si uno es de este gasto (o si hay uno solo)
-      const own = byName.filter((f) => f.appProperties?.expenseId === cleanExpenseId);
-      candidates.push(...(own.length > 0 ? own : byName.length === 1 ? byName : []));
-    }
-
-    for (const file of candidates) {
-      if (await authorizeDriveFileTrash(req, token, file, directory)) {
-        return res.json({
-          success: true,
-          fileId: file.id,
-          fileName: file.name,
-          webViewLink: `https://drive.google.com/file/d/${file.id}/view`,
-        });
-      }
+    const file = await searchReceiptFile(req, token, directory, { expenseId: cleanExpenseId, fileName: cleanName, folderId });
+    if (file) {
+      return res.json({
+        success: true,
+        fileId: file.id,
+        fileName: file.name,
+        webViewLink: `https://drive.google.com/file/d/${file.id}/view`,
+      });
     }
     return res.status(404).json({ success: false, notFound: true, error: "No se encontró la factura/ticket en Google Drive." });
   } catch (error: any) {
     console.error("Error in drive find-receipt:", error);
     return res.status(500).json({ success: false, error: "Error al buscar el archivo en Google Drive." });
+  }
+});
+
+// Sistema → "Chequear enlaces de Google Drive" (solo Administración): para cada gasto verifica que
+// el archivo de su factura/ticket exista en Drive. Si el gasto no tenía el enlace, lo busca (por la
+// marca expenseId o por nombre) y lo devuelve para guardarlo. El navegador guarda el resultado en
+// cada gasto (estado compartido por todos: ícono de color si existe, gris si no).
+app.post(
+  "/api/drive/verify-receipts",
+  authenticateFirebaseUser,
+  requireAdminRole,
+  rateLimit("drive-verify", { user: 0, admin: 400 }, 60 * 60 * 1000),
+  async (req, res) => {
+  try {
+    const { items, accessToken } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+      return res.status(400).json({ success: false, error: "Se requieren entre 1 y 50 gastos por pedido." });
+    }
+    const centralAuth = await getCentralizedGoogleAccessToken();
+    const token = centralAuth?.token || accessToken;
+    if (!token) {
+      return res.status(401).json({ success: false, error: "No hay credenciales de Google Drive disponibles." });
+    }
+    const directory = await loadAppDirectory(req);
+    if (!directory) {
+      return res.status(503).json({ success: false, error: "No se pudo verificar las carpetas de la app." });
+    }
+
+    const verifyOne = async (item: any) => {
+      const expenseId = typeof item?.expenseId === "string" && EXPENSE_ID_RE.test(item.expenseId) ? item.expenseId : "";
+      if (!expenseId) return { expenseId: String(item?.expenseId || ""), status: "ERROR" as const };
+      const fileId = isValidDriveId(item.fileId) ? item.fileId : "";
+      if (fileId) {
+        const status = await checkDriveFileExists(token, fileId);
+        if (status !== "MISSING") return { expenseId, status, fileId };
+        // El enlace guardado no sirve: se intenta encontrar el archivo igual (p. ej. se reemplazó)
+      }
+      const fileName = typeof item.fileName === "string" && item.fileName.length <= 250 ? item.fileName.trim() : "";
+      const found = await searchReceiptFile(req, token, directory, { expenseId, fileName, folderId: item.folderId });
+      if (found) {
+        return {
+          expenseId,
+          status: "OK" as const,
+          fileId: found.id,
+          fileName: found.name,
+          webViewLink: `https://drive.google.com/file/d/${found.id}/view`,
+          relinked: found.id !== fileId,
+        };
+      }
+      return { expenseId, status: "MISSING" as const };
+    };
+
+    // De a 5 en paralelo, para no saturar la API de Drive
+    const results: any[] = [];
+    for (let i = 0; i < items.length; i += 5) {
+      results.push(...(await Promise.all(items.slice(i, i + 5).map((it: any) => verifyOne(it).catch(() => ({ expenseId: String(it?.expenseId || ""), status: "ERROR" }))))));
+    }
+    return res.json({ success: true, results });
+  } catch (error: any) {
+    console.error("Error in drive verify-receipts:", error);
+    return res.status(500).json({ success: false, error: "Error al verificar los archivos en Google Drive." });
   }
 });
 

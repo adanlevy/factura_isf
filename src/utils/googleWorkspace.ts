@@ -201,6 +201,8 @@ export async function uploadReceiptToGoogleDrive(params: {
   fileName?: string;
   folderName?: string;
   webViewLink?: string;
+  /** Verificación del servidor después de subir: el archivo existe en Drive */
+  driveFileStatus?: 'OK' | 'MISSING' | 'ERROR';
   message?: string;
   error?: string;
 }> {
@@ -294,6 +296,7 @@ export async function uploadReceiptToGoogleDrive(params: {
       folderName: data.folderName || folderName,
       // Siempre el enlace al ARCHIVO; sin ID no se inventa uno (antes se usaba la carpeta)
       webViewLink: data.fileId ? `https://drive.google.com/file/d/${data.fileId}/view` : undefined,
+      driveFileStatus: data.driveFileStatus,
       message: data.message,
     };
   } catch (err: any) {
@@ -376,6 +379,7 @@ export async function replaceReceiptInGoogleDrive(params: {
   fileName?: string;
   folderName?: string;
   webViewLink?: string;
+  driveFileStatus?: 'OK' | 'MISSING' | 'ERROR';
   message?: string;
   error?: string;
 }> {
@@ -439,6 +443,7 @@ export async function replaceReceiptInGoogleDrive(params: {
       webViewLink: data.fileId
         ? `https://drive.google.com/file/d/${data.fileId}/view`
         : folderUrl,
+      driveFileStatus: data.driveFileStatus,
       message: data.message,
     };
   } catch (err: any) {
@@ -448,6 +453,18 @@ export async function replaceReceiptInGoogleDrive(params: {
       error: err.message || 'Error al reemplazar el archivo en Google Drive.',
     };
   }
+}
+
+/**
+ * Enlace que se MUESTRA para abrir la factura/ticket: el del archivo, salvo que el último chequeo
+ * haya dado que no está en Drive (estado guardado en el gasto, el mismo para todos).
+ * null = ícono gris.
+ */
+export function getVisibleReceiptDriveUrl(
+  expense: Pick<Expense, 'driveFileId' | 'driveUploadedUrl' | 'driveFileStatus'>
+): string | null {
+  if (expense.driveFileStatus === 'MISSING') return null;
+  return getReceiptDriveFileUrl(expense);
 }
 
 /**
@@ -489,6 +506,57 @@ export async function findReceiptInGoogleDrive(
   } catch {
     return null;
   }
+}
+
+export interface DriveReceiptCheckResult {
+  expenseId: string;
+  status: 'OK' | 'MISSING' | 'ERROR';
+  fileId?: string;
+  fileName?: string;
+  webViewLink?: string;
+  /** El archivo se encontró por búsqueda: hay que guardar el enlace nuevo en el gasto */
+  relinked?: boolean;
+}
+
+/**
+ * Chequea en Drive el archivo de la factura/ticket de cada gasto (solo Administración), de a
+ * tandas. onProgress informa cuántos van. Si un gasto no tenía enlace, el servidor lo busca.
+ */
+export async function verifyReceiptsInGoogleDrive(
+  expenses: Expense[],
+  costCenters: CostCenter[],
+  onProgress?: (done: number, total: number) => void
+): Promise<DriveReceiptCheckResult[]> {
+  const BATCH = 25;
+  const results: DriveReceiptCheckResult[] = [];
+  for (let i = 0; i < expenses.length; i += BATCH) {
+    const chunk = expenses.slice(i, i + BATCH);
+    const items = chunk.map((e) => {
+      const cc = costCenters.find((c) => c.name.toLowerCase() === (e.project || '').trim().toLowerCase());
+      return {
+        expenseId: e.id,
+        fileId: e.driveFileId || extractDriveFileId(e.driveUploadedUrl) || undefined,
+        fileName: e.driveUploadedFileName,
+        folderId: costCenterFolderId(cc) || undefined,
+      };
+    });
+    try {
+      const response = await authFetch('/api/drive/verify-receipts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, accessToken: getStoredWorkspaceToken() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo chequear en Google Drive.');
+      results.push(...(data.results as DriveReceiptCheckResult[]));
+    } catch (err: any) {
+      // Una tanda que falla no corta el chequeo: esos gastos quedan como "no se pudo chequear"
+      console.warn('[Drive check]', err?.message || err);
+      results.push(...chunk.map((e) => ({ expenseId: e.id, status: 'ERROR' as const })));
+    }
+    onProgress?.(Math.min(i + BATCH, expenses.length), expenses.length);
+  }
+  return results;
 }
 
 /** Carpeta de Drive de un centro de costos (ID), si está configurada */

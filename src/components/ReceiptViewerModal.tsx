@@ -20,7 +20,7 @@ import { Expense, CostCenter } from '../types';
 import { formatCurrency, formatDate, generateDriveFileName, formatTransferDetails, getGoogleDrivePreviewUrl, safeExternalUrl } from '../utils/helpers';
 import { GoogleDriveLinkButton } from './GoogleDriveIcon';
 import { ReceiptDriveButton } from './ReceiptDriveLink';
-import { findReceiptInGoogleDrive, getReceiptDriveFileUrl } from '../utils/googleWorkspace';
+import { getVisibleReceiptDriveUrl } from '../utils/googleWorkspace';
 import { SafePdfViewer } from './SafePdfViewer';
 import {
   getCachedReceiptFile,
@@ -36,8 +36,6 @@ interface ReceiptViewerModalProps {
   onUploadToDrive?: (expense: Expense) => void;
   onReplaceReceipt?: (expense: Expense) => void;
   onOpenWithholdingModal?: (expense: Expense) => void;
-  /** Se encontró en Drive el archivo de una factura/ticket vieja: guardar su enlace */
-  onReceiptDriveFileResolved?: (expenseId: string, fields: Partial<Expense>) => void;
 }
 
 export function ReceiptViewerModal({
@@ -48,7 +46,6 @@ export function ReceiptViewerModal({
   onUploadToDrive,
   onReplaceReceipt,
   onOpenWithholdingModal,
-  onReceiptDriveFileResolved,
 }: ReceiptViewerModalProps) {
   // Los enlaces guardados en el comprobante se abren solo si son https de Google (Drive / Docs)
   const expense = useMemo(
@@ -57,7 +54,7 @@ export function ReceiptViewerModal({
         ? {
             ...rawExpense,
             // Solo el enlace al ARCHIVO de la factura/ticket (si lo guardado es una carpeta, no se usa)
-            driveUploadedUrl: getReceiptDriveFileUrl(rawExpense) || undefined,
+            driveUploadedUrl: getVisibleReceiptDriveUrl(rawExpense) || undefined,
             paymentProofDriveUrl: safeExternalUrl(rawExpense.paymentProofDriveUrl),
             withholdingCertificateDriveUrl: safeExternalUrl(rawExpense.withholdingCertificateDriveUrl),
             driveFolderUrl: safeExternalUrl(rawExpense.driveFolderUrl),
@@ -116,20 +113,6 @@ export function ReceiptViewerModal({
     expense?.withholdingCertificateUploadedAt,
     expense?.paymentProofAt,
   ]);
-
-  // Factura/ticket sin enlace a Drive guardado (p. ej. se cerró la app mientras subía): al abrir el
-  // visor se busca sola en Drive; si aparece, se guarda el enlace y se muestra
-  useEffect(() => {
-    if (!rawExpense || getReceiptDriveFileUrl(rawExpense)) return;
-    let cancelled = false;
-    findReceiptInGoogleDrive(rawExpense, costCenters).then((found) => {
-      if (!cancelled && found) onReceiptDriveFileResolved?.(rawExpense.id, found);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawExpense?.id]);
 
   if (!expense) return null;
 
@@ -685,12 +668,7 @@ export function ReceiptViewerModal({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  <ReceiptDriveButton
-                    expense={expense}
-                    costCenters={costCenters}
-                    folderUrl={driveFolderUrl}
-                    onFileResolved={onReceiptDriveFileResolved}
-                  />
+                  <ReceiptDriveButton expense={rawExpense!} folderUrl={driveFolderUrl} />
                   {onReplaceReceipt && (
                     <button
                       type="button"

@@ -48,6 +48,7 @@ import { formatNumber, matchesSearch } from '../utils/helpers';
 import { authFetch } from '../utils/authFetch';
 import { APP_VERSION, APP_BUILD_DATE } from '../version';
 import { AiEngineSettingsCard } from './AiEngineSettingsCard';
+import { DriveLinksCheckCard } from './DriveLinksCheckCard';
 import { AiOcrSettings, DEFAULT_AI_OCR_SETTINGS, CLAUDE_OCR_MODELS } from '../utils/aiModels';
 
 interface SystemAdminViewProps {
@@ -58,6 +59,8 @@ interface SystemAdminViewProps {
   appUsers: AppUserRecord[];
   /** Motor de IA para leer comprobantes (Gemini por defecto o Claude) */
   aiOcrSettings?: AiOcrSettings;
+  /** Resultado del chequeo de enlaces de Drive guardado en los gastos */
+  onExpensesPatched?: (patches: { id: string; changes: Partial<Expense> }[]) => void;
 }
 
 export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
@@ -67,6 +70,7 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
   categories,
   appUsers,
   aiOcrSettings = DEFAULT_AI_OCR_SETTINGS,
+  onExpensesPatched,
 }) => {
   const [metrics, setMetrics] = useState<SystemMetricsReport | null>(null);
   const [firestoreApiLogs, setFirestoreApiLogs] = useState<ApiUsageLogEntry[]>([]);
@@ -558,6 +562,10 @@ export const SystemAdminView: React.FC<SystemAdminViewProps> = ({
 
       {/* Motor de IA para leer comprobantes + costos por modelo */}
       {(selectedTab === 'overview' || selectedTab === 'apis') && <AiEngineSettingsCard settings={aiOcrSettings} />}
+
+      {(selectedTab === 'overview' || selectedTab === 'storage') && (
+        <DriveLinksCheckCard costCenters={costCenters} onExpensesPatched={onExpensesPatched} />
+      )}
 
       {/* VIEW SECTION: API USAGE MONTH OVER MONTH */}
       {(selectedTab === 'overview' || selectedTab === 'apis') && apiUsage && (

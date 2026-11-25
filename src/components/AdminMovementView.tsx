@@ -80,8 +80,6 @@ interface AdminMovementViewProps {
   /** Proveedor elegido con el botón "Gastos": se muestran solo sus comprobantes */
   vendorFilter?: Vendor | null;
   onClearVendorFilter?: () => void;
-  /** Se encontró en Drive el archivo de una factura/ticket vieja: guardar su enlace */
-  onReceiptDriveFileResolved?: (expenseId: string, fields: Partial<Expense>) => void;
   // Server-side query filtering & pagination props
   queryPeriod?: string;
   onPeriodChange?: (period: string) => void;
@@ -119,7 +117,6 @@ export function AdminMovementView({
   onOpenWithholdingModal,
   vendorFilter = null,
   onClearVendorFilter,
-  onReceiptDriveFileResolved,
   queryPeriod = 'all',
   onPeriodChange,
   queryCostCenter = 'ALL',
@@ -814,17 +811,21 @@ export function AdminMovementView({
                           <span className="text-xs font-bold text-slate-800 truncate">
                             {expense.project}
                           </span>
-                          <ReceiptDriveLink
-                            expense={expense}
-                            costCenters={costCenters}
-                            onFileResolved={onReceiptDriveFileResolved}
-                          />
+                          <ReceiptDriveLink expense={expense} />
                         </div>
 
                         {/* Indicador de Estado de Subida a Google Drive */}
-                        {expense.receiptImage && (
+                        {(expense.receiptImage || expense.driveFileStatus === 'MISSING') && (
                           <div className="mt-0.5">
-                            {expense.driveUploadStatus === 'ERROR' ? (
+                            {expense.driveFileStatus === 'MISSING' ? (
+                              <span
+                                className="inline-flex items-center text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1 py-0.2 rounded"
+                                title="El último chequeo de enlaces dio que el archivo no está en Google Drive"
+                              >
+                                <AlertCircle className="w-2.5 h-2.5 mr-0.5 text-rose-600 shrink-0" />
+                                No está en Drive
+                              </span>
+                            ) : expense.driveUploadStatus === 'ERROR' ? (
                               <div className="flex items-center gap-1">
                                 <span className="inline-flex items-center text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1 py-0.2 rounded">
                                   <AlertCircle className="w-2.5 h-2.5 mr-0.5 text-rose-600 shrink-0" />
@@ -1200,11 +1201,7 @@ export function AdminMovementView({
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Centro de Costos</span>
                     <div className="flex items-center gap-1 mt-0.5 truncate">
                       <span className="font-bold text-slate-800 truncate text-[11px]">{expense.project}</span>
-                      <ReceiptDriveLink
-                        expense={expense}
-                        costCenters={costCenters}
-                        onFileResolved={onReceiptDriveFileResolved}
-                      />
+                      <ReceiptDriveLink expense={expense} />
                     </div>
                   </div>
                   {(expense.accountingNotes || expense.notes) && (
