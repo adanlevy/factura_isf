@@ -516,6 +516,8 @@ export interface DriveReceiptCheckResult {
   webViewLink?: string;
   /** El archivo se encontró por búsqueda: hay que guardar el enlace nuevo en el gasto */
   relinked?: boolean;
+  /** Por qué no se pudo chequear (status ERROR) */
+  reason?: string;
 }
 
 /**
@@ -546,13 +548,23 @@ export async function verifyReceiptsInGoogleDrive(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items, accessToken: getStoredWorkspaceToken() }),
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo chequear en Google Drive.');
+      const isJson = (response.headers.get('content-type') || '').includes('application/json');
+      const data = isJson ? await response.json().catch(() => ({})) : {};
+      if (!isJson) {
+        // Respondió una página en lugar de datos: el servidor publicado no tiene esta función
+        throw new Error(
+          `El servidor respondió ${response.status} sin datos: probablemente no está publicada la última versión (volvé a publicar en AI Studio).`
+        );
+      }
+      if (!response.ok || !data.success) {
+        throw new Error(`${data.error || 'No se pudo chequear en Google Drive.'} (código ${response.status})`);
+      }
       results.push(...(data.results as DriveReceiptCheckResult[]));
     } catch (err: any) {
       // Una tanda que falla no corta el chequeo: esos gastos quedan como "no se pudo chequear"
-      console.warn('[Drive check]', err?.message || err);
-      results.push(...chunk.map((e) => ({ expenseId: e.id, status: 'ERROR' as const })));
+      const reason = err?.message || String(err);
+      console.warn('[Drive check]', reason);
+      results.push(...chunk.map((e) => ({ expenseId: e.id, status: 'ERROR' as const, reason })));
     }
     onProgress?.(Math.min(i + BATCH, expenses.length), expenses.length);
   }

@@ -2,9 +2,9 @@
  * Application Version & Build Tracking
  * Incremental versioning with semantic release tags and build timestamps.
  */
-export const APP_VERSION = '2.24.0';
+export const APP_VERSION = '2.24.1';
 export const APP_BUILD_DATE = '2026.11.25';
-export const APP_BUILD_ID = 'build-20261125-drive-file-status-check';
+export const APP_BUILD_ID = 'build-20261125-drive-check-error-reasons';
 
 export interface VersionInfo {
   version: string;

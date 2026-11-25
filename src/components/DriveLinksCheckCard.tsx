@@ -18,6 +18,8 @@ interface CheckSummary {
   relinked: number;
   missing: Expense[];
   errors: number;
+  /** Motivos de los que no se pudieron chequear, con cuántos gastos tuvo cada uno */
+  errorReasons: { reason: string; count: number }[];
   finishedAt: string;
 }
 
@@ -79,6 +81,17 @@ export function DriveLinksCheckCard({ costCenters, onExpensesPatched }: DriveLin
         relinked: results.filter((r) => r.status === 'OK' && r.relinked).length,
         missing,
         errors: results.filter((r) => r.status === 'ERROR').length,
+        errorReasons: Object.entries(
+          results
+            .filter((r) => r.status === 'ERROR')
+            .reduce<Record<string, number>>((acc, r) => {
+              const key = r.reason || 'Motivo desconocido';
+              acc[key] = (acc[key] || 0) + 1;
+              return acc;
+            }, {})
+        )
+          .map(([reason, count]) => ({ reason, count }))
+          .sort((a, b) => b.count - a.count),
         finishedAt: checkedAt,
       });
     } catch (err: any) {
@@ -154,11 +167,34 @@ export function DriveLinksCheckCard({ costCenters, onExpensesPatched }: DriveLin
             </div>
           </div>
 
-          {summary.missing.length === 0 ? (
-            <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <CheckCircle2 className="w-4 h-4" />
-              Todas las facturas/tickets chequeadas tienen su archivo en Drive.
+          {summary.errors > 0 && (
+            <div className="text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1.5">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {summary.errors === summary.total
+                  ? 'No se pudo chequear ninguna factura/ticket.'
+                  : `No se pudieron chequear ${formatNumber(summary.errors)} factura(s)/ticket(s).`}{' '}
+                Mantienen su estado anterior.
+              </div>
+              <ul className="list-disc pl-6 space-y-0.5">
+                {summary.errorReasons.slice(0, 5).map((r) => (
+                  <li key={r.reason}>
+                    {r.reason} <span className="text-rose-600">({formatNumber(r.count)})</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+
+          {summary.missing.length === 0 ? (
+            summary.ok > 0 && (
+              <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                <CheckCircle2 className="w-4 h-4" />
+                {summary.errors === 0
+                  ? 'Todas las facturas/tickets chequeadas tienen su archivo en Drive.'
+                  : 'Ninguna de las que se pudieron chequear está sin archivo.'}
+              </div>
+            )
           ) : (
             <div className="space-y-1.5">
               <p className="text-xs font-bold text-slate-700">
@@ -189,11 +225,6 @@ export function DriveLinksCheckCard({ costCenters, onExpensesPatched }: DriveLin
                 </table>
               </div>
             </div>
-          )}
-          {summary.errors > 0 && (
-            <p className="text-[11px] text-slate-500">
-              Las que no se pudieron chequear (Drive no respondió) mantienen su estado anterior: volvé a correr el chequeo más tarde.
-            </p>
           )}
         </div>
       )}
