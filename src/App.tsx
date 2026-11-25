@@ -17,6 +17,8 @@ import { ExpenseList } from './components/ExpenseList';
 import { CostCentersView } from './components/CostCentersView';
 import { ReceiptViewerModal } from './components/ReceiptViewerModal';
 import { EditExpenseModal } from './components/EditExpenseModal';
+import { UploadProgressPanel } from './components/UploadProgressPanel';
+import { isUploadActive } from './utils/uploadTracker';
 import { AdministrativeEmailModal } from './components/AdministrativeEmailModal';
 import { PaymentProcessModal } from './components/PaymentProcessModal';
 import { AdminMovementView } from './components/AdminMovementView';
@@ -42,6 +44,8 @@ import {
   uploadReceiptToGoogleDrive,
   replaceReceiptInGoogleDrive,
   relocateReceiptInGoogleDrive,
+  findReceiptInGoogleDrive,
+  getReceiptDriveFileUrl,
   deleteReceiptFromGoogleDrive,
   extractDriveFileId,
   getStoredWorkspaceToken,
@@ -1199,6 +1203,41 @@ export default function App() {
     setViewingReceiptExpense((v) => (v && v.id === expenseId ? { ...v, ...changes } : v));
     await patchCentralExpenses([{ id: expenseId, changes }]);
   };
+
+  // Subidas a Drive que quedaron sin terminar (se cerró la app, se cortó la conexión): al abrir la
+  // app se retoman solas, una vez por sesión. Primero se fija si el archivo ya está en Drive (para
+  // no duplicarlo); si no, lo vuelve a subir con la copia guardada en este dispositivo.
+  const autoResumeTriedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const me = currentUser?.email?.toLowerCase();
+    if (!me || expenses.length === 0) return;
+    const STALE_UPLOAD_MS = 2 * 60 * 1000;
+    const candidates = expenses.filter(
+      (e) =>
+        !autoResumeTriedRef.current.has(e.id) &&
+        (e.driveUploadStatus === 'PENDING' || e.driveUploadStatus === 'ERROR') &&
+        !getReceiptDriveFileUrl(e) &&
+        !isUploadActive(`receipt-${e.id}`) &&
+        (e.submittedByEmail || '').toLowerCase() === me &&
+        Date.now() - new Date(e.createdAt || 0).getTime() > STALE_UPLOAD_MS
+    );
+    if (candidates.length === 0) return;
+    candidates.forEach((e) => autoResumeTriedRef.current.add(e.id));
+    window.setTimeout(async () => {
+      for (const exp of candidates) {
+        const found = await findReceiptInGoogleDrive(exp, costCenters);
+        if (found) {
+          await handleReceiptDriveFileResolved(exp.id, found);
+          showToast(`✅ La factura/ticket de "${exp.vendor}" ya estaba en Drive: quedó registrada.`);
+          continue;
+        }
+        const cached = await getCachedReceiptFile(exp.id).catch(() => null);
+        if (!cached) continue; // el archivo no está en este dispositivo: se retoma desde donde se cargó
+        await handleUploadExpenseToDrive({ ...exp, receiptImage: cached });
+      }
+    }, 4000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenses, currentUser?.email]);
 
   const handleViewVendorExpenses = (vendor: Vendor) => {
     setVendorExpensesFilter(vendor);
@@ -3308,6 +3347,9 @@ export default function App() {
         role={currentUser.role}
         onClose={() => setIsManualOpen(false)}
       />
+
+      {/* Avance de las subidas de facturas/tickets a Drive */}
+      <UploadProgressPanel />
 
       {/* Toast Banner */}
       {toastMessage && (
