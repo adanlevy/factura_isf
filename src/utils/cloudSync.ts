@@ -711,6 +711,18 @@ async function confirmServerDeletedExpenseIds(ids: string[]): Promise<{ deleted:
   return { deleted, changed };
 }
 
+/**
+ * Todos los gastos de la base (no solo los que muestra la pantalla, que van paginados).
+ * Lo usa Sistema → "Chequear enlaces de Google Drive" (solo Administración).
+ */
+export async function fetchAllExpensesFromServer(): Promise<Expense[]> {
+  const snap = await getDocs(collection(db, 'expenses'));
+  const deletedSet = getDeletedExpensesSet();
+  return snap.docs
+    .map((d) => ({ ...(d.data() as Expense), id: d.id }))
+    .filter((e) => !deletedSet.has(e.id));
+}
+
 /** Versión actual de un comprobante leída del servidor (no de la caché local). */
 export async function fetchExpenseFromServer(id: string): Promise<Expense | null> {
   try {

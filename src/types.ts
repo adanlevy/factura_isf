@@ -180,6 +180,9 @@ export interface Expense {
   driveUploadedUrl?: string;
   driveUploadStatus?: 'SUCCESS' | 'PENDING' | 'ERROR';
   driveUploadedAt?: string;
+  /** Resultado del último chequeo del archivo en Drive: OK = existe; MISSING = no está (ícono gris para todos) */
+  driveFileStatus?: 'OK' | 'MISSING';
+  driveFileCheckedAt?: string;
   
   // Method & Notes
   paymentType?: ExpensePaymentType;

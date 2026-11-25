@@ -1202,6 +1202,7 @@ export default function App() {
     setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, ...changes } : e)));
     setViewingReceiptExpense((v) => (v && v.id === expenseId ? { ...v, ...changes } : v));
     await patchCentralExpenses([{ id: expenseId, changes }]);
+    markReceiptDriveStatus(expenseId, 'OK');
   };
 
   // Subidas a Drive que quedaron sin terminar (se cerró la app, se cortó la conexión): al abrir la
@@ -1215,8 +1216,8 @@ export default function App() {
     const candidates = expenses.filter(
       (e) =>
         !autoResumeTriedRef.current.has(e.id) &&
-        (e.driveUploadStatus === 'PENDING' || e.driveUploadStatus === 'ERROR') &&
-        !getReceiptDriveFileUrl(e) &&
+        (((e.driveUploadStatus === 'PENDING' || e.driveUploadStatus === 'ERROR') && !getReceiptDriveFileUrl(e)) ||
+          e.driveFileStatus === 'MISSING') &&
         !isUploadActive(`receipt-${e.id}`) &&
         (e.submittedByEmail || '').toLowerCase() === me &&
         Date.now() - new Date(e.createdAt || 0).getTime() > STALE_UPLOAD_MS
@@ -1250,6 +1251,19 @@ export default function App() {
   }, [activeTab]);
 
   // --- EXPENSE ACTIONS ---
+  // Estado del archivo en Drive guardado en el gasto (el mismo para todos): OK = ícono de color.
+  // Va en un guardado aparte para que, si las reglas publicadas todavía no conocen estos campos,
+  // no se pierda el registro principal de la subida.
+  const markReceiptDriveStatus = (expenseId: string, status: 'OK' | 'MISSING') => {
+    const changes = { driveFileStatus: status, driveFileCheckedAt: new Date().toISOString() };
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, ...changes } : e)));
+    setViewingReceiptExpense((v) => (v && v.id === expenseId ? { ...v, ...changes } : v));
+    patchCentralExpenses([{ id: expenseId, changes }]).catch(() => {});
+  };
+  // Tras subir: el servidor chequea que el archivo esté en Drive (si no pudo chequear, vale la subida)
+  const statusAfterUpload = (res: { driveFileStatus?: string }): 'OK' | 'MISSING' =>
+    res.driveFileStatus === 'MISSING' ? 'MISSING' : 'OK';
+
   const handleUploadExpenseToDrive = async (expenseArg: Expense) => {
     // Después de recargar, el archivo no está en memoria: se busca en la caché local del navegador
     let expenseToUpload = expenseArg;
@@ -1300,6 +1314,7 @@ export default function App() {
         );
         // Solo los datos de Drive: no se pisa lo que otra persona haya cambiado en el comprobante
         await patchCentralExpenses([{ id: expenseToUpload.id, changes: pickExpenseFields(updatedObj, DRIVE_RECEIPT_FIELDS) }]);
+        markReceiptDriveStatus(expenseToUpload.id, statusAfterUpload(res));
         showToast(`✅ Factura/ticket subida exitosamente a Drive ("${res.folderName}")`);
       } else {
         setExpenses((prev) =>
@@ -1401,7 +1416,9 @@ export default function App() {
                   : e
               )
             );
-            patchCentralExpenses([{ id: newExpense.id, changes: updatedDriveFields }]);
+            patchCentralExpenses([{ id: newExpense.id, changes: updatedDriveFields }]).then(() =>
+              markReceiptDriveStatus(newExpense.id, statusAfterUpload(res))
+            );
           } else {
             const errorFields = { driveUploadStatus: 'ERROR' as const };
             setExpenses((prev) =>
@@ -1546,7 +1563,9 @@ export default function App() {
                     : e
                 )
               );
-              patchCentralExpenses([{ id: exp.id, changes: updatedDriveFields }]);
+              patchCentralExpenses([{ id: exp.id, changes: updatedDriveFields }]).then(() =>
+                markReceiptDriveStatus(exp.id, statusAfterUpload(res))
+              );
             } else {
               const errorFields = { driveUploadStatus: 'ERROR' as const };
               setExpenses((prev) =>
@@ -1746,6 +1765,7 @@ export default function App() {
         setExpenses((prev) => prev.map((e) => (e.id === merged.id ? { ...e, ...fields } : e)));
         setViewingReceiptExpense((v) => (v && v.id === merged.id ? { ...v, ...fields } : v));
         await patchCentralExpenses([{ id: merged.id, changes: fields }]);
+        markReceiptDriveStatus(merged.id, 'OK');
         showToast(
           driveResult.moved
             ? `📁 En Drive, el archivo se movió a la carpeta "${fields.driveFolderTarget}" y se renombró como "${fields.driveUploadedFileName}".`
@@ -1885,6 +1905,7 @@ export default function App() {
       },
     ]).then((res) => {
       if (!res.ok) showToast(`⚠️ El archivo se subió a Drive, pero no se pudo registrar en el sistema (${SAVE_ERROR_HINT}).`);
+      else if (driveRes.success) markReceiptDriveStatus(targetExpense.id, statusAfterUpload(driveRes));
     });
 
     // Registrar en auditoría el cambio de archivo
@@ -3041,7 +3062,6 @@ export default function App() {
             <ExpenseList
               expenses={expenses}
               costCenters={costCenters}
-              onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
               vendors={vendors}
               currentUser={currentUser}
               onEditExpense={(exp) => setEditingExpense(exp)}
@@ -3059,7 +3079,6 @@ export default function App() {
               <AdminMovementView
                 expenses={expenses}
                 costCenters={costCenters}
-                onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
                 vendors={vendors}
                 appUsers={appUsers}
                 currentUser={currentUser}
@@ -3153,6 +3172,10 @@ export default function App() {
               categories={availableCategories}
               appUsers={appUsers}
               aiOcrSettings={aiOcrSettings}
+              onExpensesPatched={(patches) => {
+                const byId = new Map<string, Partial<Expense>>(patches.map((p) => [p.id, p.changes]));
+                setExpenses((prev) => prev.map((e) => (byId.has(e.id) ? { ...e, ...byId.get(e.id) } : e)));
+              }}
             />
           )}
 
@@ -3264,7 +3287,6 @@ export default function App() {
             : undefined
         }
         onOpenWithholdingModal={currentUser.role === 'admin' ? (exp) => setWithholdingModalExpense(exp) : undefined}
-        onReceiptDriveFileResolved={handleReceiptDriveFileResolved}
       />
 
       <WithholdingCertificateModal

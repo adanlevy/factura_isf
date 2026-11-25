@@ -361,6 +361,13 @@ La pestaña **"Sistema"** es el tablero operativo (uso y costos), con actualizac
 - **Estado de servicios:** salud de cada integración (Operativo / Configurado).
 - **Auditoría de llamadas:** registro cronológico de cada llamada a las APIs (con opción de limpiar logs).
 
+**Enlaces de Google Drive** (pestañas *Resumen* y *Almacenamiento*): el botón **«Chequear enlaces de Google Drive»** revisa todas las facturas/tickets de la base, con barra de avance. Para cada una:
+- si el archivo está en Drive, queda con el ícono de color;
+- si no tenía el enlace pero el archivo está (por ejemplo, se cerró la app mientras subía), lo **vuelve a vincular**;
+- si el archivo no está (nunca se subió o se borró), queda **marcada en gris para todos** hasta que se vuelva a subir con **Reemplazar** en el visor (o se suba sola desde el dispositivo donde se cargó).
+
+Al terminar muestra el resumen (chequeadas, en Drive, sin archivo, no se pudieron chequear) y la **lista de las que no tienen archivo** (fecha, quién la cargó, proveedor, centro de costos y monto).
+
 ### 7.12 Log de Cambios y Auditoría
 
 La pestaña **"Log de Cambios"** registra **en tiempo real** todo lo que se crea, modifica o elimina en Centros de Costos, Proveedores, Facturas/tickets, Categorías y Usuarios.
@@ -395,7 +402,8 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - **Nomenclatura de archivos:** `SIGLA-Nombre Solicitante-AAAAMMDD-Monto.ext` (ej. `GPA-Juan Perez-20260514-15400.pdf`). Los comprobantes de pago llevan el sufijo `-ComprobantePago-` y los certificados `-CertificadoRetencion-`.
 - **Avance de la subida:** mientras se suben facturas/tickets aparece abajo un panel con una barra de progreso por archivo (*Enviando… %* y luego *Guardando en Drive…*) y el aviso **«No cierres la app hasta que termine»**. Si se intenta cerrar o recargar la pestaña con subidas en curso, el navegador pide confirmación (en celulares algunos navegadores no muestran ese aviso).
 - **Reintento automático:** si una subida quedó sin terminar (se cerró la app o se cortó la conexión), al volver a abrir la app en ese dispositivo se retoma sola: primero se fija si el archivo ya llegó a Drive y, si no, lo vuelve a subir con la copia guardada en el dispositivo.
-- **Registro de la subida:** el servidor deja anotado en el gasto el archivo subido apenas Drive lo confirma, aunque la persona cierre la app o el celular suspenda la pestaña mientras sube. Si un registro viejo no tiene el enlace al archivo, el ícono de Drive y el visor lo buscan solos en Drive y lo guardan.
+- **Registro y chequeo de la subida:** apenas Drive confirma la subida, el servidor chequea que el archivo exista y lo deja anotado en el gasto, aunque la persona cierre la app o el celular suspenda la pestaña mientras sube.
+- **Ícono de Drive:** refleja un **estado guardado en el gasto, el mismo para todos**: de color (abre el archivo) si la factura/ticket está en Drive; **gris** si no tiene archivo o si el último chequeo dio que no está (con la leyenda *«No está en Drive»*). Para revisar todas las facturas/tickets se usa **Sistema → Enlaces de Google Drive** (§7.11).
 - **Al editar una factura/ticket ya subida:** si cambia algo que forma el nombre del archivo (centro de costos, fecha o monto), el archivo de Drive se **renombra**; y si cambia el centro de costos, además se **mueve a la carpeta del nuevo centro**. Es el mismo archivo (conserva su enlace), no una copia. Si Drive no responde, los cambios se guardan igual y la app avisa que el archivo quedó como estaba.
 - Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (la del *refresh token* guardado en el servidor). Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
 
