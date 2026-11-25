@@ -39,3 +39,38 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit): P
     headers,
   });
 }
+
+/**
+ * POST de un JSON grande (archivos) con avance de envío: fetch no informa cuánto se subió,
+ * XMLHttpRequest sí. Misma autenticación que authFetch. Devuelve el estado y el JSON de respuesta.
+ */
+export async function authPostJsonWithProgress(
+  url: string,
+  body: unknown,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const token = await getFirebaseIdToken();
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => onProgress(event.loaded, event.lengthComputable ? event.total : 0);
+      xhr.upload.onload = () => onProgress(1, 1);
+    }
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        data = {};
+      }
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new Error('Error de red al enviar el archivo.'));
+    xhr.ontimeout = () => reject(new Error('El envío del archivo tardó demasiado.'));
+    xhr.timeout = 5 * 60 * 1000;
+    xhr.send(JSON.stringify(body));
+  });
+}

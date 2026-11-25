@@ -3,7 +3,8 @@ import { Expense, CostCenter, UserProfile, UserBankDetails, AppUserRecord, Drive
 import { generateDriveFileName, formatCurrency, formatDate, escapeHtml } from './helpers';
 import { VENDOR_FIELD_LABELS, SENSITIVE_VENDOR_FIELDS, getVendorFieldValue } from './vendorChanges';
 import { syncApiLogToCloud } from './apiUsageLogger';
-import { authFetch } from './authFetch';
+import { authFetch, authPostJsonWithProgress } from './authFetch';
+import { finishUpload, startUpload, updateUploadProgress } from './uploadTracker';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
@@ -248,11 +249,16 @@ export async function uploadReceiptToGoogleDrive(params: {
   const baseFileName = customFileName || generateDriveFileName(expense, costCenter ? [costCenter] : []);
   const standardizedFileName = baseFileName.includes('.') ? baseFileName : `${baseFileName}.${fileExt}`;
 
+  // La factura/ticket (no un comprobante de pago ni un certificado) se muestra en la barra de
+  // progreso y el servidor la deja registrada en el gasto aunque se cierre la app antes de terminar
+  const isReceipt = !targetFolder && !customFileName;
+  const trackId = `receipt-${expense.id}`;
+  if (isReceipt) startUpload(trackId, expense.vendor || 'Factura/ticket');
+
   try {
-    const response = await authFetch('/api/upload-to-drive', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const response = await authPostJsonWithProgress(
+      '/api/upload-to-drive',
+      {
         expenseId: expense.id,
         fileName: standardizedFileName,
         folderName,
@@ -263,10 +269,12 @@ export async function uploadReceiptToGoogleDrive(params: {
         accessToken: token,
         oldFileId,
         oldFileName,
-      }),
-    });
+        recordOnExpense: isReceipt,
+      },
+      isReceipt ? (loaded, total) => updateUploadProgress(trackId, loaded, total) : undefined
+    );
 
-    const data = await response.json();
+    const data = response.data || {};
     if (!response.ok || !data.success) {
       if (response.status === 401 || data.isAuthError) {
         saveStoredWorkspaceToken(null);
@@ -277,19 +285,20 @@ export async function uploadReceiptToGoogleDrive(params: {
     if (data.apiLog) {
       syncApiLogToCloud(data.apiLog).catch(() => {});
     }
+    if (isReceipt) finishUpload(trackId, true);
 
     return {
       success: true,
       fileId: data.fileId,
       fileName: data.fileName || standardizedFileName,
       folderName: data.folderName || folderName,
-      webViewLink: data.fileId
-        ? `https://drive.google.com/file/d/${data.fileId}/view`
-        : folderUrl,
+      // Siempre el enlace al ARCHIVO; sin ID no se inventa uno (antes se usaba la carpeta)
+      webViewLink: data.fileId ? `https://drive.google.com/file/d/${data.fileId}/view` : undefined,
       message: data.message,
     };
   } catch (err: any) {
     console.error('Drive upload failure:', err);
+    if (isReceipt) finishUpload(trackId, false, err?.message);
     return {
       success: false,
       error: err.message || 'Error de red al comunicarse con Google Drive.',
@@ -406,6 +415,7 @@ export async function replaceReceiptInGoogleDrive(params: {
         accessToken: token,
         oldFileId,
         oldFileName,
+        recordOnExpense: true,
       }),
     });
 
@@ -447,11 +457,6 @@ export async function replaceReceiptInGoogleDrive(params: {
 export function getReceiptDriveFileUrl(expense: Pick<Expense, 'driveFileId' | 'driveUploadedUrl'>): string | null {
   const fileId = expense.driveFileId || extractDriveFileId(expense.driveUploadedUrl);
   return fileId ? `https://drive.google.com/file/d/${fileId}/view` : null;
-}
-
-/** ¿Hay indicios de que la factura/ticket se subió a Drive aunque no tengamos el enlace al archivo? */
-export function receiptMayBeInDrive(expense: Expense): boolean {
-  return Boolean(expense.driveUploadedFileName || expense.driveUploadStatus === 'SUCCESS' || expense.driveUploadedUrl);
 }
 
 /**

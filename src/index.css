@@ -11,3 +11,9 @@
     backdrop-filter: none !important;
   }
 }
+
+/* Barra de progreso de subida a Drive mientras el servidor guarda el archivo (sin porcentaje) */
+@keyframes upload-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
