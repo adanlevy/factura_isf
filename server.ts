@@ -1280,6 +1280,79 @@ async function loadAppDirectory(req: express.Request): Promise<AppDirectory | nu
   }
 }
 
+const EXPENSE_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Deja registrada en el gasto (Firestore) la factura/ticket recién subida a Drive.
+ * Antes lo hacía solo el navegador al recibir la respuesta: si la persona cerraba la app o el
+ * celular suspendía la pestaña mientras subía, el archivo quedaba en Drive pero el gasto no se
+ * enteraba (ícono gris, visor sin archivo). Ahora lo hace el servidor, que termina el trabajo
+ * aunque el navegador ya no esté. El navegador igual guarda lo mismo (escritura idempotente).
+ *
+ * Con el Admin SDK se aplican acá los mismos controles que las reglas (dueño del gasto o Admin; un
+ * gasto pagado solo si todavía no tenía archivo); sin Admin SDK se usa la API REST de Firestore con
+ * el token de la persona, así que deciden las reglas. Reintenta unos segundos por si el alta del
+ * gasto todavía no terminó de guardarse.
+ */
+async function recordReceiptUploadOnExpense(
+  req: express.Request,
+  expenseId: string,
+  fields: Record<string, string>,
+  replacedFileId?: string
+): Promise<boolean> {
+  if (!EXPENSE_ID_RE.test(expenseId)) return false;
+  const bearer = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : "";
+  const delays = [0, 2000, 5000, 10000, 20000];
+
+  for (const delay of delays) {
+    if (delay) await sleep(delay);
+    try {
+      if (adminDb && adminDbUsable()) {
+        const ref = adminDb.collection("expenses").doc(expenseId);
+        let snap;
+        try {
+          snap = await withTimeout(ref.get(), 5000);
+        } catch (err: any) {
+          markAdminDbFailure(err); // sin Admin SDK: el próximo intento usa la API REST con el token de la persona
+          continue;
+        }
+        if (!snap.exists) continue; // el alta todavía no llegó (o el gasto se borró)
+        const data = snap.data() || {};
+        const email = String(req.user?.email || "").toLowerCase();
+        const isOwner = [data.submittedByEmail, data.userEmail].some((e) => String(e || "").toLowerCase() === email);
+        const isPaid = data.reimbursementStatus === "REIMBURSED";
+        if (req.user?.role !== "admin" && (!isOwner || (isPaid && data.driveUploadedUrl))) return false;
+        // Solo se completa: si ya figura otro archivo (p. ej. se reemplazó después), no se pisa
+        if (data.driveFileId && data.driveFileId !== fields.driveFileId && data.driveFileId !== replacedFileId) return false;
+        await withTimeout(ref.update(fields), 5000);
+        return true;
+      }
+      if (!bearer || bearer.startsWith("ya29.") || !firebaseConfigData?.projectId) return false;
+      const dbId = firebaseConfigData.firestoreDatabaseId || "(default)";
+      const docUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfigData.projectId}/databases/${dbId}/documents/expenses/${encodeURIComponent(expenseId)}`;
+      const params = new URLSearchParams({ "currentDocument.exists": "true" });
+      for (const key of Object.keys(fields)) params.append("updateMask.fieldPaths", key);
+      const body = { fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, { stringValue: v }])) };
+      const r = await fetch(`${docUrl}?${params.toString()}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r.ok) return true;
+      // 404 / precondición: el gasto todavía no existe → se reintenta. 403: las reglas no lo permiten.
+      if (r.status === 403 || r.status === 401) {
+        console.warn(`[DRIVE RECORD] Firestore rechazó registrar la subida en ${expenseId} (${r.status}).`);
+        return false;
+      }
+    } catch (err: any) {
+      console.warn(`[DRIVE RECORD] ${expenseId}:`, err?.message || err);
+    }
+  }
+  console.warn(`[DRIVE RECORD] No se pudo registrar la subida en el gasto ${expenseId} (no existe o no respondió).`);
+  return false;
+}
+
 /**
  * Decide si el usuario puede mandar a la papelera un archivo de Drive:
  * - el archivo tiene que estar en una carpeta registrada de la app (centro de costos o pagos);
@@ -2980,6 +3053,7 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
       accessToken,
       oldFileId,
       oldFileName,
+      recordOnExpense,
     } = req.body || {};
 
     if (!fileName || !folderName || typeof fileName !== "string" || typeof folderName !== "string") {
@@ -3129,6 +3203,24 @@ app.post("/api/upload-to-drive", authenticateFirebaseUser, largeJsonParser, asyn
             userEmail: req.user?.email,
             details: `Archivo: ${fileName} | Carpeta: ${folderName}`,
           });
+
+          // La factura/ticket queda registrada en el gasto aunque el navegador ya no esté
+          // (no se espera: la respuesta sale ya y el registro sigue en segundo plano)
+          if (recordOnExpense === true && typeof expenseId === "string" && driveData.id) {
+            void recordReceiptUploadOnExpense(
+              req,
+              expenseId,
+              {
+                driveUploadStatus: "SUCCESS",
+                driveFileId: String(driveData.id),
+                driveUploadedFileName: String(driveData.name || fileName),
+                driveFolderTarget: String(folderName),
+                driveUploadedUrl: `https://drive.google.com/file/d/${driveData.id}/view`,
+                driveUploadedAt: new Date().toISOString(),
+              },
+              isValidDriveId(oldFileId) ? oldFileId : undefined
+            ).then((ok) => ok && console.log(`[DRIVE RECORD] Subida registrada en el gasto ${expenseId}`));
+          }
 
           return res.json({
             success: true,

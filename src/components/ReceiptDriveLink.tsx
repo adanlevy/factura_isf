@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { CostCenter, Expense } from '../types';
 import { GoogleDriveIcon } from './GoogleDriveIcon';
-import { findReceiptInGoogleDrive, getReceiptDriveFileUrl, receiptMayBeInDrive } from '../utils/googleWorkspace';
+import { findReceiptInGoogleDrive, getReceiptDriveFileUrl } from '../utils/googleWorkspace';
 
 type ResolvedHandler = (expenseId: string, fields: Partial<Expense>) => void;
 
@@ -13,7 +13,9 @@ type ResolvedHandler = (expenseId: string, fields: Partial<Expense>) => void;
 function useReceiptDriveOpener(expense: Expense, costCenters: CostCenter[], onFileResolved?: ResolvedHandler) {
   const [state, setState] = useState<'idle' | 'searching' | 'not-found'>('idle');
   const fileUrl = getReceiptDriveFileUrl(expense);
-  const canSearch = !fileUrl && receiptMayBeInDrive(expense) && state !== 'not-found';
+  // Sin enlace guardado siempre se intenta buscarlo: el archivo puede estar en Drive aunque el gasto
+  // no lo tenga registrado (p. ej. se cerró la app mientras subía)
+  const canSearch = !fileUrl && state !== 'not-found';
 
   const searchAndOpen = async () => {
     if (state === 'searching') return;
@@ -72,11 +74,7 @@ export function ReceiptDriveLink({ expense, costCenters = [], onFileResolved }: 
     return (
       <span
         className={`${base} opacity-30 grayscale cursor-help`}
-        title={
-          state === 'not-found'
-            ? 'No se encontró el archivo de esta factura/ticket en Google Drive'
-            : 'Esta factura/ticket todavía no está en Google Drive'
-        }
+        title="No se encontró el archivo de esta factura/ticket en Google Drive"
       >
         <GoogleDriveIcon className="w-3 h-3" />
       </span>
@@ -131,7 +129,7 @@ export function ReceiptDriveButton({
   }
   return (
     <span className="inline-flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-500">
-      {state === 'not-found' ? 'No se encontró el archivo en Drive.' : 'Esta factura/ticket todavía no está en Drive.'}
+      No se encontró el archivo en Drive.
       {folderUrl && (
         <a href={folderUrl} target="_blank" rel="noopener noreferrer" className={buttonClass}>
           <ExternalLink className="w-3.5 h-3.5 mr-1 text-slate-500" />

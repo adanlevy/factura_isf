@@ -263,6 +263,9 @@ export async function uploadReceiptToGoogleDrive(params: {
         accessToken: token,
         oldFileId,
         oldFileName,
+        // Si es la factura/ticket (no un comprobante de pago ni un certificado), el servidor la deja
+        // registrada en el gasto aunque se cierre la app antes de que termine la subida
+        recordOnExpense: !targetFolder && !customFileName,
       }),
     });
 
@@ -406,6 +409,7 @@ export async function replaceReceiptInGoogleDrive(params: {
         accessToken: token,
         oldFileId,
         oldFileName,
+        recordOnExpense: true,
       }),
     });
 
@@ -447,11 +451,6 @@ export async function replaceReceiptInGoogleDrive(params: {
 export function getReceiptDriveFileUrl(expense: Pick<Expense, 'driveFileId' | 'driveUploadedUrl'>): string | null {
   const fileId = expense.driveFileId || extractDriveFileId(expense.driveUploadedUrl);
   return fileId ? `https://drive.google.com/file/d/${fileId}/view` : null;
-}
-
-/** ¿Hay indicios de que la factura/ticket se subió a Drive aunque no tengamos el enlace al archivo? */
-export function receiptMayBeInDrive(expense: Expense): boolean {
-  return Boolean(expense.driveUploadedFileName || expense.driveUploadStatus === 'SUCCESS' || expense.driveUploadedUrl);
 }
 
 /**

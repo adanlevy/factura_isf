@@ -393,6 +393,7 @@ La aplicación es un frontend **React + TypeScript** servido junto a un backend 
 - Cada **centro de costos** tiene su **carpeta propia** en Drive, donde se archivan las **facturas y tickets**.
 - Los **comprobantes de pago** y **certificados de retención** van todos a una **carpeta aparte** ("Comprobantes de Pago y Retenciones"), configurada en la pestaña Centro de Costos (§7.9).
 - **Nomenclatura de archivos:** `SIGLA-Nombre Solicitante-AAAAMMDD-Monto.ext` (ej. `GPA-Juan Perez-20260514-15400.pdf`). Los comprobantes de pago llevan el sufijo `-ComprobantePago-` y los certificados `-CertificadoRetencion-`.
+- **Registro de la subida:** el servidor deja anotado en el gasto el archivo subido apenas Drive lo confirma, aunque la persona cierre la app o el celular suspenda la pestaña mientras sube. Si un registro viejo no tiene el enlace al archivo, el ícono de Drive y el visor lo buscan solos en Drive y lo guardan.
 - **Al editar una factura/ticket ya subida:** si cambia algo que forma el nombre del archivo (centro de costos, fecha o monto), el archivo de Drive se **renombra**; y si cambia el centro de costos, además se **mueve a la carpeta del nuevo centro**. Es el mismo archivo (conserva su enlace), no una copia. Si Drive no responde, los cambios se guardan igual y la app avisa que el archivo quedó como estaba.
 - Todo se sube de forma **centralizada en nombre de la cuenta institucional maestra** (la del *refresh token* guardado en el servidor). Así, ningún colaborador necesita acceso propio a Drive. Soporta Unidades Compartidas.
 
