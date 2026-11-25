@@ -1280,7 +1280,8 @@ async function loadAppDirectory(req: express.Request): Promise<AppDirectory | nu
   }
 }
 
-const EXPENSE_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+// Cualquier ID de documento válido de Firestore (no puede tener "/" ni ser "." o "..")
+const EXPENSE_ID_RE = /^(?!\.\.?$)[^/]{1,150}$/;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -3344,7 +3345,7 @@ type DriveReceiptFile = { id: string; name: string; parents?: string[]; appPrope
 async function searchReceiptFile(
   req: express.Request,
   token: string,
-  directory: AppDirectory,
+  directory: AppDirectory | null,
   opts: { expenseId?: string; fileName?: string; folderId?: unknown }
 ): Promise<DriveReceiptFile | null> {
   const cleanExpenseId = opts.expenseId || "";
@@ -3378,18 +3379,28 @@ async function searchReceiptFile(
 
 /** ¿El archivo existe en Drive y no está en la papelera? 'ERROR' si Drive no respondió (no se sabe) */
 async function checkDriveFileExists(token: string, fileId: string): Promise<"OK" | "MISSING" | "ERROR"> {
-  if (!isValidDriveId(fileId)) return "MISSING";
+  return (await checkDriveFileExistsDetailed(token, fileId)).status;
+}
+
+async function checkDriveFileExistsDetailed(
+  token: string,
+  fileId: string
+): Promise<{ status: "OK" | "MISSING" | "ERROR"; reason?: string }> {
+  if (!isValidDriveId(fileId)) return { status: "MISSING" };
   try {
     const r = await fetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
-    if (r.status === 404) return "MISSING";
-    if (!r.ok) return "ERROR";
+    if (r.status === 404) return { status: "MISSING" };
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      return { status: "ERROR", reason: `Drive respondió ${r.status}: ${formatGoogleErrorMessage(body, r.status).message}` };
+    }
     const meta = (await r.json()) as any;
-    return meta.trashed ? "MISSING" : "OK";
-  } catch {
-    return "ERROR";
+    return { status: meta.trashed ? "MISSING" : "OK" };
+  } catch (err: any) {
+    return { status: "ERROR", reason: `No se pudo contactar a Drive: ${err?.message || err}` };
   }
 }
 
@@ -3460,20 +3471,19 @@ app.post(
     const centralAuth = await getCentralizedGoogleAccessToken();
     const token = centralAuth?.token || accessToken;
     if (!token) {
-      return res.status(401).json({ success: false, error: "No hay credenciales de Google Drive disponibles." });
+      return res.status(401).json({ success: false, error: "No hay credenciales de Google Drive disponibles en el servidor." });
     }
+    // Solo Administración llega acá: si no se pudo leer el directorio de carpetas, se sigue igual
     const directory = await loadAppDirectory(req);
-    if (!directory) {
-      return res.status(503).json({ success: false, error: "No se pudo verificar las carpetas de la app." });
-    }
 
     const verifyOne = async (item: any) => {
-      const expenseId = typeof item?.expenseId === "string" && EXPENSE_ID_RE.test(item.expenseId) ? item.expenseId : "";
-      if (!expenseId) return { expenseId: String(item?.expenseId || ""), status: "ERROR" as const };
+      const rawId = typeof item?.expenseId === "string" ? item.expenseId : "";
+      const expenseId = rawId && EXPENSE_ID_RE.test(rawId) ? rawId : "";
+      if (!expenseId) return { expenseId: rawId, status: "ERROR" as const, reason: "ID de gasto con un formato no admitido" };
       const fileId = isValidDriveId(item.fileId) ? item.fileId : "";
       if (fileId) {
-        const status = await checkDriveFileExists(token, fileId);
-        if (status !== "MISSING") return { expenseId, status, fileId };
+        const check = await checkDriveFileExistsDetailed(token, fileId);
+        if (check.status !== "MISSING") return { expenseId, status: check.status, fileId, reason: check.reason };
         // El enlace guardado no sirve: se intenta encontrar el archivo igual (p. ej. se reemplazó)
       }
       const fileName = typeof item.fileName === "string" && item.fileName.length <= 250 ? item.fileName.trim() : "";
@@ -3494,7 +3504,17 @@ app.post(
     // De a 5 en paralelo, para no saturar la API de Drive
     const results: any[] = [];
     for (let i = 0; i < items.length; i += 5) {
-      results.push(...(await Promise.all(items.slice(i, i + 5).map((it: any) => verifyOne(it).catch(() => ({ expenseId: String(it?.expenseId || ""), status: "ERROR" }))))));
+      results.push(
+        ...(await Promise.all(
+          items.slice(i, i + 5).map((it: any) =>
+            verifyOne(it).catch((err: any) => ({
+              expenseId: String(it?.expenseId || ""),
+              status: "ERROR",
+              reason: `Error al chequear: ${err?.message || err}`,
+            }))
+          )
+        ))
+      );
     }
     return res.json({ success: true, results });
   } catch (error: any) {
